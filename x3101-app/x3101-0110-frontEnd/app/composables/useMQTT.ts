@@ -20,6 +20,7 @@ export interface PlantData {
 const mqttClient = ref<mqtt.MqttClient | null>(null)
 const isConnected = ref(false)
 const connectionStatus = ref('Disconnected')
+const messageCallbacks = new Set<(topic: string, payload: any) => void>()
 
 // State to hold data for the 3 plants
 const plantsData = ref<Record<string, PlantData>>({
@@ -78,6 +79,9 @@ export function useMQTT() {
                 try {
                     const payload = JSON.parse(message.toString())
                     console.log('📥 [useMQTT] Topic:', topic, 'Payload:', payload)
+                    
+                    // Trigger registered callbacks
+                    messageCallbacks.forEach(cb => cb(topic, payload))
                     
                     let plantId = ''
                     if (topic.toUpperCase().includes('MIX-1') || topic.toUpperCase().includes('MIX-01') || topic.includes('mixing/plant/1')) plantId = '1'
@@ -170,10 +174,20 @@ export function useMQTT() {
         return false
     }
 
+    const onMessage = (cb: (topic: string, payload: any) => void) => {
+        messageCallbacks.add(cb)
+    }
+
+    const offMessage = (cb: (topic: string, payload: any) => void) => {
+        messageCallbacks.delete(cb)
+    }
+
     return {
         connect,
         disconnect,
         publishMessage,
+        onMessage,
+        offMessage,
         isConnected,
         connectionStatus,
         plantsData

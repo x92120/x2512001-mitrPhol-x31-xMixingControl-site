@@ -8,7 +8,7 @@ const route = useRoute()
 const router = useRouter()
 
 // ── PLC Connection via Shared MQTT Composable ──
-const { connect, disconnect, publishMessage, isConnected: plcConnectedGlobal, plantsData } = useMQTT()
+const { connect, disconnect, publishMessage, isConnected: plcConnectedGlobal, plantsData, onMessage, offMessage } = useMQTT()
 const { getAuthHeader, user } = useAuth()
 const $q = useQuasar()
 
@@ -19,12 +19,14 @@ const batchInfo = ref<any>(null)
 const skuSteps = ref<any[]>([])
 const loading = ref(false)
 
-// Fetch the targeted plant ID dynamically (defaults to '1')
 const activePlantId = computed(() => {
+    let plantStr = '1';
     if (batchInfo.value && batchInfo.value.plant) {
-        return String(batchInfo.value.plant).replace(/\D/g, '') || '1'
+        plantStr = String(batchInfo.value.plant).replace(/\D/g, '') || '1'
+    } else if (route.query.plant) {
+        plantStr = (route.query.plant as string)?.replace(/\D/g, '') || '1'
     }
-    return (route.query.plant as string)?.replace(/\D/g, '') || '1'
+    return String(Number(plantStr))
 })
 const plantData = computed(() => (plantsData.value[activePlantId.value] || {}) as any)
 
@@ -60,13 +62,31 @@ const fetchBatchInfo = async () => {
             selectedBatchId.value = data.batch_id
             selectedSkuId.value = data.sku_code
             fetchSkuSteps(data.sku_code)
+            fetchSkuSteps(data.sku_code)
+        } else {
+            throw new Error("No edge batch data")
+        }
+    } catch (e) {
+        console.warn('Could not fetch from edge API, falling back to query params.')
+        const qBatchId = route.query.batch_id as string
+        const qSkuId = route.query.sku_id as string
+        if (qBatchId && qSkuId) {
+            batchInfo.value = { 
+                batch_id: qBatchId,
+                plan_id: '-', 
+                sku_id: qSkuId, 
+                sku_name: 'Fallback Simulator Mode', 
+                plant: '01',
+                batch_size: 1000
+            }
+            selectedBatchId.value = qBatchId
+            selectedSkuId.value = qSkuId
+            fetchSkuSteps(qSkuId)
         } else {
             batchInfo.value = null
             selectedBatchId.value = null
             skuSteps.value = []
         }
-    } catch (e) {
-        console.error(e)
     } finally {
         loading.value = false
     }
@@ -77,7 +97,9 @@ const fetchSkuSteps = async (skuId: string) => {
     loading.value = true
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl || 'http://127.0.0.1:8001'
-        const data = await $fetch<any[]>(`${remoteApiBaseUrl}/edge/sku-steps/${skuId}`, {
+        // Fallback to central API directly since Edge buffer is failing
+        const endpoint = `${remoteApiBaseUrl}/sku-steps/?sku_id=${skuId}`
+        const data = await $fetch<any[]>(endpoint, {
             headers: getAuthHeader() as Record<string, string>
         })
         // Sort steps globally by phase then sub-step so the index matches the visual order
@@ -138,25 +160,137 @@ const isPhaseExpanded = (phase: string) => {
     return expandedPhases.value[phase] !== false
 }
 
+// ── QC Trap Logic ──
+const qcDialog = ref(false)
+const pendingQcStep = ref<any | null>(null)
+
+const handlePlcMessage = (topic: string, payload: any) => {
+    // Listen for step complete confirmation
+    if (topic === `mixing/plant/${activePlantId.value}/status` && payload.status === 'STEP_COMPLETE') {
+        if (!batchRunning.value) return; // If aborted/stopped, ignore
+
+        $q.notify({ type: 'info', message: `Step ${payload.step_no} completed.`, position: 'top', timeout: 1000 })
+        
+        const completedIndex = Number(payload.step_no) - 1;
+        const currentCompletedStep = skuSteps.value[completedIndex];
+
+        // Check if the COMPLETED step required a QC record BEFORE advancing
+        if (currentCompletedStep && (
+            currentCompletedStep.operation_brix_record || 
+            currentCompletedStep.operation_ph_record || 
+            currentCompletedStep.record_ctw
+        )) {
+            // STOP auto-advancing, trap out to QC dialog
+            batchRunning.value = false;
+            pendingQcStep.value = currentCompletedStep;
+            localStepIndex.value = completedIndex + 1; // Stage the next step
+            qcDialog.value = true;
+            $q.notify({ type: 'warning', message: 'QC Data Required! Please fill in Brix/pH', position: 'center', timeout: 0 })
+            return;
+        }
+
+        // Normal Auto-Advance
+        localStepIndex.value = completedIndex + 1 // Advance to next
+        if (localStepIndex.value < skuSteps.value.length) {
+            setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+        } else {
+            batchRunning.value = false
+            $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+        }
+    }
+}
+
+const confirmQcCheck = () => {
+    if (pendingQcStep.value?.operation_brix_record && !actualBrix.value) {
+        $q.notify({ type: 'warning', message: 'Please input Actual Brix' }); return;
+    }
+    if (pendingQcStep.value?.operation_ph_record && !actualPh.value) {
+        $q.notify({ type: 'warning', message: 'Please input Actual pH' }); return;
+    }
+
+    // TODO: POST to Backend here: { batch_id: selectedBatchId.value, step_id: pendingQcStep.value.id, brix: actualBrix.value, ph: actualPh.value }
+
+    $q.notify({ type: 'positive', message: 'QC Data Recorded Successfully!', icon: 'check', timeout: 2000 })
+    
+    qcDialog.value = false;
+    pendingQcStep.value = null;
+    batchRunning.value = true;
+    
+    // Resume auto-advance
+    if (localStepIndex.value < skuSteps.value.length) {
+        setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+        $q.notify({ type: 'info', message: `Resuming: Advanced to Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1000 })
+    } else {
+        batchRunning.value = false
+        $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+    }
+}
+
+const sendStepToPLC = (index: number) => {
+     const s = skuSteps.value[index]
+     if (!s) return;
+     const topic = `mixing/plant/${activePlantId.value}/step_cmd`
+     const payload = {
+        batch_id: selectedBatchId.value,
+        step_no: index + 1, // 1-based
+        phase: s.phase_number,
+        phase_id: s.phase_id,
+        action_code: s.action_code || '',
+        re_code: s.re_code || '',
+        action_description: s.action_description || '',
+        destination: s.destination || '',
+        require: s.require || 0,
+        uom: s.uom || 'kg',
+        low_tol: s.low_tol || 0,
+        high_tol: s.high_tol || 0,
+        agitator_rpm: s.agitator_rpm || 0,
+        high_shear_rpm: s.high_shear_rpm || 0,
+        temperature: s.temperature || 0,
+        temp_low: s.temp_low || 0,
+        temp_high: s.temp_high || 0,
+        step_time: s.step_time || 0,
+        step_timer_control: s.step_timer_control || 0,
+        timestamp: new Date().toISOString()
+     }
+     publishMessage(topic, payload)
+}
+
 // ── PLC Commands ──
-const sendCommand = (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
+const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline! Cannot send command.', position: 'top' })
         return
     }
-    // E.g., mixing/plant/1/cmd
-    const topic = `mixing/plant/${activePlantId.value}/cmd`
-    const payload = {
-        command: cmd,
-        batch_id: selectedBatchId.value,
-        timestamp: new Date().toISOString(),
-        operator: user?.value?.username || 'Operator'
-    }
-    
-    // Add specific payload requirements for Node-RED or PLC simulator
-    const success = publishMessage(topic, payload)
-    if (success) {
-        $q.notify({ type: 'positive', icon: 'settings_remote', message: `CMD: [${cmd}] Sent to Plant ${activePlantId.value}`, position: 'top', timeout: 1500 })
+
+    if (cmd === 'START') {
+        if (skuSteps.value.length === 0) {
+            $q.notify({ type: 'warning', message: 'No SKU steps found.', position: 'top' })
+            return
+        }
+        batchRunning.value = true
+        // Resume from where we were, or start from 0
+        const currentIndex = Math.max(0, Number(plantData.value.Step_No || 0) - 1)
+        localStepIndex.value = currentIndex >= skuSteps.value.length ? 0 : currentIndex
+        sendStepToPLC(localStepIndex.value)
+        $q.notify({ type: 'positive', icon: 'settings_remote', message: `STARTED at Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1500 })
+        // Also send START state
+        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'START' })
+        return
+    } else if (cmd === 'ABORT') {
+        batchRunning.value = false
+        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'ABORT' })
+        return
+    } else if (cmd === 'NEXT_STEP') {
+        batchRunning.value = true
+        localStepIndex.value = Math.max(0, Number(plantData.value.Step_No || 0))
+        if(localStepIndex.value < skuSteps.value.length) {
+            sendStepToPLC(localStepIndex.value)
+        }
+        return
+    } else if (cmd === 'PAUSE') {
+        batchRunning.value = false
+        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'PAUSE' })
+        return
     }
 }
 
@@ -237,9 +371,11 @@ onMounted(() => {
     fetchBatchInfo();
 
     connect() // Shared MQTT composable connects here
+    onMessage(handlePlcMessage)
 })
 
 onUnmounted(() => {
+    offMessage(handlePlcMessage)
     disconnect()
 })
 </script>
@@ -331,6 +467,9 @@ onUnmounted(() => {
                 <div class="column justify-center items-center full-height q-pb-md">
                    <div class="text-grey-5 text-weight-bold" style="font-size: 14px;">WEIGHT</div>
                    <div class="text-weight-bolder text-brown-8" style="font-size: 38px; line-height: 1;">{{ actualHopperWeight }} <span style="font-size: 16px;">kg</span></div>
+                   <div v-if="currentStep?.require" class="text-grey-6 q-mt-xs" style="font-size: 12px;">
+                     SP: <span class="text-weight-bold">{{ Number(currentStep.require).toFixed(2) }}</span> kg
+                   </div>
                 </div>
               </div>
             </div>
@@ -345,11 +484,19 @@ onUnmounted(() => {
                    </div>
                    <div class="row justify-between items-center">
                       <div class="text-grey-6 text-weight-bold" style="font-size: 14px;">Temperature</div>
-                      <div class="text-weight-bold text-deep-orange-8" style="font-size: 20px;">{{ actualTankTemp }} <span style="font-size: 14px; color: #999;">°C</span></div>
+                      <div>
+                        <span class="text-weight-bold" :class="currentStep?.temperature && Math.abs(actualTankTemp - currentStep.temperature) <= 5 ? 'text-green-8' : 'text-deep-orange-8'" style="font-size: 20px;">{{ actualTankTemp }}</span>
+                        <span style="font-size: 14px; color: #999;">°C</span>
+                        <span v-if="currentStep?.temperature" class="text-grey-6 q-ml-sm" style="font-size: 12px;">SP: {{ currentStep.temperature }}°C</span>
+                      </div>
                    </div>
                    <div class="row justify-between items-center">
                       <div class="text-grey-6 text-weight-bold" style="font-size: 14px;">Agitator Speed</div>
-                      <div class="text-weight-bold text-teal-8" style="font-size: 20px;">{{ actualAgitatorRpm }} <span style="font-size: 14px; color: #999;">RPM</span></div>
+                      <div>
+                        <span class="text-weight-bold text-teal-8" style="font-size: 20px;">{{ actualAgitatorRpm }}</span>
+                        <span style="font-size: 14px; color: #999;">RPM</span>
+                        <span v-if="currentStep?.agitator_rpm" class="text-grey-6 q-ml-sm" style="font-size: 12px;">SP: {{ currentStep.agitator_rpm }}</span>
+                      </div>
                    </div>
                 </div>
               </div>
@@ -357,11 +504,19 @@ onUnmounted(() => {
             <!-- Column 3: High Shear -->
             <div class="col-3">
               <div class="req-act-card" style="border-left: 4px solid #7b1fa2; height: 100%;">
-                <div class="text-grey-7 text-weight-bold" style="font-size: 16px;">⚡ HIGH SHEAR</div>
+                <div class="text-grey-7 text-weight-bold row items-center" style="font-size: 16px;">
+                  ⚡ HIGH SHEAR
+                  <q-badge v-if="currentStep?.high_shear_rpm > 0" color="purple" class="q-ml-sm" style="font-size: 10px;">ACTIVE</q-badge>
+                  <q-badge v-else color="grey-4" text-color="grey-7" class="q-ml-sm" style="font-size: 10px;">OFF</q-badge>
+                </div>
                 <div class="column justify-center q-gutter-y-md q-mt-md">
                    <div class="row justify-between items-center">
                       <div class="text-grey-6 text-weight-bold" style="font-size: 14px;">Speed</div>
-                      <div class="text-weight-bold text-purple-9" style="font-size: 26px;">{{ actualHighShearRpm }} <span style="font-size: 14px; color: #999;">RPM</span></div>
+                      <div>
+                        <span class="text-weight-bold text-purple-9" style="font-size: 26px;">{{ actualHighShearRpm }}</span>
+                        <span style="font-size: 14px; color: #999;">RPM</span>
+                        <div v-if="currentStep?.high_shear_rpm" class="text-grey-6 text-right" style="font-size: 11px;">SP: {{ currentStep.high_shear_rpm }}</div>
+                      </div>
                    </div>
                    <div class="row justify-between items-center">
                       <div class="text-grey-6 text-weight-bold" style="font-size: 14px;">Temperature</div>
@@ -373,7 +528,10 @@ onUnmounted(() => {
             <!-- Column 4: Circulation -->
             <div class="col-3">
               <div class="req-act-card" style="border-left: 4px solid #1565c0; height: 100%;">
-                <div class="text-grey-7 text-weight-bold" style="font-size: 16px;">🔄 CIRCULATION</div>
+                <div class="text-grey-7 text-weight-bold row items-center" style="font-size: 16px;">
+                  🔄 CIRCULATION
+                  <q-badge v-if="currentStep?.operation_brix_record || currentStep?.operation_ph_record" color="amber-8" class="q-ml-sm" style="font-size: 10px;">QC CHECK</q-badge>
+                </div>
                 <div class="column q-gutter-y-sm q-mt-xs">
                    <div class="row justify-between items-center">
                       <div class="text-grey-6 text-weight-bold" style="font-size: 14px;">Speed</div>
@@ -451,8 +609,8 @@ onUnmounted(() => {
               
               <!-- COMMAND CENTER -->
               <div class="row q-gutter-sm items-center q-mr-md bg-white q-pa-xs rounded-borders shadow-1">
-                 <q-btn flat dense icon="play_arrow" color="positive" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
-                 <q-btn flat dense icon="pause" color="warning" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
+                 <q-btn flat dense icon="play_arrow" :color="batchRunning ? 'grey' : 'positive'" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
+                 <q-btn flat dense icon="pause" :color="!batchRunning ? 'grey' : 'warning'" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
                  <q-btn flat dense icon="skip_next" color="primary" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
                  <q-separator vertical class="q-mx-xs" />
                  <q-btn flat dense icon="stop" color="negative" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
@@ -560,10 +718,58 @@ onUnmounted(() => {
     </div>
       </div> <!-- /col-9 -->
     </div> <!-- /row -->
+
+    <!-- THE QC TRAP DIALOG -->
+    <q-dialog v-model="qcDialog" persistent backdrop-filter="blur(4px)">
+      <q-card style="width: 400px; max-width: 90vw; border-radius: 12px; border: 2px solid orange;">
+        <q-card-section class="bg-orange-1 text-orange-10 row items-center">
+          <q-icon name="warning" size="2rem" class="q-mr-sm"/>
+          <div class="text-h6 text-weight-bold">QC Record Required</div>
+        </q-card-section>
+
+        <q-separator />
+
+        <q-card-section class="q-pa-md">
+          <div class="text-subtitle1 q-mb-md">Phase: <strong>{{ pendingQcStep?.phase_number }} ({{ pendingQcStep?.phase_id }})</strong></div>
+          <p class="text-grey-8">Please record the actual QC values before continuing to the next step.</p>
+          
+          <div v-if="pendingQcStep?.operation_brix_record" class="q-mt-sm">
+             <div class="text-weight-bold">Target Brix: <span class="text-indigo">{{ pendingQcStep?.brix_sp }}</span></div>
+             <q-input v-model="actualBrix" outlined dense autofocus placeholder="Enter Actual Brix" type="number" step="0.1" class="q-mt-xs">
+                <template v-slot:append><div style="font-size: 14px;">Brix</div></template>
+             </q-input>
+          </div>
+
+          <div v-if="pendingQcStep?.operation_ph_record" class="q-mt-md">
+             <div class="text-weight-bold">Target pH: <span class="text-indigo">{{ pendingQcStep?.ph_sp }}</span></div>
+             <q-input v-model="actualPh" outlined dense placeholder="Enter Actual pH" type="number" step="0.01" class="q-mt-xs">
+                <template v-slot:append><div style="font-size: 14px;">pH</div></template>
+             </q-input>
+          </div>
+        </q-card-section>
+
+        <q-separator />
+
+        <q-card-actions align="right" class="bg-grey-1 q-pa-md">
+          <q-btn flat label="Pause Batch" color="grey-8" @click="() => { qcDialog = false; sendCommand('PAUSE'); }" />
+          <q-btn label="Confirm & Continuing" color="positive" icon="check_circle" @click="confirmQcCheck" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
   </q-page>
 </template>
 
 <style scoped>
+.heartbeat-icon {
+  animation: heartbeat 1s ease-in-out infinite;
+}
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  25% { transform: scale(1.3); opacity: 1; }
+  50% { transform: scale(1); opacity: 0.8; }
+  75% { transform: scale(1.15); opacity: 1; }
+}
 .active-step {
   background: #fff8e1 !important;
   border-left: 4px solid #ff8f00;

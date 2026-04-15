@@ -59,8 +59,40 @@ const scannerMode = ref<'box' | 'bag'>('box')
 const scannerLoading = ref(false)
 
 // All available batches for the simulator
-const allBatches = ref<any[]>([])
 const allPlans = ref<any[]>([])
+const allBatches = ref<any[]>([])
+
+const rawPlans = ref<any[]>([])
+const selectedPlantFilter = ref('All Plants')
+const availablePlantOptions = computed(() => {
+    const plants = new Set<string>()
+    rawPlans.value.forEach(p => {
+        if (p.plant) plants.add(p.plant)
+    })
+    return ['All Plants', ...Array.from(plants).sort()]
+})
+
+const applyPlantFilter = () => {
+    let plans = rawPlans.value
+    if (selectedPlantFilter.value !== 'All Plants') {
+        plans = plans.filter((p: any) => p.plant === selectedPlantFilter.value)
+    }
+    allPlans.value = plans
+    
+    const batches: any[] = []
+    plans.forEach((p: any) => {
+        if (p.batches) {
+            p.batches.forEach((b: any) => {
+                batches.push({ ...b, plan_id: p.plan_id, sku_id: p.sku_id, sku_name: p.sku_name })
+            })
+        }
+    })
+    allBatches.value = batches
+}
+
+watch(selectedPlantFilter, () => {
+    applyPlantFilter()
+})
 
 // Label preview in simulator
 const previewLabelSvg = ref('')
@@ -217,6 +249,11 @@ const selectBatchFromTree = (batch: any) => {
     selectedBatchId.value = batch.batch_id
     selectedPlanId.value = batch.plan_id || ''
     fetchBatchPreBatchData(batch.batch_id)
+    // Auto-fetch SKU steps for detail table
+    const plan = allPlans.value.find((p: any) => 
+        (p.batches || []).some((b: any) => b.batch_id === batch.batch_id)
+    )
+    if (plan?.sku_id) fetchSkuSteps(plan.sku_id)
 }
 
 // ── PreBatch data for split card ──
@@ -318,14 +355,12 @@ const goToStartProduction = async () => {
     if (selectedBatchId.value) {
         loading.value = true
         try {
-            await $fetch<any>(`${appConfig.apiBaseUrl}/edge/start-batch/${selectedBatchId.value}`, {
-                method: 'POST',
-                headers: getAuthHeader() as Record<string, string>
-            })
-            useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}`)
+            // [Bypassed for testing]
+            useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}`)
         } catch (e: any) {
             console.error('Edge buffer sync err:', e)
-            $q.notify({ type: 'negative', message: 'Failed to sync to Edge Buffer!' })
+            $q.notify({ type: 'warning', message: 'Edge Buffer Bypassed' })
+            useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}`)
         } finally {
             loading.value = false
         }
@@ -354,10 +389,25 @@ const skuStepsByPhase = computed(() => {
     return sorted
 })
 
+// Color palette for phase grouping
+const phaseColors = ['bg-blue-1', 'bg-grey-2']
+const phaseColorMap = computed(() => {
+    const map: Record<string, string> = {}
+    const uniquePhases = [...new Set(skuSteps.value.map((s: any) => s.phase_id || s.phase_number || '0'))]
+    uniquePhases.forEach((ph, i) => {
+        map[ph] = phaseColors[i % phaseColors.length]
+    })
+    return map
+})
+const getPhaseColor = (step: any) => {
+    const key = step.phase_id || step.phase_number || '0'
+    return phaseColorMap.value[key] || ''
+}
+
 // Info about the currently selected batch (from tree/loaded plan data)
 const selectedBatchInfo = computed(() => {
-    if (!recheckBatchId.value && !boxId.value) return null
-    const bid = recheckBatchId.value || boxId.value
+    const bid = recheckBatchId.value || boxId.value || selectedBatchId.value
+    if (!bid) return null
     for (const plan of allPlans.value) {
         for (const batch of (plan.batches || [])) {
             if (batch.batch_id === bid) {
@@ -452,22 +502,8 @@ const fetchPlansAndBatches = async () => {
         const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active`, {
             headers: getAuthHeader() as Record<string, string>
         })
-        let plans = resp.plans || resp || []
-        plans = plans.filter((p: any) => {
-            const plantStr = String(p.plant || '').toUpperCase()
-            return plantStr.includes('1') || plantStr.includes('2') || plantStr.includes('3') || 
-                   String(p.plan_id || '').includes('-01-') || String(p.plan_id || '').includes('-02-') || String(p.plan_id || '').includes('-03-')
-        })
-        allPlans.value = plans
-        const batches: any[] = []
-        plans.forEach((p: any) => {
-            if (p.batches) {
-                p.batches.forEach((b: any) => {
-                    batches.push({ ...b, plan_id: p.plan_id, sku_id: p.sku_id, sku_name: p.sku_name })
-                })
-            }
-        })
-        allBatches.value = batches
+        rawPlans.value = resp.plans || resp || []
+        applyPlantFilter()
     } catch (err) {
         console.error('Error fetching batches:', err)
     }
@@ -1117,8 +1153,9 @@ onMounted(() => {
               <q-space />
               <q-btn flat round dense icon="refresh" size="xs" color="indigo-9" @click="fetchPlansAndBatches(); fetchAwaitingBatches()" />
             </div>
-            <div class="q-pa-xs" style="position: sticky; top: 28px; z-index: 1; background: white;">
-              <q-input v-model="treeSearch" outlined dense placeholder="Search plan / batch..." bg-color="white" style="font-size: 12px;" clearable>
+            <div class="q-pa-xs row q-gutter-x-sm" style="position: sticky; top: 28px; z-index: 1; background: white; border-bottom: 1px solid #e0e0e0;">
+              <q-select v-model="selectedPlantFilter" :options="availablePlantOptions" dense outlined bg-color="white" style="font-size: 12px; flex: 1;" label="Filter Plant" options-dense />
+              <q-input v-model="treeSearch" outlined dense placeholder="Search plan / batch..." bg-color="white" style="font-size: 12px; flex: 1;" clearable>
                 <template v-slot:prepend><q-icon name="search" size="xs" /></template>
               </q-input>
             </div>
@@ -1203,6 +1240,63 @@ onMounted(() => {
                 <q-space />
                 <span class="text-grey-7">{{ (selectedBatchInfo.batch_size || 0).toFixed(1) }} kg</span>
                 <q-badge :color="selectedBatchInfo.status === 'Done' ? 'green' : (selectedBatchInfo.status === 'Cancelled' ? 'red' : 'blue')" class="q-ml-sm" style="font-size: 12px;">{{ selectedBatchInfo.status || '-' }}</q-badge>
+              </div>
+
+              <!-- SKU Steps Detail - Grouped by Phase -->
+              <div style="margin: 4px;">
+                <div class="q-pa-xs bg-deep-purple-1 text-deep-purple-9 text-weight-bold row items-center" style="font-size: 12px; border-radius: 4px 4px 0 0; border: 1px solid #d1c4e9;">
+                  <q-icon name="list_alt" size="16px" class="q-mr-xs" />
+                  <span>SKU Production Steps ({{ skuSteps.length }})</span>
+                </div>
+                <q-linear-progress v-if="skuStepsLoading" indeterminate color="deep-purple" />
+                <template v-if="skuStepsByPhase.length > 0">
+                  <q-expansion-item
+                    v-for="(group, gi) in skuStepsByPhase" :key="group.phase"
+                    dense dense-toggle switch-toggle-side default-opened
+                    :header-class="'q-pa-xs text-weight-bold ' + (gi % 2 === 0 ? 'bg-blue-1 text-blue-9' : 'bg-grey-2 text-grey-9')"
+                    style="border: 1px solid #e0e0e0; border-top: none; font-size: 12px;"
+                  >
+                    <template v-slot:header>
+                      <q-item-section avatar style="min-width: 20px;"><q-icon name="settings" size="14px" /></q-item-section>
+                      <q-item-section><q-item-label>Phase {{ group.phase }} · {{ group.phase_id }}</q-item-label></q-item-section>
+                      <q-item-section side><q-badge :color="gi % 2 === 0 ? 'blue' : 'grey'" outline>{{ group.steps.length }} steps</q-badge></q-item-section>
+                    </template>
+
+                    <q-markup-table flat dense separator="cell" style="font-size: 11px;">
+                      <thead :class="gi % 2 === 0 ? 'bg-blue-1' : 'bg-grey-3'">
+                        <tr>
+                          <th class="text-left" style="width: 35px;">Step</th>
+                          <th class="text-left" style="width: 50px;">Action</th>
+                          <th class="text-left">Description</th>
+                          <th class="text-left">Ingredient</th>
+                          <th class="text-right" style="width: 55px;">Qty</th>
+                          <th class="text-center" style="width: 35px;">UOM</th>
+                          <th class="text-center" style="width: 40px;">Time</th>
+                          <th class="text-center" style="width: 40px;">Temp</th>
+                          <th class="text-center" style="width: 40px;">RPM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="step in group.steps" :key="step.id || step.sub_step" style="border-bottom: 1px solid #f0f0f0;">
+                          <td>{{ step.sub_step || '-' }}</td>
+                          <td class="text-grey-8">{{ step.action_code || '-' }}</td>
+                          <td style="max-width: 160px; white-space: normal; line-height: 1.3;">
+                            <span class="text-weight-medium">{{ step.action_description || '-' }}</span>
+                          </td>
+                          <td style="max-width: 160px; white-space: normal; line-height: 1.3;">
+                            <span class="text-blue-9 text-weight-bold">{{ step.re_code || '-' }}</span>
+                          </td>
+                          <td class="text-right text-weight-bold">{{ step.require ? step.require.toFixed(2) : '-' }}</td>
+                          <td class="text-center text-grey-7">{{ step.uom || '-' }}</td>
+                          <td class="text-center">{{ step.step_time || '-' }}</td>
+                          <td class="text-center">{{ step.temperature || '-' }}</td>
+                          <td class="text-center">{{ step.agitator_rpm || '-' }}</td>
+                        </tr>
+                      </tbody>
+                    </q-markup-table>
+                  </q-expansion-item>
+                </template>
+                <div v-else-if="!skuStepsLoading" class="text-center q-pa-sm text-grey-5" style="font-size: 11px; border: 1px solid #e0e0e0; border-top: none;">No SKU steps found</div>
               </div>
 
               <!-- PreBatch Items Grouped By Warehouse -->

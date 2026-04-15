@@ -117,7 +117,7 @@ const printScreen = () => {
         <q-route-tab
           to="/x60-CheckForProduction"
           icon="fact_check"
-          label="Check Pre-Batch"
+          label="CHECK FOR PRODUCTION"
           v-if="hasPermission('production_list')"
         />
 
