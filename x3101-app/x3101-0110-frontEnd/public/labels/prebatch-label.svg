@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="400"
+   height="600"
+   viewBox="0 0 400 600"
+   version="1.1"
+   id="svg787"
+   sodipodi:docname="prebatch-label.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs791" />
+  <sodipodi:namedview
+     id="namedview789"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#000000"
+     showgrid="true"
+     inkscape:zoom="2"
+     inkscape:cx="-24.25"
+     inkscape:cy="393.75"
+     inkscape:window-width="1920"
+     inkscape:window-height="945"
+     inkscape:window-x="0"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg787">
+    <inkscape:grid
+       type="xygrid"
+       id="grid820"
+       units="mm"
+       spacingx="3.7795276"
+       spacingy="3.7795276" />
+  </sodipodi:namedview>
+  <!-- Outer Double Border (4x6 inch) -->
+  <!-- ========================================== -->
+  <!-- BIG PART (4x3 inch / 400x300 area) -->
+  <!-- ========================================== -->
+  <!-- Content Labels & Values -->
+  <!-- Big QR Code (Lower Right Area of Upper Part) -->
+  <g
+     transform="translate(226.80754, 386.80756) scale(1.48972)"
+     id="g761">
+    {{QRCode}}
+  </g>
+  <!-- Weight & Packages Labels (Lower Left of Upper Part) -->
+  <!-- ========================================== -->
+  <!-- SMALL PART (4x1 inch / 400x100 area) -->
+  <!-- ========================================== -->
+  <rect
+     x="0.7795276"
+     y="0.7795276"
+     width="390"
+     height="590"
+     rx="10"
+     fill="none"
+     stroke="#000000"
+     stroke-width="2"
+     id="rect1" />
+  <rect
+     x="3.7795277"
+     y="3.7795277"
+     width="384"
+     height="584"
+     rx="8"
+     fill="none"
+     stroke="#000000"
+     stroke-width="0.5"
+     id="rect2" />
+  <rect
+     x="10.779528"
+     y="10.779528"
+     width="370"
+     height="55"
+     rx="8"
+     fill="#000000"
+     id="rect3" />
+  <text
+     x="195.77953"
+     y="45.779526"
+     font-family="Arial, sans-serif"
+     font-size="22px"
+     font-weight="bold"
+     fill="#ffffff"
+     text-anchor="middle"
+     id="text-title">PRE-BATCH PACKING</text>
+  <text
+     x="14.713814"
+     y="157.73335"
+     fill="black444"
+     font-size="9px"
+     font-family="Arial, sans-serif"
+     id="text76">SKU</text>
+  <text
+     x="14.727487"
+     y="172.22668"
+     fill="#000000"
+     font-size="17px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-sku"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:13.3333px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{SKU}}</text>
+  <text
+     x="14.819443"
+     y="408.35263"
+     fill="#000000"
+     font-size="17px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-sku-3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">{{SKU}}</text>
+  <line
+     x1="10.779528"
+     y1="113.77952"
+     x2="380.77954"
+     y2="113.77952"
+     stroke="blackccc"
+     stroke-width="0.8"
+     id="line79" />
+  <text
+     x="14.819443"
+     y="420.0752"
+     fill="#000000"
+     font-size="13px"
+     font-weight="bold"
+     font-family="monospace"
+     id="text-planid-7"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{PlanId}}</text>
+  <text
+     x="14.458931"
+     y="187.85971"
+     fill="black444"
+     font-size="9px"
+     font-family="Arial, sans-serif"
+     id="text84">Batch ID</text>
+  <text
+     x="14.727487"
+     y="202.46291"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:13.3333px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{BatchId}}</text>
+  <text
+     x="14.819443"
+     y="431.41379"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid-5"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{BatchId}}</text>
+  <text
+     x="14.317186"
+     y="369.29514"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid-5-3-5"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:24px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">{{Ingredient_ReCode}}</text>
+  <text
+     x="14.423775"
+     y="218.09592"
+     fill="black444"
+     font-size="9px"
+     font-family="Arial, sans-serif"
+     id="text92">Plan Date</text>
+  <text
+     x="14.727487"
+     y="232.69913"
+     fill="#000000"
+     font-size="13px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-date"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:13.3333px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{PlanStartDate}} // {{PlanFinishDate}}</text>
+  <text
+     x="14.423775"
+     y="248.33214"
+     fill="black444"
+     font-size="9px"
+     font-family="Arial, sans-serif"
+     id="text102">Plant</text>
+  <text
+     x="14.727487"
+     y="262.93533"
+     fill="#000000"
+     font-size="14px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-plant"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:13.3333px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{PlantId}} // {{PlantName}}</text>
+  <line
+     x1="10.779528"
+     y1="550.77954"
+     x2="380.77954"
+     y2="550.77954"
+     stroke="#000000"
+     stroke-width="1.5"
+     id="line-footer" />
+  <text
+     x="20.779528"
+     y="567.77954"
+     fill="#000000"
+     font-size="8px"
+     font-family="Arial, sans-serif"
+     id="text109">Printed:</text>
+  <text
+     x="20.779528"
+     y="579.77954"
+     fill="#000000"
+     font-size="11px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-timestamp">{{Timestamp}}</text>
+  <text
+     x="375.77954"
+     y="583.77954"
+     text-anchor="end"
+     fill="#000000"
+     style="font-weight:bold;font-size:8px;font-family:'Courier Prime', 'Courier New', Courier, monospace"
+     id="text112">xDev.co.th</text>
+  <rect
+     style="fill:none;stroke:#000000;stroke-width:1.21624"
+     id="rect273"
+     width="369.78375"
+     height="198.78377"
+     x="10.887682"
+     y="346.38766" />
+  <rect
+     style="fill:none;stroke:#000000;stroke-width:1.02801"
+     id="rect331"
+     width="148.972"
+     height="148.972"
+     x="226.80754"
+     y="386.80756" />
+  <text
+     x="14.819443"
+     y="287.79175"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{PackageSize}} kg / {{BatchRequireSize}}</text>
+  <text
+     x="22.677166"
+     y="302.36221"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">from</text>
+  <text
+     x="30.01222"
+     y="311.85373"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6-5"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{Lot1}}</text>
+  <text
+     x="30.01222"
+     y="323.27231"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6-5-3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{Lot2}}</text>
+  <text
+     x="14.083441"
+     y="340.70511"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-6-5"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">Package No: {{PackageNo}}</text>
+  <text
+     x="14.819443"
+     y="480.54764"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-62"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{PackageSize}} kg / {{BatchRequireSize}}</text>
+  <text
+     x="22.517164"
+     y="495.71909"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6-9"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">from</text>
+  <text
+     x="30.01222"
+     y="504.60965"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6-5-1"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{Lot1}}</text>
+  <text
+     x="30.01222"
+     y="516.0282"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-3-6-5-3-2"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{Lot2}}</text>
+  <text
+     x="17.86297"
+     y="533.461"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9-6-5-7"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:10.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">Package No: {{PackageNo}}</text>
+  <text
+     x="14.520778"
+     y="133.37866"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid-5-3-2"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:21.3333px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal">{{mat_sap_code}}</text>
+  <text
+     x="14.670111"
+     y="390.11276"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid-5-3-2-3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:16px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">{{mat_sap_code}}</text>
+  <text
+     x="14.277208"
+     y="99.195824"
+     fill="#000000"
+     font-size="18px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid-5-3-5-9"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:26.6667px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000">{{Ingredient_ReCode}}</text>
+</svg>

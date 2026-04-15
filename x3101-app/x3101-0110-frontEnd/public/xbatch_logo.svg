@@ -1,0 +1,10 @@
+<svg width="240" height="80" viewBox="0 0 240 80" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with thin black border -->
+  <rect x="1" y="1" width="238" height="78" fill="#FFC107" stroke="black" stroke-width="1"/>
+  
+  <!-- "xBatch" Text - Serif font, bold, dark red -->
+  <text x="50%" y="55" font-family="Georgia, 'Times New Roman', serif" font-size="48" font-weight="900" fill="#800000" text-anchor="middle">xBatch</text>
+  
+  <!-- Black horizontal line at the bottom -->
+  <line x1="10" y1="68" x2="230" y2="68" stroke="black" stroke-width="2"/>
+</svg>

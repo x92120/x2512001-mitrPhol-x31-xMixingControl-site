@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  frontend-ui:
+    image: xmixing/frontend-ui:latest
+    container_name: xmixing-client-ui
+    restart: always
+    ports:
+      - "80:3000"
+    environment:
+      - NUXT_PUBLIC_API_BASE_URL=http://192.168.121.11:8000
+    networks:
+      - client-net
+
+networks:
+  client-net:
+    driver: bridge

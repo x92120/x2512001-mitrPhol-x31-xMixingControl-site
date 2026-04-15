@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="384"
+   height="288"
+   viewBox="0 0 384 288"
+   version="1.1"
+   id="svg-prebatch-4x3"
+   xmlns="http://www.w3.org/2000/svg">
+<!-- ── Pre-Batch Packing Label 4×3 inch (384×288 px) ── -->
+
+<!-- ── Outer Border ── -->
+<rect x="3" y="3" width="378" height="282" rx="6" fill="none" stroke="black" stroke-width="1.5"/>
+<rect x="5" y="5" width="374" height="278" rx="5" fill="none" stroke="black" stroke-width="0.4"/>
+
+<!-- ── Header Bar ── -->
+<rect x="8" y="8" width="368" height="28" rx="4" fill="black"/>
+<text x="192" y="27" text-anchor="middle"
+  style="font-size:14px;font-family:Arial,sans-serif;font-weight:bold;fill:#ffffff;letter-spacing:1.5px">PRE-BATCH PACKING</text>
+
+<!-- ── Ingredient RE-Code (large, prominent) ── -->
+<text x="14" y="55" style="font-size:20px;font-family:sans-serif;font-weight:bold;fill:#000000">{{Ingredient_ReCode}}</text>
+
+<!-- ── Mat SAP Code ── -->
+<text x="14" y="68" style="font-size:10px;font-family:sans-serif;fill:#000000">{{mat_sap_code}}</text>
+
+<!-- ── Divider ── -->
+<line x1="8" y1="73" x2="376" y2="73" stroke="#cccccc" stroke-width="0.5"/>
+
+<!-- ── SKU ── -->
+<text x="14" y="84" style="font-size:6px;font-family:Arial,sans-serif;fill:#888888">SKU</text>
+<text x="14" y="94" style="font-size:9px;font-family:Arial,sans-serif;font-weight:bold;fill:#000000">{{SKU}}</text>
+
+<!-- ── Batch ID ── -->
+<text x="14" y="107" style="font-size:6px;font-family:Arial,sans-serif;fill:#888888">Batch ID</text>
+<text x="14" y="117" style="font-size:9px;font-family:'Courier New',monospace;font-weight:bold;fill:#000000">{{BatchId}}</text>
+
+<!-- ── Plan Date ── -->
+<text x="14" y="130" style="font-size:6px;font-family:Arial,sans-serif;fill:#888888">Plan Date</text>
+<text x="14" y="140" style="font-size:9px;font-family:Arial,sans-serif;font-weight:bold;fill:#000000">{{PlanStartDate}} // {{PlanFinishDate}}</text>
+
+<!-- ── Plant ── -->
+<text x="14" y="153" style="font-size:6px;font-family:Arial,sans-serif;fill:#888888">Plant</text>
+<text x="14" y="163" style="font-size:9px;font-family:Arial,sans-serif;font-weight:bold;fill:#000000">{{PlantId}} // {{PlantName}}</text>
+
+<!-- ── Divider ── -->
+<line x1="8" y1="170" x2="376" y2="170" stroke="#000000" stroke-width="0.8"/>
+
+<!-- ── Weight & Package Info ── -->
+<text x="14" y="183" style="font-size:9px;font-family:sans-serif;fill:#000000">{{PackageSize}} kg / {{BatchRequireSize}}</text>
+<text x="14" y="195" style="font-size:8px;font-family:sans-serif;fill:#555555">from</text>
+<text x="24" y="205" style="font-size:7px;font-family:sans-serif;fill:#000000">{{Lot1}}</text>
+<text x="24" y="215" style="font-size:7px;font-family:sans-serif;fill:#000000">{{Lot2}}</text>
+
+<!-- ── Package Number (bold, prominent) ── -->
+<text x="14" y="232" style="font-size:9px;font-family:sans-serif;font-weight:bold;fill:#000000">Package No: {{PackageNo}}</text>
+
+<!-- ── QR Code (bottom-right) ── -->
+<rect x="260" y="176" width="110" height="110" rx="3" fill="#000000" stroke="#000000" stroke-width="0.4"/>
+<g transform="translate(260, 176) scale(0.733)">
+  {{QRCode}}
+</g>
+
+<!-- ── Footer line ── -->
+<line x1="8" y1="255" x2="376" y2="255" stroke="#000000" stroke-width="1"/>
+
+<!-- ── Printed + Footer ── -->
+<text x="14" y="265" style="font-size:6px;font-family:Arial,sans-serif;fill:#888888">Printed:</text>
+<text x="14" y="276" style="font-size:8px;font-family:Arial,sans-serif;font-weight:bold;fill:#000000">{{Timestamp}}</text>
+<text x="370" y="276" text-anchor="end" style="font-size:6px;font-family:'Courier New',monospace;fill:#888888">xDev.co.th</text>
+</svg>

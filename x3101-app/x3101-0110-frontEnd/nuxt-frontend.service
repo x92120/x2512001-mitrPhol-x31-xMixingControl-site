@@ -1,0 +1,15 @@
+[Unit]
+Description=Nuxt Frontend for x2512001-mitrPhol
+After=network.target
+
+[Service]
+Type=simple
+User=x-root
+WorkingDirectory=/home/x-root/xApp/x2512001-mitrPhol-r02/x01-frontEnd/x0101-xMixing
+ExecStart=/usr/bin/npm run dev
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=development
+
+[Install]
+WantedBy=multi-user.target

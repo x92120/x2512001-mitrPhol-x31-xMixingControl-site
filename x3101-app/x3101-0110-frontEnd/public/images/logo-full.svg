@@ -1,0 +1,21 @@
+<svg width="240" height="60" viewBox="0 0 240 60" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gradient Definition -->
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFB800;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FFA500;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background Box (Yellow) - Extended width -->
+  <rect x="5" y="10" width="155" height="40" rx="8" fill="url(#logoGradient)"/>
+  
+  <!-- "xMixing" Text on Yellow Background (Red, Courier New) -->
+  <text x="82" y="37" font-family="'Courier New', Courier, monospace" font-size="22" font-weight="700" fill="#8B1A1A" text-anchor="middle">xMixing</text>
+  
+  <!-- "Control" Text (Red, Courier New) -->
+  <text x="170" y="28" font-family="'Courier New', Courier, monospace" font-size="20" font-weight="700" fill="#8B1A1A">Control</text>
+  
+  <!-- Version Text (Dark Gray, Courier New) -->
+  <text x="170" y="43" font-family="'Courier New', Courier, monospace" font-size="9" font-weight="400" fill="#666" letter-spacing="0.5">Version 2025r01</text>
+</svg>

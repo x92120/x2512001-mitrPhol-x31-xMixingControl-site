@@ -1,0 +1,38 @@
+{
+  "name": "xmixing-control",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev --host 0.0.0.0 --port 3030",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "start": "nuxt dev --host 0.0.0.0 --port 3030",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit"
+  },
+  "dependencies": {
+    "@quasar/extras": "^1.17.0",
+    "apexcharts": "^5.3.6",
+    "mqtt": "^5.14.1",
+    "nuxt": "^4.3.0",
+    "qrcode": "^1.5.4",
+    "quasar": "^2.18.6",
+    "vue": "^3.5.27",
+    "vue-router": "^4.6.4",
+    "vue3-apexcharts": "^1.10.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.1",
+    "@types/qrcode": "^1.5.6",
+    "@vitejs/plugin-vue": "^6.0.4",
+    "@vitest/browser-playwright": "^4.0.18",
+    "@vitest/coverage-v8": "^4.0.18",
+    "nuxt-quasar-ui": "^3.0.0",
+    "playwright": "^1.58.2",
+    "sass-embedded": "^1.97.3",
+    "vitest": "^4.0.18",
+    "vue-tsc": "^3.2.4"
+  }
+}

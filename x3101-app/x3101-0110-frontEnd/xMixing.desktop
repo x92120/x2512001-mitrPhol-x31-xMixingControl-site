@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=xMixingControl-01
+Comment=xMixing Control System 2025 - Production Management
+Exec=xdg-open http://localhost:3000
+Icon=/home/x92120/xApp/x01-mitrPhol/x01-localApp/x01-FrontEnd/x0101-xMixing_Nuxt/public/x_logo-192.png
+Terminal=false
+Categories=Office;Utility;
+StartupWMClass=xMixing

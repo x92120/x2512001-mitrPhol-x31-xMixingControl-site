@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="3.9552777in"
+   height="2.8866665in"
+   viewBox="0 0 395.52777 288.66665"
+   version="1.1"
+   id="svg473"
+   sodipodi:docname="BatchPlan-Label_4x3.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <rect
+     x="2.5124686"
+     y="0.67683893"
+     width="390"
+     height="286.66666"
+     rx="10"
+     fill="none"
+     stroke="#000000"
+     stroke-width="2"
+     id="rect423" />
+  <rect
+     x="5.4666915"
+     y="3.6310616"
+     width="384.09155"
+     height="279.59155"
+     rx="8.0019073"
+     fill="none"
+     stroke="#000000"
+     stroke-width="0.408445"
+     id="rect425" />
+  <rect
+     x="13.137468"
+     y="6.0935059"
+     width="372.39584"
+     height="19.819553"
+     rx="3.2500787"
+     fill="#000000"
+     id="rect427"
+     style="stroke-width:0.576598" />
+  <text
+     x="197.82744"
+     y="22.133533"
+     font-family="Arial, sans-serif"
+     font-size="24"
+     font-weight="bold"
+     fill="white"
+     text-anchor="middle"
+     id="text429"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:16.6667px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-anchor:middle;fill:#ffffff">Production Plan</text>
+  <text
+     x="16.407614"
+     y="39.004353"
+     fill="black444"
+     font-size="9.375px"
+     font-family="Arial, sans-serif"
+     id="text76"
+     style="stroke-width:1.04167;fill:#000000">SKU</text>
+  <text
+     x="16.609537"
+     y="52.939026"
+     fill="#000000"
+     font-size="17.7083px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-sku"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:13.8889px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;stroke-width:1.04167">{{SKU}}</text>
+  <text
+     x="16.064291"
+     y="67.897377"
+     fill="black444"
+     font-size="9.375px"
+     font-family="Arial, sans-serif"
+     id="text84"
+     style="stroke-width:1.04167;fill:#000000">Batch ID</text>
+  <text
+     x="16.53121"
+     y="85.107262"
+     fill="#000000"
+     font-size="18.75px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchid"
+     style="stroke-width:1.04167">{{BatchId}}</text>
+  <text
+     x="16.064291"
+     y="104.35571"
+     fill="black444"
+     font-size="9.375px"
+     font-family="Arial, sans-serif"
+     id="text92"
+     style="stroke-width:1.04167">Plan Date</text>
+  <text
+     x="16.615131"
+     y="117.79161"
+     fill="#000000"
+     font-size="13.5417px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-date"
+     style="stroke-width:1.04167">{{PlanStartDate}} // {{PlanFinishDate}}</text>
+  <text
+     x="165.30969"
+     y="135.07668"
+     fill="black444"
+     font-size="9.375px"
+     font-family="Arial, sans-serif"
+     id="text97"
+     style="stroke-width:1.04167">Batch Size / Plan Size</text>
+  <text
+     x="165.81018"
+     y="151.30602"
+     fill="#000000"
+     font-size="16.6667px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol"
+     style="stroke-width:1.04167">{{BatchSize}} kg / {{PlanSize}} kg</text>
+  <text
+     x="167.10596"
+     y="166.85571"
+     fill="black444"
+     font-size="9.375px"
+     font-family="Arial, sans-serif"
+     id="text102"
+     style="stroke-width:1.04167">Plant</text>
+  <text
+     x="167.64001"
+     y="181.04636"
+     fill="#000000"
+     font-size="14.5833px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-plant"
+     style="stroke-width:1.04167">{{PlantId}} // {{PlantName}}</text>
+  <text
+     x="167.56389"
+     y="199.75693"
+     fill="#000000"
+     font-size="15px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-batchno-3"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:11.1111px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;fill:#000000;stroke-width:1.04167">{{BatchNo}}</text>
+  <text
+     x="167.56389"
+     y="212.77777"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial, sans-serif"
+     id="text-vol-9"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:11.1111px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:1.04167">{{BatchSize}} kg / {{PlanSize}} kg</text>
+  <text
+     x="381.70685"
+     y="32.723713"
+     text-anchor="end"
+     id="text18-7"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:8px;font-family:'Courier Prime', 'Courier New', Courier, monospace;-inkscape-font-specification:'Courier Prime, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-anchor:end;fill:#000000">xDev.co.th</text>
+  <text
+     x="199.98357"
+     y="278.08008"
+     fill="#000000"
+     font-size="8px"
+     font-family="Arial, sans-serif"
+     text-anchor="middle"
+     id="text453_ts"
+     style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:8.33333px;font-family:Arial, sans-serif;-inkscape-font-specification:'Arial, sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-anchor:middle;fill:#000000">Printed at: {{Timestamp}}</text>
+  <defs
+     id="defs477" />
+  <sodipodi:namedview
+     id="namedview475"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#000000"
+     showgrid="true"
+     showguides="true"
+     inkscape:zoom="1.7418398"
+     inkscape:cx="9.4727426"
+     inkscape:cy="170.79642"
+     inkscape:window-width="1920"
+     inkscape:window-height="945"
+     inkscape:window-x="0"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg473"
+     inkscape:document-units="in">
+    <inkscape:grid
+       type="xygrid"
+       id="grid479"
+       units="mm"
+       spacingx="3.7795276"
+       spacingy="3.7795276"
+       dotted="true"
+       originx="-3.9999999"
+       originy="-3.9999998" />
+    <sodipodi:guide
+       position="-136.28347,311.56428"
+       orientation="1,0"
+       id="guide481"
+       inkscape:locked="false" />
+    <sodipodi:guide
+       position="-136.28347,292.66665"
+       orientation="1,0"
+       id="guide483"
+       inkscape:locked="false" />
+    <inkscape:grid
+       type="xygrid"
+       id="grid543"
+       spacingx="0.52083333"
+       spacingy="0.52083333"
+       originx="-3.9999999"
+       originy="-3.9999998" />
+  </sodipodi:namedview>
+  <!-- Outer Double Border (4x6 inch) -->
+  <!-- ========================================== -->
+  <!-- Header Section -->
+  <!-- ========================================== -->
+  <!-- ========================================== -->
+  <!-- Main Data Section -->
+  <!-- ========================================== -->
+  <!-- Values at the bottom -->
+  <!-- ========================================== -->
+  <!-- QR Code Section -->
+  <!-- ========================================== -->
+  <g
+     id="rec_qrcode-001"
+     transform="translate(-4,-4)">
+    {{QRCode}}
+  </g>
+  <rect
+     style="fill:none;stroke:#000000;stroke-width:0.985326"
+     id="qrCode-001"
+     width="134.01466"
+     height="134.01468"
+     x="14.897638"
+     y="128.8125" />
+</svg>
+<!-- ========================================== -->
+
+<!-- Footer Section -->
+
+<!-- ========================================== -->
+

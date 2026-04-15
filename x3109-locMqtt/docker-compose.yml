@@ -1,0 +1,36 @@
+version: '3.7'
+
+services:
+  # node-red:
+  #   image: nodered/node-red:latest
+  #   container_name: node-red
+  #   environment:
+  #     - TZ=Asia/Bangkok
+  #   ports:
+  #     - "1880:1880"
+  #   volumes:
+  #     - ./data:/data
+  #   # devices:
+  #   #   - "/dev/tty.usbserial-FTARKJMG2:/dev/ttyUSB0"
+  #   restart: "no"
+  #   depends_on:
+  #     - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672" # AMQP
+      - "1883:1883" # MQTT
+      - "15672:15672" # Management UI
+      - "15675:15675" # Web MQTT
+    environment:
+      - TZ=Asia/Bangkok
+      - RABBITMQ_DEFAULT_USER=xMixingNode-1
+      - RABBITMQ_DEFAULT_PASS=x123456
+    volumes:
+      - ./rabbitmq-data:/var/lib/rabbitmq
+    # Enable MQTT and Web MQTT plugins
+    command: >
+      sh -c "rabbitmq-plugins enable --offline rabbitmq_mqtt rabbitmq_web_mqtt && rabbitmq-server"
+    restart: "no"

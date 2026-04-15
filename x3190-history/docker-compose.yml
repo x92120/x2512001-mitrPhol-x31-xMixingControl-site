@@ -1,0 +1,32 @@
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: xMixing-influxdb
+    ports:
+      - "8087:8086" # Port 8086 is already in use by phpmyadmin in x2380-mySQL
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin1234
+      - DOCKER_INFLUXDB_INIT_ORG=mitrPholMixing
+      - DOCKER_INFLUXDB_INIT_BUCKET=MixingData
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=secret-token-mitrphol-history
+    restart: unless-stopped
+
+  telegraf:
+    image: telegraf:1.28
+    container_name: xMixing-telegraf
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  influxdb_data:
+  influxdb_config:

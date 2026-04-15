@@ -1,0 +1,22 @@
+<svg width="200" height="60" viewBox="0 0 200 60" xmlns="http://www.w3.org/2000/svg">
+  <!-- Rounded Rectangle: Yellow Fill (#FFB800), Red Border (#8B1A1A) -->
+  <rect x="5" y="5" width="190" height="50" rx="10" ry="10" 
+        fill="#FFB800" 
+        stroke="#8B1A1A" 
+        stroke-width="4" />
+  
+  <!-- "xMixing" Text: Courier New, Bold, Red (#8B1A1A) -->
+  <text x="100" y="38" 
+        font-family="'Courier New', Courier, monospace" 
+        font-size="34" 
+        font-weight="bold" 
+        fill="#8B1A1A" 
+        text-anchor="middle" 
+        letter-spacing="1">xMixing</text>
+  
+  <!-- Underline: Red (#8B1A1A) -->
+  <line x1="40" y1="46" x2="160" y2="46" 
+        stroke="#8B1A1A" 
+        stroke-width="3" 
+        stroke-linecap="round" />
+</svg>

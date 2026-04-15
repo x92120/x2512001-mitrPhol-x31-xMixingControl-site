@@ -1,0 +1,30 @@
+{
+    "en": {
+        "login.title": "User Login",
+        "login.usernameOrEmail": "Username or Email",
+        "login.password": "Password",
+        "login.loginButton": "Login",
+        "login.loginSuccess": "Login successful!",
+        "login.fillFields": "Please fill in all fields",
+        "login.invalidCredentials": "Invalid username or password",
+        "login.cannotConnect": "Cannot connect to server",
+        "login.noAccount": "Don''t have an account?",
+        "login.createAccount": "Create New Account",
+        "login.forgotPassword": "Forgot Password?",
+        "login.copyright": "© 2026 xMixing. All rights reserved."
+    },
+    "th": {
+        "login.title": "เข้าสู่ระบบ",
+        "login.usernameOrEmail": "ชื่อผู้ใช้หรืออีเมล",
+        "login.password": "รหัสผ่าน",
+        "login.loginButton": "เข้าสู่ระบบ",
+        "login.loginSuccess": "เข้าสู่ระบบสำเร็จ!",
+        "login.fillFields": "กรุณากรอกข้อมูลให้ครบ",
+        "login.invalidCredentials": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง",
+        "login.cannotConnect": "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์",
+        "login.noAccount": "ยังไม่มีบัญชี?",
+        "login.createAccount": "สร้างบัญชีใหม่",
+        "login.forgotPassword": "ลืมรหัสผ่าน?",
+        "login.copyright": "© 2026 xMixing สงวนลิขสิทธิ์"
+    }
+}

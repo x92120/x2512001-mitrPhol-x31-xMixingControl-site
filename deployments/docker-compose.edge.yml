@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  edge-worker:
+    image: xmixing/edge-worker:latest
+    container_name: xmixing-plc-bridge
+    restart: always
+    environment:
+      - PLC_TARGET_IP=192.168.21.51
+      - PLC_RACK=0
+      - PLC_SLOT=1
+      - CENTRAL_API_URL=http://192.168.121.11:8000
+    networks:
+      - edge-net
+
+  frontend-ui:
+    image: xmixing/frontend-ui:latest
+    container_name: xmixing-edge-ui
+    restart: always
+    ports:
+      - "80:3000"
+    environment:
+      - NUXT_PUBLIC_API_BASE_URL=http://192.168.121.11:8000
+    networks:
+      - edge-net
+
+networks:
+  edge-net:
+    driver: bridge

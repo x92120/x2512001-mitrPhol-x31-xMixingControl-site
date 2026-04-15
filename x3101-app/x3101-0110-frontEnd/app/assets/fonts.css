@@ -1,0 +1,96 @@
+/* ========================================
+   Courier Prime - Offline Font
+   ======================================== */
+
+@font-face {
+  font-family: 'Courier Prime';
+  src: url('/fonts/CourierPrime-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Courier Prime';
+  src: url('/fonts/CourierPrime-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Courier Prime';
+  src: url('/fonts/CourierPrime-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Courier Prime';
+  src: url('/fonts/CourierPrime-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* Utility class for Courier Prime */
+.font-courier {
+  font-family: 'Courier Prime', 'Courier New', Courier, monospace;
+}
+
+/* ========================================
+   Global App Sizing - Larger UI
+   ======================================== */
+
+html {
+  /* zoom controlled by nav bar slider */
+}
+
+body {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+/* Quasar table sizing */
+.q-table th,
+.q-table td {
+  font-size: 16px;
+  padding: 8px 12px;
+}
+
+.q-table .text-caption {
+  font-size: 14px;
+}
+
+/* Quasar toolbar & tabs */
+.q-toolbar {
+  min-height: 56px;
+  padding: 0 16px;
+}
+
+.q-tab__label {
+  font-size: 15px;
+}
+
+/* Quasar inputs */
+.q-field__native,
+.q-field__input {
+  font-size: 16px;
+}
+
+/* Quasar buttons */
+.q-btn__content {
+  font-size: 15px;
+}
+
+/* Quasar cards */
+.q-card__section {
+  font-size: 16px;
+}
+
+/* Dialog text */
+.q-dialog .text-body2,
+.q-dialog .text-subtitle2 {
+  font-size: 16px;
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=xMixing Nuxt Frontend Production (port 3000)
+After=network.target xmixing-backend.service
+Wants=xmixing-backend.service
+
+[Service]
+Type=simple
+User=x-root
+Group=x-root
+WorkingDirectory=/home/x-root/xApp/x2512001-mitrPhol-r02-SPP/x01-frontEnd/x0101-xMixing
+ExecStart=/usr/bin/node .output/server/index.mjs
+Environment=HOST=0.0.0.0
+Environment=PORT=3000
+Environment=NODE_ENV=production
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/x-root/xApp/x2512001-mitrPhol-r02-SPP/frontend.log
+StandardError=append:/home/x-root/xApp/x2512001-mitrPhol-r02-SPP/frontend.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="400"
+   height="600"
+   viewBox="0 0 400 600"
+   version="1.1"
+   id="svg19"
+   sodipodi:docname="label-template-001.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs19" />
+  <sodipodi:namedview
+     id="namedview19"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#000000"
+     inkscape:zoom="0.93394134"
+     inkscape:cx="-23.020718"
+     inkscape:cy="300.34006"
+     inkscape:window-width="1920"
+     inkscape:window-height="945"
+     inkscape:window-x="0"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg19"
+     showgrid="false" />
+  <!-- Outer Double Border (4x4 inch) -->
+  <rect
+     x="5"
+     y="5"
+     width="390"
+     height="590"
+     rx="10"
+     fill="none"
+     stroke="black"
+     stroke-width="2"
+     id="rect1" />
+  <rect
+     x="8"
+     y="8"
+     width="384"
+     height="584"
+     rx="8"
+     fill="none"
+     stroke="black"
+     stroke-width="0.5"
+     id="rect2" />
+  <!-- ========================================== -->
+  <!-- Header Section -->
+  <!-- ========================================== -->
+  <rect
+     x="15"
+     y="15"
+     width="370"
+     height="60"
+     rx="8"
+     fill="black"
+     id="rect3" />
+  <!-- ========================================== -->
+  <!-- Main Data Section -->
+  <!-- ========================================== -->
+  <!-- ========================================== -->
+  <!-- QR Code Section -->
+  <!-- ========================================== -->
+  <g
+     transform="translate(285, 85) scale(0.9)"
+     id="g16">
+    {{BoxQRCode}}
+  </g>
+  <!-- ========================================== -->
+  <!-- Footer Section -->
+  <!-- ========================================== -->
+  <line
+     x1="15"
+     y1="555"
+     x2="385"
+     y2="555"
+     stroke="black"
+     stroke-width="1.5"
+     id="line16" />
+  <text
+     x="380.89917"
+     y="588.87714"
+     text-anchor="end"
+     id="text18-7"
+     style="font-style:normal;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:8px;font-family:'Courier Prime', 'Courier New', Courier, monospace;-inkscape-font-specification:'Courier Prime, Bold';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;text-anchor:end;fill:#000000">xDev.co.th</text>
+</svg>

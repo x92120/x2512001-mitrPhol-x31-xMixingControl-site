@@ -1,0 +1,34 @@
+{
+    "en": {
+        "nav.home": "Home",
+        "nav.ingredientIntake": "Ingredient Intake",
+        "nav.sku": "SKU",
+        "nav.productionPlan": "Production Plan",
+        "nav.batchPrepare": "Batch Prepare",
+        "nav.packingList": "Packing List",
+        "nav.batchRecheck": "Batch Re-Check",
+        "nav.productionControl": "Production Control",
+        "nav.user": "User",
+        "nav.systemDashboard": "System Dashboard",
+        "nav.about": "About",
+        "nav.login": "Login",
+        "nav.logout": "Logout",
+        "nav.loggedOut": "Logged out successfully"
+    },
+    "th": {
+        "nav.home": "หน้าหลัก",
+        "nav.ingredientIntake": "รับวัตถุดิบ",
+        "nav.sku": "สูตรผลิตภัณฑ์",
+        "nav.productionPlan": "แผนการผลิต",
+        "nav.batchPrepare": "เตรียมแบทช์",
+        "nav.packingList": "รายการบรรจุ",
+        "nav.batchRecheck": "ตรวจสอบแบทช์",
+        "nav.productionControl": "ควบคุมการผลิต",
+        "nav.user": "ผู้ใช้",
+        "nav.systemDashboard": "แดชบอร์ดระบบ",
+        "nav.about": "เกี่ยวกับ",
+        "nav.login": "เข้าสู่ระบบ",
+        "nav.logout": "ออกจากระบบ",
+        "nav.loggedOut": "ออกจากระบบสำเร็จ"
+    }
+}

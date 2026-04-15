@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  xmixing-db:
+    image: mysql:8.0
+    container_name: xmixing-database
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: xmixing_db
+      MYSQL_USER: xmixing_user
+      MYSQL_PASSWORD: xmixing_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - central-net
+
+  central-api:
+    image: xmixing/central-api:latest
+    container_name: xmixing-fastapi
+    restart: always
+    depends_on:
+      - xmixing-db
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=mysql+pymysql://xmixing_user:xmixing_password@xmixing-db:3306/xmixing_db
+      - ENVIRONMENT=production
+    networks:
+      - central-net
+
+volumes:
+  db_data:
+
+networks:
+  central-net:
+    driver: bridge

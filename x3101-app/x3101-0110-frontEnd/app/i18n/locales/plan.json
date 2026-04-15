@@ -1,0 +1,26 @@
+{
+    "en": {
+        "plan.title": "Production Plan",
+        "plan.planId": "Plan ID",
+        "plan.createPlan": "Create Plan",
+        "plan.selectSKU": "Select SKU",
+        "plan.batchCount": "Batch Count",
+        "plan.totalVolume": "Total Volume",
+        "plan.planDate": "Plan Date",
+        "plan.createdBy": "Created By",
+        "plan.batches": "Batches",
+        "plan.cancelPlan": "Cancel Plan"
+    },
+    "th": {
+        "plan.title": "แผนการผลิต",
+        "plan.planId": "รหัสแผน",
+        "plan.createPlan": "สร้างแผน",
+        "plan.selectSKU": "เลือกสูตร",
+        "plan.batchCount": "จำนวนแบทช์",
+        "plan.totalVolume": "ปริมาณรวม",
+        "plan.planDate": "วันที่แผน",
+        "plan.createdBy": "สร้างโดย",
+        "plan.batches": "แบทช์",
+        "plan.cancelPlan": "ยกเลิกแผน"
+    }
+}

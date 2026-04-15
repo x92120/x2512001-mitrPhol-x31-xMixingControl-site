@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Print Label</title>
+    <script>
+        async function loadLabel() {
+            try {
+                // Fetch the SVG
+                const response = await fetch('/labels/prebatch-label.svg');
+                let svg = await response.text();
+
+                // Inject data
+                const batch = "TEST-BATCH-001";
+                const plan = "TEST-PLAN-2026-02-20";
+                const bag_id = "TEST-BATCH-001-BAG-01";
+                const w = "25.480";
+                
+                const qrData = `${plan},${bag_id},SUGAR-01,${w}`;
+                
+                // Load QRCode lib
+                const script = document.createElement('script');
+                script.src = "https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js";
+                script.onload = async () => {
+                    const qrUrl = await QRCode.toDataURL(qrData, { margin: 0, scale: 4 });
+                    const imgTag = `<image x="0" y="0" width="100" height="100" href="${qrUrl}" />`;
+                    
+                    svg = svg.replace(/{{QRCode}}/g, imgTag);
+                    svg = svg.replace(/{{SmallQRCode}}/g, imgTag);
+                    svg = svg.replace(/{{RecipeName}}/g, 'Test Sweet Mix');
+                    svg = svg.replace(/{{BaseQuantity}}/g, '100');
+                    svg = svg.replace(/{{ItemNumber}}/g, '-');
+                    svg = svg.replace(/{{RefCode}}/g, 'SUGAR-01');
+                    svg = svg.replace(/{{OrderCode}}/g, plan);
+                    svg = svg.replace(/{{BatchSize}}/g, '100');
+                    svg = svg.replace(/{{Weight}}/g, '25.480 / 25.500');
+                    svg = svg.replace(/{{Packages}}/g, '1 / 1');
+                    svg = svg.replace(/{{LotID}}/g, 'LOT-999');
+
+                    document.getElementById('label-container').innerHTML = svg;
+                    setTimeout(() => window.print(), 500);
+                };
+                document.head.appendChild(script);
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('msg').innerText = "Error loading template";
+            }
+        }
+    </script>
+    <style>
+        body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+        #label-container { display: inline-block; width: 4in; height: 4in; border: 1px solid #ccc; margin-top: 20px;}
+        svg { width: 100%; height: 100%; }
+        @media print {
+            body { margin: 0; padding: 0; }
+            button, h2, p { display: none; }
+            #label-container { border: none; margin: 0; }
+        }
+    </style>
+</head>
+<body>
+    <h2>Test Bag Label Generator</h2>
+    <p id="msg">Click below to generate and print a physical label for the database seed.</p>
+    <button onclick="loadLabel()" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">Generate & Print Test Label</button>
+    <br/>
+    <div id="label-container"></div>
+</body>
+</html>

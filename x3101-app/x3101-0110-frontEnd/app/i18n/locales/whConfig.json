@@ -1,0 +1,30 @@
+{
+    "en": {
+        "whConfig.title": "Warehouse Configuration",
+        "whConfig.addWarehouse": "Add Warehouse",
+        "whConfig.editWarehouse": "Edit Warehouse",
+        "whConfig.addNewWarehouse": "Add New Warehouse",
+        "whConfig.warehouseId": "Warehouse ID",
+        "whConfig.warehouseName": "Warehouse Name",
+        "whConfig.confirmDelete": "Are you sure you want to delete this warehouse?",
+        "whConfig.warehouseDeleted": "Warehouse deleted",
+        "whConfig.idNameRequired": "ID and Name are required",
+        "whConfig.warehouseUpdated": "Warehouse updated",
+        "whConfig.warehouseIdExists": "Warehouse ID already exists",
+        "whConfig.warehouseAdded": "Warehouse added"
+    },
+    "th": {
+        "whConfig.title": "การตั้งค่าคลังสินค้า",
+        "whConfig.addWarehouse": "เพิ่มคลังสินค้า",
+        "whConfig.editWarehouse": "แก้ไขคลังสินค้า",
+        "whConfig.addNewWarehouse": "เพิ่มคลังสินค้าใหม่",
+        "whConfig.warehouseId": "รหัสคลังสินค้า",
+        "whConfig.warehouseName": "ชื่อคลังสินค้า",
+        "whConfig.confirmDelete": "คุณแน่ใจหรือไม่ว่าต้องการลบคลังสินค้านี้?",
+        "whConfig.warehouseDeleted": "ลบคลังสินค้าแล้ว",
+        "whConfig.idNameRequired": "ต้องระบุรหัสและชื่อ",
+        "whConfig.warehouseUpdated": "อัปเดตคลังสินค้าแล้ว",
+        "whConfig.warehouseIdExists": "รหัสคลังสินค้าซ้ำ",
+        "whConfig.warehouseAdded": "เพิ่มคลังสินค้าแล้ว"
+    }
+}
