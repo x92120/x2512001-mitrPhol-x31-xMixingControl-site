@@ -120,8 +120,38 @@
                   </q-card-section>
                 </q-card>
               </div>
-
             </div>
+            
+            <!-- Live Scan Data -->
+            <div class="q-mt-md">
+              <div class="text-overline text-grey-6 text-weight-bold q-mb-xs">LIVE SCAN (MQTT)</div>
+              <div v-if="plantsData[id]?.lastScan" class="scan-card bg-grey-9 text-white q-pa-md rounded-borders shadow-2 overflow-hidden position-relative">
+                <div class="row items-center justify-between q-mb-sm">
+                  <q-icon name="qr_code_scanner" size="18px" color="cyan-4" />
+                  <span class="text-caption text-cyan-4 tech-font">{{ plantsData[id]?.lastScan?.timestamp }}</span>
+                </div>
+                <div class="text-caption text-grey-4">BATCH RECORD</div>
+                <div class="text-subtitle2 text-weight-bold tech-font q-mb-sm truncate">{{ plantsData[id]?.lastScan?.batch_record_id }}</div>
+                
+                <div class="row q-col-gutter-sm">
+                  <div class="col-7">
+                    <div class="text-caption text-grey-4 text-uppercase">Material</div>
+                    <div class="text-weight-bold text-amber-6 tech-font truncate">{{ plantsData[id]?.lastScan?.material_id }}</div>
+                  </div>
+                  <div class="col-5 text-right">
+                    <div class="text-caption text-grey-4 text-uppercase">Weight</div>
+                    <div class="text-h6 text-green-4 text-weight-bolder tech-font">{{ plantsData[id]?.lastScan?.net_weight }} <span class="text-caption">kg</span></div>
+                  </div>
+                </div>
+                <!-- Scan decorative line -->
+                <div class="scan-beam"></div>
+              </div>
+              <div v-else class="scan-card-placeholder flex flex-center border-subtle q-pa-sm rounded-borders text-grey-5">
+                <q-icon name="hourglass_empty" size="20px" class="q-mr-sm" />
+                <span class="text-caption">Awaiting Scans...</span>
+              </div>
+            </div>
+
           </q-card-section>
         </q-card>
       </div>
@@ -222,11 +252,41 @@ const getTempColor = (temp: number | undefined) => {
   font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
 }
 
-.watchdog-bar {
-  border-radius: 4px;
-  height: 6px;
-  flex: 1;
-  background: rgba(0,0,0,0.15);
+.scan-card {
+  min-height: 110px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.scan-card-placeholder {
+  min-height: 110px;
+  background: rgba(0,0,0,0.02);
+  border: 1px dashed rgba(0,0,0,0.1);
+}
+
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.position-relative {
+  position: relative;
+}
+
+.scan-beam {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #4dd0e1, transparent);
+  animation: scan-move 2s infinite linear;
+  opacity: 0.5;
+}
+
+@keyframes scan-move {
+  0% { top: 0; }
+  100% { top: 100%; }
 }
 
 @keyframes beat {

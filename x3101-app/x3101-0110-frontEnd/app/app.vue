@@ -128,8 +128,6 @@ const printScreen = () => {
           v-if="hasPermission('production_list')"
         />
         <q-route-tab to="/x89-UserConfig" icon="manage_accounts" :label="t('nav.user')" v-if="hasPermission('admin')" />
-        <q-route-tab to="/x90-systemDashboard" icon="dashboard" :label="t('nav.systemDashboard')" v-if="hasPermission('admin')" />
-        <q-route-tab to="/x91-ServerStation" icon="dns" label="Server Station" v-if="hasPermission('admin')" />
         <q-route-tab to="/x100-PlantMonitor" icon="monitor" label="Plant Monitor" />
         <q-route-tab to="/x99-About" icon="info" :label="t('nav.about')" />
       </q-tabs>

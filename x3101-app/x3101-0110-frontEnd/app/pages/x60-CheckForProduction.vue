@@ -2,11 +2,11 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { appConfig } from '~/appConfig/config'
-import { useLabelPrinter } from '../composables/useLabelPrinter'
+
 
 const $q = useQuasar()
 const { getAuthHeader, user } = useAuth()
-const { generateLabelSvg, printLabel } = useLabelPrinter()
+
 const { t } = useI18n()
 
 // --- State ---
@@ -53,10 +53,7 @@ const boxScanInput = ref('')
 const bagScanInput = ref('')
 const bagScanRef = ref<any>(null)
 
-// Scanner Simulator Dialog
-const showScannerDialog = ref(false)
-const scannerMode = ref<'box' | 'bag'>('box')
-const scannerLoading = ref(false)
+
 
 // All available batches for the simulator
 const allPlans = ref<any[]>([])
@@ -94,16 +91,10 @@ watch(selectedPlantFilter, () => {
     applyPlantFilter()
 })
 
-// Label preview in simulator
-const previewLabelSvg = ref('')
-const previewBagLabels = ref<{svg: string, batch_record_id: string, re_code: string}[]>([])
-const selectedSimBatch = ref<any>(null)
 
-// Bags from OTHER batches (for wrong-box simulation)
-const otherBatchBagLabels = ref<{svg: string, batch_record_id: string, re_code: string, source_batch: string}[]>([])
 
 // ── Tree navigation state (Left Pane) ──
-const selectedSku = ref<string | null>(null)
+
 const selectedPlanId = ref<string | null>(null)
 const selectedBatchId = ref<string | null>(null)
 const treeSearch = ref('')
@@ -142,6 +133,19 @@ const saveSoundSettings = () => {
     localStorage.setItem('recheck_error_sound', errorSoundPreset.value)
     showSoundSettings.value = false
     $q.notify({ type: 'positive', message: t('sound.saved'), position: 'top' })
+}
+
+// ── Scan Feedback ──
+const lastScanResult = ref<'none' | 'success' | 'error'>('none')
+const flashActive = ref(false)
+const setScanFeedback = (result: 'success' | 'error') => {
+    lastScanResult.value = result
+    flashActive.value = true
+    setTimeout(() => { flashActive.value = false }, 1500)
+}
+const clearScanFeedback = () => {
+    lastScanResult.value = 'none'
+    flashActive.value = false
 }
 
 // --- Computed ---
@@ -239,11 +243,7 @@ const getTreeBatchSPP = (batch: any) => {
     return batch.spp_boxed_at || batch.spp_boxed || false
 }
 
-const selectedPlanBatches = computed(() => {
-    if (!selectedPlanId.value) return []
-    const plan = planTree.value.find((p: any) => p.plan_id === selectedPlanId.value)
-    return plan?.batches || []
-})
+
 
 const selectBatchFromTree = (batch: any) => {
     selectedBatchId.value = batch.batch_id
@@ -281,18 +281,7 @@ const fetchBatchPreBatchData = async (batchId: string) => {
     }
 }
 
-// Packed items grouped by re_code
-const packedByIngredient = computed(() => {
-    const map: Record<string, { re_code: string, mat_sap_code: string, count: number, total_vol: number, records: any[] }> = {}
-    for (const r of batchPackedRecs.value) {
-        const code = r.re_code || '?'
-        if (!map[code]) map[code] = { re_code: code, mat_sap_code: r.mat_sap_code || '-', count: 0, total_vol: 0, records: [] }
-        map[code].count++
-        map[code].total_vol += (r.net_volume || 0)
-        map[code].records.push(r)
-    }
-    return Object.values(map).sort((a, b) => a.re_code.localeCompare(b.re_code))
-})
+
 
 // Toggle prebatch item status (Wait ↔ Check)
 const toggleItemStatus = async (item: any) => {
@@ -310,17 +299,46 @@ const toggleItemStatus = async (item: any) => {
 }
 
 // Toggle packed record recheck status
-const toggleRecStatus = async (rec: any) => {
-    const newStatus = rec.recheck_status === 1 ? 0 : 1
+const toggleVerificationStatus = async (item: any) => {
+    const newStatus = item.recheck_status === 1 ? 0 : 1
+    // Try both prebatch-recs and prebatch-items endpoints based on which one is successful
+    const endpoints = [
+        `${appConfig.apiBaseUrl}/prebatch-recs/${item.id}/recheck-status?status=${newStatus}`,
+        `${appConfig.apiBaseUrl}/prebatch-items/${item.id}/recheck-status?status=${newStatus}`
+    ]
+    
+    let success = false
+    for (const url of endpoints) {
+        try {
+            await $fetch(url, {
+                method: 'PATCH',
+                headers: getAuthHeader() as Record<string, string>
+            })
+            success = true
+            break
+        } catch (e) {
+            // Keep trying next endpoint
+        }
+    }
+
+    if (success) {
+        item.recheck_status = newStatus
+    } else {
+        $q.notify({ type: 'negative', message: 'Failed to update status', position: 'top' })
+    }
+}
+
+const quickCheckIngredient = async (ing: any) => {
+    loading.value = true
     try {
-        await $fetch(`${appConfig.apiBaseUrl}/prebatch-recs/${rec.id}/packing-status`, {
-            method: 'PATCH',
-            headers: getAuthHeader() as Record<string, string>,
-            body: { packing_status: newStatus, packed_by: user.value?.username || 'operator' }
-        })
-        rec.recheck_status = newStatus
-    } catch (e) {
-        $q.notify({ type: 'negative', message: 'Failed to update', position: 'top' })
+        for (const item of ing.items) {
+            if (item.recheck_status !== 1) {
+                await toggleVerificationStatus(item)
+            }
+        }
+        $q.notify({ type: 'positive', message: `${ing.re_code} verified`, position: 'top', timeout: 500 })
+    } finally {
+        loading.value = false
     }
 }
 
@@ -403,6 +421,20 @@ const getPhaseColor = (step: any) => {
     const key = step.phase_id || step.phase_number || '0'
     return phaseColorMap.value[key] || ''
 }
+
+const canStartProduction = computed(() => {
+    if (!selectedBatchId.value) return false
+    
+    // EVERY ingredient in EVERY warehouse group MUST be verified (recheck_status === 1)
+    for (const group of prebatchByWarehouse.value) {
+        if (!group.ingredients.every((ing: any) => ing.recheck_status === 1)) {
+            return false
+        }
+    }
+    
+    // Ensure we actually have items to check (avoid enabling on empty batches)
+    return prebatchByWarehouse.value.length > 0
+})
 
 // Info about the currently selected batch (from tree/loaded plan data)
 const selectedBatchInfo = computed(() => {
@@ -496,6 +528,24 @@ const prebatchByWarehouse = computed(() => {
     })
 })
 
+const getWhTotalCount = (wh: string) => {
+    const group = prebatchByWarehouse.value.find(g => g.warehouse === wh)
+    return group ? group.ingredients.length : 0
+}
+
+const getWhCheckCount = (wh: string) => {
+    const group = prebatchByWarehouse.value.find(g => g.warehouse === wh)
+    if (!group) return 0
+    return group.ingredients.filter((ing: any) => ing.recheck_status === 1).length
+}
+
+const getWhStatus = (wh: string) => {
+    const total = getWhTotalCount(wh)
+    if (total === 0) return -1 // Not applicable
+    const checked = getWhCheckCount(wh)
+    return checked >= total ? 1 : 0
+}
+
 
 const fetchPlansAndBatches = async () => {
     try {
@@ -556,6 +606,18 @@ const fetchBatchRecheck = async (batchId: string) => {
         boxDetails.value = null // Clear box-level data
         const s = data.summary
         showFeedback('success', `Batch loaded: ${s.total} items (${s.checked} checked, ${s.pending} pending)`, 'BATCH LOADED')
+        
+        // --- NEW: POPUP PROMPT FOR BAG SCAN ---
+        $q.notify({
+            message: 'PLEASE SCAN PRE-BATCH LABELS',
+            caption: `Batch: ${batchId} | Verified: ${s.checked}/${s.total}`,
+            icon: 'qr_code_scanner',
+            color: 'indigo-10',
+            position: 'center',
+            timeout: 3000,
+            classes: 'text-h6 q-pa-md shadow-10'
+        })
+
         playSound('success')
         setTimeout(() => { bagScanRef.value?.focus() }, 200)
     } catch (error: any) {
@@ -587,9 +649,11 @@ const verifyBatchBag = async (bagBarcode: string) => {
         if (response.status === 'OK') {
             showFeedback('success', `${response.bag.re_code} — ${response.bag.actual}kg ✓`, 'RE-CHECK OK')
             playSound('success')
+            setScanFeedback('success')
         } else {
             showFeedback('error', `${response.bag.re_code}: Expected ${response.bag.target}kg, got ${response.bag.actual}kg`, 'WEIGHT MISMATCH')
             playSound('error')
+            setScanFeedback('error')
         }
 
         // Refresh batch recheck
@@ -614,47 +678,191 @@ const verifyBatchBag = async (bagBarcode: string) => {
 
 const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
     barcode = barcode.trim()
-    if (!barcode) return
+    
+    let candidate = barcode
+    let isJson = false
 
-    // Parse QR code format: plan_id,batch_id,TYPE,extra...
-    const parts = barcode.split(',')
-
-    if (context === 'box') {
-        let candidate = barcode
-
-        if (parts.length >= 3 && parts[2] === 'BOX') {
-            // Box QR: plan_id,batch_id,BOX,bag_count,total_vol
-            candidate = parts[1]!
-        } else if (parts.length >= 4 && parts[2] !== 'BOX') {
-            // PreBatch bag QR: plan_id,batch_record_id,prebatch_id,re_code,volume
-            // Extract batch_id from batch_record_id (e.g. P260311-02-02-003-FV044A-2 → P260311-02-02-003)
-            const batchRecordId = parts[1]!
-            const dashParts = batchRecordId.split('-')
-            candidate = dashParts.length >= 4 ? dashParts.slice(0, 4).join('-') : batchRecordId
+    // --- Custom parser for scanner's non-standard format ---
+    // Scanner sends: {"b:P260411-021-05FV045A-1","m:126450241100026","p:1/","n:0.132,"t:0.132}
+    // This is NOT valid JSON. Keys and values are merged inside quotes as "key:value"
+    let parsedOk = false
+    let scanFields: Record<string, any> = {}
+    
+    if (barcode.startsWith('{')) {
+        // Custom key:value parser using regex
+        let inner = barcode.substring(1)
+        if (inner.endsWith('}')) inner = inner.substring(0, inner.length - 1)
+        
+        const regex = /"?(\w+):([^,"}]*)"?/g
+        let m
+        while ((m = regex.exec(inner)) !== null) {
+            const key = m[1]!
+            let val: any = m[2]!.replace(/"/g, '')
+            const num = Number(val)
+            scanFields[key] = isNaN(num) || val === '' ? val : num
         }
-
-        // Always try batch-level recheck first
-        const ok = await fetchBatchRecheck(candidate)
-        if (ok) return
-
-        // Fallback: box-level
-        fetchBoxDetails(candidate)
-    } else {
-        // Bag scan
-        const bagBarcode = parts.length >= 4 && parts[2] !== 'BOX' ? parts[1]! : barcode
-
-        // Use batch-level verify if we have batch recheck active
-        if (batchRecheck.value && recheckBatchId.value) {
-            verifyBatchBag(bagBarcode)
-            return
+        
+        if (scanFields.b) {
+            const batchRecordId = String(scanFields.b)
+            // Batch ID = first 14 characters (e.g. P260411-021-05)
+            // RE Code  = after char 14 (e.g. FV045A-1)
+            if (batchRecordId.toUpperCase().startsWith('P') && batchRecordId.length >= 14) {
+                candidate = batchRecordId.substring(0, 14)
+            } else {
+                const parts = batchRecordId.split('-')
+                candidate = parts.length >= 3 ? parts.slice(0, 3).join('-') : batchRecordId
+            }
+            barcode = batchRecordId  // Full record ID for bag verification
+            isJson = true
+            parsedOk = true
+            console.log('[Scanner Parse]', { candidate, batchRecordId, scanFields })
         }
+    }
 
-        // Fallback: box-level verify
-        if (parts.length >= 4 && parts[2] !== 'BOX') {
-            verifyBag(parts[1]!)
+    if (!isJson) {
+        // Clean up potentially wrapped quotes
+        if (barcode.startsWith('"') && barcode.endsWith('"')) {
+            barcode = barcode.substring(1, barcode.length - 1)
+        }
+        
+        // Legacy split handling (Comma separated)
+        const parts = barcode.split(',')
+        if (context === 'box') {
+            if (parts.length >= 3 && parts[2] === 'BOX') {
+                candidate = parts[1]!
+            } else if (parts.length >= 4 && parts[2] !== 'BOX') {
+                const batchRecordId = parts[1]!
+                const dashParts = batchRecordId.split('-')
+                candidate = dashParts.length >= 4 ? dashParts.slice(0, 4).join('-') : batchRecordId
+            } else {
+                candidate = barcode
+            }
         } else {
-            verifyBag(barcode)
+            candidate = parts.length >= 4 && parts[2] !== 'BOX' ? parts[1]! : barcode
         }
+    }
+ 
+    // ── WORKFLOW ROUTING ──
+    // Step 1: If NO batch loaded yet → Load the batch (from any scan type)
+    // Step 2+: If batch IS loaded → Verify the scanned preBatch label (green spot)
+    
+    const batchAlreadyLoaded = !!(selectedBatchId.value && batchPreBatchItems.value.length > 0)
+    
+    if (!batchAlreadyLoaded) {
+        // ═══ STEP 1: LOAD BATCH ═══
+        // First scan — extract Batch ID and load all data
+        treeSearch.value = candidate
+        
+        // Flexible batch matching: exact → startsWith → contains
+        const foundBatch = allBatches.value.find(b => b.batch_id === candidate) 
+            || allBatches.value.find(b => b.batch_id.startsWith(candidate))
+            || allBatches.value.find(b => candidate.startsWith(b.batch_id))
+        
+        if (foundBatch) {
+            selectBatchFromTree(foundBatch)
+            // Use the actual batch_id from the tree (canonical form)
+            candidate = foundBatch.batch_id
+            treeSearch.value = candidate
+        } else {
+            selectedBatchId.value = candidate
+            fetchBatchPreBatchData(candidate)
+        }
+
+        // Try recheck data
+        await fetchBatchRecheck(candidate)
+        
+        // Show popup: "SCAN PREBATCH LABELS"
+        $q.notify({
+            message: '📦 Batch Loaded — SCAN PREBATCH LABELS',
+            caption: `Batch: ${candidate}`,
+            icon: 'qr_code_scanner',
+            color: 'indigo-10',
+            position: 'center',
+            timeout: 3000,
+            classes: 'text-h6 q-pa-md shadow-10'
+        })
+        
+        // Focus to bag scan input
+        setTimeout(() => { bagScanRef.value?.focus() }, 300)
+        
+    } else {
+        // ═══ STEP 2+: VERIFY PREBATCH LABEL (GREEN SPOT) ═══
+        // Batch is loaded — scan is a preBatch bag label
+        // Extract RE Code from the scanned data and match against ingredients
+        
+        let reCodeFromScan = ''
+        let fullRecordId = ''
+        
+        if (isJson && scanFields.b) {
+            fullRecordId = String(scanFields.b)
+            // RE Code = everything after the 14-char Batch ID, minus bag number
+            if (fullRecordId.length > 14) {
+                reCodeFromScan = fullRecordId.substring(14).replace(/-\d+$/, '')
+            }
+        } else {
+            fullRecordId = barcode
+            // Try to extract RE code from plain text (last segment before bag number)
+            const parts = barcode.split('-')
+            if (parts.length > 3) {
+                reCodeFromScan = parts.slice(3).join('-').replace(/-\d+$/, '')
+            }
+        }
+        
+        console.log('[Verify Scan]', { fullRecordId, reCodeFromScan, candidate })
+        
+        // Find matching ingredient in prebatchByWarehouse
+        let matched = false
+        for (const group of prebatchByWarehouse.value) {
+            const ing = group.ingredients.find((i: any) => 
+                i.re_code === reCodeFromScan || 
+                i.re_code === fullRecordId
+            )
+            if (ing && ing.recheck_status !== 1) {
+                // Mark this ingredient as verified (GREEN SPOT)
+                await quickCheckIngredient(ing)
+                setScanFeedback('success')
+                playSound('success')
+                showFeedback('success', `✅ ${ing.re_code} — Verified!`, 'PREBATCH OK')
+                matched = true
+                break
+            } else if (ing && ing.recheck_status === 1) {
+                // Already verified
+                setScanFeedback('success')
+                showFeedback('warning', `${ing.re_code} already verified`, 'DUPLICATE SCAN')
+                matched = true
+                break
+            }
+        }
+        
+        if (!matched) {
+            // Not found in current batch — try backend verification as fallback
+            if (batchRecheck.value && recheckBatchId.value) {
+                await verifyBatchBag(fullRecordId)
+            } else {
+                setScanFeedback('error')
+                playSound('error')
+                showFeedback('error', `RE Code "${reCodeFromScan || fullRecordId}" not found in this batch`, 'NOT MATCHED')
+            }
+        }
+        
+        // Check if ALL done → show "READY" message
+        if (canStartProduction.value) {
+            $q.notify({
+                message: '🎉 ALL INGREDIENTS VERIFIED!',
+                caption: 'Ready to Start Production',
+                icon: 'check_circle',
+                color: 'green-9',
+                position: 'center',
+                timeout: 5000,
+                classes: 'text-h5 q-pa-lg shadow-10'
+            })
+            playSound('success')
+        }
+        
+        // Re-focus for next scan
+        bagScanInput.value = ''
+        boxScanInput.value = ''
+        nextTick(() => { bagScanRef.value?.focus() })
     }
 }
 
@@ -679,9 +887,11 @@ const verifyBag = async (bagBarcode: string) => {
         if (response.status === 'OK') {
             showFeedback('success', `${response.bag.re_code} — ${response.bag.actual}kg ✓`, 'RE-CHECK OK')
             playSound('success')
+            setScanFeedback('success')
         } else {
             showFeedback('error', `${response.bag.re_code}: Expected ${response.bag.target}kg, got ${response.bag.actual}kg (diff: ${response.bag.diff.toFixed(3)}kg)`, 'WEIGHT MISMATCH')
             playSound('error')
+            setScanFeedback('error')
         }
 
         // Refresh box details
@@ -745,159 +955,6 @@ const resetBox = () => {
     bagScanInput.value = ''
 }
 
-
-
-const printScreen = () => {
-    setTimeout(() => {
-        window.print()
-    }, 100)
-}
-
-// --- Scanner Simulator ---
-
-const openScannerSimulator = (mode: 'box' | 'bag') => {
-    scannerMode.value = mode
-    showScannerDialog.value = true
-    if (allBatches.value.length === 0) {
-        scannerLoading.value = true
-        fetchPlansAndBatches().then(() => { scannerLoading.value = false })
-    }
-}
-
-const onSimSelectBatch = async (batch: any) => {
-    selectedSimBatch.value = batch
-    scannerLoading.value = true
-    
-    try {
-        // Fetch all bag records for this batch
-        const records = await $fetch<any[]>(`${appConfig.apiBaseUrl}/prebatch-recs/by-batch/${batch.batch_id}`, {
-            headers: getAuthHeader() as Record<string, string>
-        })
-        
-        // Generate the Box Label
-        const summaryMap: Record<string, { re_code: string, weight: number, count: number }> = {}
-        records.forEach((r: any) => {
-            const code = (r.re_code || '---').trim()
-            if (!summaryMap[code]) summaryMap[code] = { re_code: code, weight: 0, count: 0 }
-            summaryMap[code].weight += (r.net_volume || 0)
-            summaryMap[code].count++
-        })
-        const sortedSummary = Object.values(summaryMap).sort((a, b) => a.re_code.localeCompare(b.re_code))
-        const ingredientsSvg = sortedSummary.map((s, idx) =>
-            `<tspan x="25" dy="${idx === 0 ? '0' : '1.2em'}">${s.re_code.padEnd(10)} | ${s.weight.toFixed(3).padStart(8)} kg | ${s.count} packs</tspan>`
-        ).join('')
-        
-        const totalVol = records.reduce((sum: number, r: any) => sum + (r.net_volume || 0), 0)
-        
-        const boxMapping = {
-            BoxID: batch.batch_id,
-            BatchID: batch.batch_id,
-            BagCount: records.length,
-            NetWeight: totalVol.toFixed(3),
-            Operator: user.value?.username || 'Operator',
-            Timestamp: new Date().toLocaleString('en-GB', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit', second: '2-digit'
-            }),
-            BoxQRCode: `${batch.plan_id},${batch.batch_id},BOX,${records.length},${totalVol.toFixed(3)}`,
-            prebatch_recs: ingredientsSvg,
-            SKU: batch.sku_id,
-            PlanID: batch.plan_id,
-            WHManifest: '-'
-        }
-        
-        const boxSvg = await generateLabelSvg('packingbox-label', boxMapping as any)
-        previewLabelSvg.value = boxSvg || ''
-        
-        // Shared bag label mapping builder
-        const buildBagLabelMapping = (b: any, r: any) => ({
-            SKU: b.sku_id || '-',
-            PlanId: b.plan_id || '-',
-            BatchId: b.batch_id || '-',
-            IngredientID: r.re_code || '-',
-            Ingredient_ReCode: r.re_code || '-',
-            mat_sap_code: r.mat_sap_code || '-',
-            PlanStartDate: '-',
-            PlanFinishDate: '-',
-            PlantId: '-',
-            PlantName: '-',
-            Timestamp: new Date(r.created_at || Date.now()).toLocaleString('en-GB'),
-            PackageSize: (r.net_volume || 0).toFixed(4),
-            BatchRequireSize: (r.total_volume || 0).toFixed(4),
-            PackageNo: `${r.package_no || 1}/${r.total_packages || 1}`,
-            QRCode: `${b.plan_id},${r.batch_record_id},${r.re_code},${r.net_volume}`,
-            Lot1: r.origins?.[0] ? `1. ${r.origins[0].intake_lot_id} / ${(r.origins[0].take_volume || 0).toFixed(4)} kg` : (r.intake_lot_id ? `1. ${r.intake_lot_id} / ${Number(r.net_volume).toFixed(4)} kg` : ''),
-            Lot2: r.origins?.[1] ? `2. ${r.origins[1].intake_lot_id} / ${(r.origins[1].take_volume || 0).toFixed(4)} kg` : '',
-        })
-
-        // Generate individual bag labels
-        const bagLabels: {svg: string, batch_record_id: string, re_code: string}[] = []
-        for (const record of records) {
-            const svg = await generateLabelSvg('prebatch-label', buildBagLabelMapping(batch, record) as any)
-            if (svg) {
-                bagLabels.push({ svg, batch_record_id: record.batch_record_id, re_code: record.re_code })
-            }
-        }
-        previewBagLabels.value = bagLabels
-        
-        // Generate bag labels from OTHER batches (for wrong-box simulation)
-        const otherLabels: {svg: string, batch_record_id: string, re_code: string, source_batch: string}[] = []
-        const otherBatches = allBatches.value.filter(b => b.batch_id !== batch.batch_id).slice(0, 3)
-        for (const otherBatch of otherBatches) {
-            try {
-                const otherRecords = await $fetch<any[]>(`${appConfig.apiBaseUrl}/prebatch-recs/by-batch/${otherBatch.batch_id}`, {
-                    headers: getAuthHeader() as Record<string, string>
-                })
-                for (const record of otherRecords.slice(0, 2)) {
-                    const svg = await generateLabelSvg('prebatch-label', buildBagLabelMapping(otherBatch, record) as any)
-                    if (svg) {
-                        otherLabels.push({
-                            svg,
-                            batch_record_id: record.batch_record_id,
-                            re_code: record.re_code,
-                            source_batch: otherBatch.batch_id
-                        })
-                    }
-                }
-            } catch { /* skip if error */ }
-        }
-        otherBatchBagLabels.value = otherLabels
-    } catch (err: any) {
-        console.error('Error generating labels:', err)
-        const detail = err?.data?.detail || err?.message || String(err)
-        $q.notify({ type: 'negative', message: `Error loading batch labels: ${detail}`, timeout: 5000 })
-    } finally {
-        scannerLoading.value = false
-    }
-}
-
-const onClickBoxLabel = () => {
-    if (!selectedSimBatch.value) return
-    const batch = selectedSimBatch.value
-    const records = previewBagLabels.value
-    const totalVol = 0
-    const qrData = `${batch.plan_id},${batch.batch_id},BOX,${records.length},${totalVol}`
-    
-    showScannerDialog.value = false
-    parseAndHandleScan(qrData, 'box')
-}
-
-const onClickBagLabel = (bag: {batch_record_id: string, re_code: string}) => {
-    const batch = selectedSimBatch.value
-    if (!batch) return
-    const qrData = `${batch.plan_id},${bag.batch_record_id},${bag.re_code},0`
-    
-    showScannerDialog.value = false
-    parseAndHandleScan(qrData, 'bag')
-}
-
-// Simulate scanning a bag from the WRONG batch (wrong box)
-const onClickWrongBagLabel = (bag: {batch_record_id: string, re_code: string, source_batch: string}) => {
-    // The bag_barcode is the real batch_record_id from another batch
-    // This will be rejected by the backend because it doesn't belong to current box
-    showScannerDialog.value = false
-    verifyBag(bag.batch_record_id)
-}
 
 const onBoxScanSubmit = () => {
     const val = boxScanInput.value.trim()
@@ -1014,11 +1071,7 @@ const getStatusColor = (status: number) => {
     return 'grey-6'
 }
 
-const isBagScannedInBox = (batchRecordId: string) => {
-    if (!boxDetails.value) return false
-    const bag = boxDetails.value.bags.find((b: any) => b.batch_record_id === batchRecordId)
-    return bag && bag.status === 1
-}
+
 
 // ── Quality Check Report ──────────────
 const showQCReportDialog = ref(false)
@@ -1121,8 +1174,9 @@ onMounted(() => {
         <q-badge color="teal-7" class="q-pa-xs q-px-sm" style="font-size: 12px;">
           <q-icon name="assignment" size="14px" class="q-mr-xs" />Plan: {{ batchRecheck.plan_id }}
         </q-badge>
-        <q-badge color="indigo-7" class="q-pa-xs q-px-sm" style="font-size: 12px;">
-          <q-icon name="science" size="14px" class="q-mr-xs" />Batch: {{ recheckBatchId }}
+        <q-badge color="indigo-10" class="q-pa-xs q-px-md shadow-2" style="font-size: 16px; border: 1px solid white;">
+          <q-icon name="science" size="18px" class="q-mr-xs" />
+          <span class="text-weight-bolder">BATCH: {{ recheckBatchId }}</span>
         </q-badge>
         <q-badge v-if="batchRecheck.box_ids?.length" color="deep-purple-6" class="q-pa-xs q-px-sm" style="font-size: 12px;">
           <q-icon name="inbox" size="14px" class="q-mr-xs" />📦 {{ batchRecheck.box_ids.join(', ') }}
@@ -1139,6 +1193,43 @@ onMounted(() => {
           ✅ {{ batchRecheck.summary.checked }} / {{ batchRecheck.summary.total }}
           <template v-if="batchRecheck.summary.errors > 0"> · ❌ {{ batchRecheck.summary.errors }}</template>
         </q-badge>
+      </div>
+ 
+      <!-- ── DEDICATED BAG SCAN (Next Step) ── -->
+      <div v-if="batchRecheck" class="q-px-xs" style="flex-shrink: 0;">
+        <q-card flat bordered :class="'shadow-2 ' + (lastScanResult === 'success' && flashActive ? 'bg-green-1' : (lastScanResult === 'error' && flashActive ? 'bg-red-1' : 'bg-white'))" style="border: 2px solid #ccc; border-radius: 12px; transition: background 0.3s;">
+          <q-card-section class="q-pa-sm">
+            <div class="row items-center q-gutter-md">
+              <div class="col" style="position: relative;">
+                <q-input 
+                  v-model="bagScanInput" 
+                  ref="bagScanRef"
+                  outlined 
+                  placeholder="SCAN NEXT BAG..." 
+                  @keyup.enter="onBagScanSubmit"
+                  style="font-size: 16px;"
+                >
+                  <template v-slot:prepend>
+                    <q-icon name="qr_code_scanner" :color="lastScanResult === 'success' ? 'green' : (lastScanResult === 'error' ? 'red' : 'primary')" size="md" />
+                  </template>
+                  <template v-slot:append>
+                    <!-- "Green Spot" indicator -->
+                    <div v-if="lastScanResult !== 'none'" 
+                      :class="['status-spot', `bg-${lastScanResult === 'success' ? 'green' : 'red'}`, flashActive ? 'flash-active' : '']"
+                    >
+                      <q-icon :name="lastScanResult === 'success' ? 'check' : 'close'" color="white" size="20px" />
+                    </div>
+                  </template>
+                </q-input>
+              </div>
+              <div class="col-auto">
+                <div class="text-subtitle1 text-grey-8 text-weight-bold">
+                   {{ lastScanResult === 'success' ? 'OK! SCAN NEXT...' : (lastScanResult === 'error' ? 'ERROR! CHECK AGAIN' : 'WAIT FOR SCAN...') }}
+                </div>
+              </div>
+            </div>
+          </q-card-section>
+        </q-card>
       </div>
 
       <!-- ===== UNIFIED 3-PANE LAYOUT ===== -->
@@ -1227,7 +1318,12 @@ onMounted(() => {
                 <q-icon name="assignment" size="18px" class="q-mr-xs" />
                 <span>{{ selectedBatchInfo.plan_id }} · {{ selectedBatchInfo.sku_name }}</span>
                 <q-space />
-                <q-btn v-if="selectedBatchId" dense push color="deep-purple-9" text-color="white" icon="rocket_launch" label="Start Production" @click="goToStartProduction" class="q-mr-sm text-weight-bold" style="font-size: 12px; padding: 2px 8px;" />
+                <q-btn v-if="selectedBatchId" :disable="!canStartProduction" dense push color="deep-purple-9" text-color="white" icon="rocket_launch" label="Start Production" @click="goToStartProduction" class="q-mr-sm text-weight-bold" style="font-size: 12px; padding: 2px 8px;">
+                  <q-tooltip v-if="!canStartProduction">Check all ingredients first</q-tooltip>
+                </q-btn>
+                <div v-if="canStartProduction" class="row items-center q-mr-md bg-green-2 text-green-10 q-px-sm rounded-borders text-weight-bolder shadow-1 pulse-ready">
+                   <q-icon name="check_circle" class="q-mr-xs" /> READY FOR PRODUCTION
+                </div>
                 <q-btn dense flat color="teal-9" icon="visibility" label="Check for Production Detail" @click="openSkuDetail" class="q-mr-sm" style="font-size: 12px;" />
                 <q-badge :color="selectedBatchInfo.fh_boxed ? 'green' : 'grey-4'" class="q-mr-xs" style="font-size: 12px;">FH</q-badge>
                 <q-badge :color="selectedBatchInfo.spp_boxed ? 'green' : 'grey-4'" style="font-size: 12px;">SPP</q-badge>
@@ -1241,6 +1337,93 @@ onMounted(() => {
                 <span class="text-grey-7">{{ (selectedBatchInfo.batch_size || 0).toFixed(1) }} kg</span>
                 <q-badge :color="selectedBatchInfo.status === 'Done' ? 'green' : (selectedBatchInfo.status === 'Cancelled' ? 'red' : 'blue')" class="q-ml-sm" style="font-size: 12px;">{{ selectedBatchInfo.status || '-' }}</q-badge>
               </div>
+
+              <!-- ── BATCH VERIFICATION PLATE ── -->
+              <div class="q-px-sm q-pt-sm">
+                <div class="row q-col-gutter-sm">
+                  <div class="col-4" v-for="wh in ['MIX', 'FH', 'SPP']" :key="'plate-'+wh">
+                    <q-card flat bordered :class="['plate-card', getWhStatus(wh) === 1 ? 'bg-green-1' : 'bg-white']">
+                      <div class="column items-center q-pa-xs">
+                        <div class="text-overline text-weight-bolder" style="font-size: 10px; line-height: 1;">{{ wh }} STATUS</div>
+                        <div class="row items-center q-gutter-x-xs">
+                          <q-icon :name="getWhStatus(wh) === 1 ? 'check_circle' : 'hourglass_bottom'" :color="getWhStatus(wh) === 1 ? 'green' : 'orange'" size="xs" />
+                          <div class="text-weight-bolder" style="font-size: 14px;">{{ getWhCheckCount(wh) }} / {{ getWhTotalCount(wh) }}</div>
+                        </div>
+                        <q-linear-progress :value="getWhTotalCount(wh) ? getWhCheckCount(wh)/getWhTotalCount(wh) : 0" :color="getWhStatus(wh) === 1 ? 'green' : 'orange'" style="height: 4px; border-radius: 2px; margin-top: 2px;" />
+                      </div>
+                    </q-card>
+                  </div>
+                </div>
+              </div>
+
+              <!-- PreBatch Items Grouped By Warehouse -->
+              <div v-for="group in prebatchByWarehouse" :key="group.warehouse" class="q-mt-sm">
+                <q-expansion-item
+                  dense
+                  dense-toggle
+                  switch-toggle-side
+                  default-opened
+                  :icon="group.warehouse === 'FH' || group.warehouse === 'FLAVOUR HOUSE' ? 'science' : 'blender'"
+                  :label="`🧪 ${group.warehouse} (${group.ingredients.length})`"
+                  header-class="q-pa-xs bg-blue-1 text-blue-9 text-weight-bold"
+                  style="border: 1px solid #bbdefb; border-radius: 4px; font-size: 12px;"
+                >
+                  <q-list dense class="bg-white">
+                    <q-expansion-item
+                      v-for="ing in group.ingredients" :key="ing.re_code"
+                      dense dense-toggle switch-toggle-side
+                      header-class="bg-grey-1"
+                      style="border-top: 1px solid #e0e0e0; font-size: 12px;"
+                    >
+                      <template v-slot:header>
+                        <q-item-section>
+                          <div class="row full-width items-center q-pr-sm">
+                            <span class="text-weight-bold" style="flex: 1; min-width: 60px; color: #1565c0;">{{ ing.re_code }}</span>
+                            <span style="width: 60px;"></span>
+                            <span class="text-right text-weight-bold" style="width: 60px;">{{ ing.total_volume.toFixed(3) }}</span>
+                            <div class="row items-center justify-end" style="width: 100px;">
+                              <template v-if="group.warehouse !== 'MIX'">
+                                <q-badge :color="ing.recheck_status === 1 ? 'green' : (ing.recheck_status === 2 ? 'red' : 'grey')" class="q-mr-xs" style="font-size: 10px; width: 35px; justify-content: center;">
+                                    {{ ing.recheck_status === 1 ? 'OK' : 'WAIT' }}
+                                </q-badge>
+                                <q-icon :name="ing.recheck_status === 1 ? 'check_circle' : (ing.recheck_status === 2 ? 'error' : 'radio_button_unchecked')"
+                                  :color="ing.recheck_status === 1 ? 'green' : (ing.recheck_status === 2 ? 'red' : 'grey')" size="16px" class="q-mr-xs" />
+                                <q-btn flat round dense icon="qr_code_scanner" size="xs" color="blue-9" @click.stop="quickCheckIngredient(ing)" style="width: 24px;" />
+                              </template>
+                            </div>
+                          </div>
+                        </q-item-section>
+                      </template>
+                      
+                      <!-- Individual Bags -->
+                      <div style="background: #f8fdff; border-top: 1px solid #e0e0e0; font-size: 11px;">
+                        <div v-for="(pb, index) in ing.items" :key="'pb-' + index" 
+                          class="row full-width items-center q-py-xs q-pr-sm"
+                          :class="{ 'bg-green-1': pb.recheck_status === 1, 'bg-red-1': pb.recheck_status === 2 }"
+                          style="border-bottom: 1px solid #f0f0f0;">
+                          <span class="text-weight-medium text-grey-8 ellipsis" style="flex: 1; min-width: 60px; padding-left: 48px; font-size: 10px;" 
+                            :title="`${selectedBatchInfo.batch_id}-${pb.re_code}-${pb.package_no || (index + 1)}/${pb.total_packages || ing.items.length}`">
+                            {{ selectedBatchInfo.batch_id }}-{{ pb.re_code }}-{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}
+                          </span>
+                          <span class="text-grey-7" style="width: 60px;">{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}</span>
+                          <span class="text-right text-weight-medium text-grey-8" style="width: 60px;">{{ (pb.required_volume || 0).toFixed(3) }}</span>
+                          <div class="row justify-end items-center" style="width: 100px;">
+                            <template v-if="group.warehouse !== 'MIX'">
+                              <q-badge :color="pb.status >= 2 ? 'green' : (pb.status === 1 ? 'orange' : 'grey')" class="q-mr-xs" style="font-size: 10px; width: 35px; justify-content: center;">
+                                {{ pb.status >= 2 ? 'OK' : (pb.status === 1 ? 'Prep' : 'Wait') }}
+                              </q-badge>
+                              <q-icon :name="pb.recheck_status === 1 ? 'check_circle' : (pb.recheck_status === 2 ? 'error' : 'radio_button_unchecked')"
+                                :color="pb.recheck_status === 1 ? 'green' : (pb.recheck_status === 2 ? 'red' : 'grey')" size="16px" class="q-mr-xs" />
+                              <div style="width: 24px;"></div>
+                            </template>
+                          </div>
+                        </div>
+                      </div>
+                    </q-expansion-item>
+                  </q-list>
+                </q-expansion-item>
+              </div>
+              <div v-if="prebatchByWarehouse.length === 0" class="text-center q-pa-sm text-grey-5" style="font-size: 12px;">No pre-batch items</div>
 
               <!-- SKU Steps Detail - Grouped by Phase -->
               <div style="margin: 4px;">
@@ -1298,75 +1481,6 @@ onMounted(() => {
                 </template>
                 <div v-else-if="!skuStepsLoading" class="text-center q-pa-sm text-grey-5" style="font-size: 11px; border: 1px solid #e0e0e0; border-top: none;">No SKU steps found</div>
               </div>
-
-              <!-- PreBatch Items Grouped By Warehouse -->
-              <div v-for="group in prebatchByWarehouse" :key="group.warehouse" class="q-mt-sm">
-                <q-expansion-item
-                  dense
-                  dense-toggle
-                  switch-toggle-side
-                  default-opened
-                  :icon="group.warehouse === 'FH' || group.warehouse === 'FLAVOUR HOUSE' ? 'science' : 'blender'"
-                  :label="`🧪 ${group.warehouse} (${group.ingredients.length})`"
-                  header-class="q-pa-xs bg-blue-1 text-blue-9 text-weight-bold"
-                  style="border: 1px solid #bbdefb; border-radius: 4px; font-size: 12px;"
-                >
-                  <q-list dense class="bg-white">
-                    <q-expansion-item
-                      v-for="ing in group.ingredients" :key="ing.re_code"
-                      dense dense-toggle switch-toggle-side
-                      header-class="bg-grey-1"
-                      style="border-top: 1px solid #e0e0e0; font-size: 12px;"
-                    >
-                      <template v-slot:header>
-                        <q-item-section>
-                          <div class="row full-width items-center q-pr-sm">
-                            <span class="text-weight-bold" style="flex: 1; min-width: 60px; color: #1565c0;">{{ ing.re_code }}</span>
-                            <span style="width: 60px;"></span>
-                            <span class="text-right text-weight-bold" style="width: 60px;">{{ ing.total_volume.toFixed(3) }}</span>
-                            <div class="row items-center justify-end" style="width: 100px;">
-                              <template v-if="group.warehouse !== 'MIX'">
-                                <q-badge :color="ing.recheck_status === 1 ? 'green' : (ing.recheck_status === 2 ? 'red' : 'grey')" class="q-mr-xs" style="font-size: 10px; width: 35px; justify-content: center;">
-                                    {{ ing.recheck_status === 1 ? 'OK' : 'WAIT' }}
-                                </q-badge>
-                                <q-icon :name="ing.recheck_status === 1 ? 'check_circle' : (ing.recheck_status === 2 ? 'error' : 'radio_button_unchecked')"
-                                  :color="ing.recheck_status === 1 ? 'green' : (ing.recheck_status === 2 ? 'red' : 'grey')" size="16px" class="q-mr-xs" />
-                                <q-btn flat round dense icon="qr_code_scanner" size="xs" color="blue-9" @click.stop="" style="width: 24px;" />
-                              </template>
-                            </div>
-                          </div>
-                        </q-item-section>
-                      </template>
-                      
-                      <!-- Individual Bags -->
-                      <div style="background: #f8fdff; border-top: 1px solid #e0e0e0; font-size: 11px;">
-                        <div v-for="(pb, index) in ing.items" :key="'pb-' + index" 
-                          class="row full-width items-center q-py-xs q-pr-sm"
-                          :class="{ 'bg-green-1': pb.recheck_status === 1, 'bg-red-1': pb.recheck_status === 2 }"
-                          style="border-bottom: 1px solid #f0f0f0;">
-                          <span class="text-weight-medium text-grey-8 ellipsis" style="flex: 1; min-width: 60px; padding-left: 48px; font-size: 10px;" 
-                            :title="`${selectedBatchInfo.batch_id}-${pb.re_code}-${pb.package_no || (index + 1)}/${pb.total_packages || ing.items.length}`">
-                            {{ selectedBatchInfo.batch_id }}-{{ pb.re_code }}-{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}
-                          </span>
-                          <span class="text-grey-7" style="width: 60px;">{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}</span>
-                          <span class="text-right text-weight-medium text-grey-8" style="width: 60px;">{{ (pb.required_volume || 0).toFixed(3) }}</span>
-                          <div class="row justify-end items-center" style="width: 100px;">
-                            <template v-if="group.warehouse !== 'MIX'">
-                              <q-badge :color="pb.status >= 2 ? 'green' : (pb.status === 1 ? 'orange' : 'grey')" class="q-mr-xs" style="font-size: 10px; width: 35px; justify-content: center;">
-                                {{ pb.status >= 2 ? 'OK' : (pb.status === 1 ? 'Prep' : 'Wait') }}
-                              </q-badge>
-                              <q-icon :name="pb.recheck_status === 1 ? 'check_circle' : (pb.recheck_status === 2 ? 'error' : 'radio_button_unchecked')"
-                                :color="pb.recheck_status === 1 ? 'green' : (pb.recheck_status === 2 ? 'red' : 'grey')" size="16px" class="q-mr-xs" />
-                              <div style="width: 24px;"></div>
-                            </template>
-                          </div>
-                        </div>
-                      </div>
-                    </q-expansion-item>
-                  </q-list>
-                </q-expansion-item>
-              </div>
-              <div v-if="prebatchByWarehouse.length === 0" class="text-center q-pa-sm text-grey-5" style="font-size: 12px;">No pre-batch items</div>
             </template>
 
             <!-- No batch selected -->
@@ -1616,6 +1730,36 @@ onMounted(() => {
 .label-preview {
   background: white;
   border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+  border: 1px solid #e0e0e0;
+}
+
+.status-spot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  transition: all 0.3s;
+}
+
+.flash-active {
+  transform: scale(1.4);
+  box-shadow: 0 0 20px currentColor;
+  animation: spotPulse 0.4s ease-in-out infinite alternate;
+}
+
+@keyframes spotPulse {
+  from { transform: scale(1.2); opacity: 0.8; }
+  to { transform: scale(1.5); opacity: 1; }
+}
+
+.hover-highlight {
   padding: 6px;
   transition: all 0.2s ease;
   border: 2px solid transparent;
@@ -1755,5 +1899,13 @@ onMounted(() => {
 @keyframes pulseInstruction {
   0%   { transform: scale(1); }
   100% { transform: scale(1.05); }
+}
+
+.pulse-ready {
+  animation: pulse-ready-anim 1.5s ease-in-out infinite;
+}
+@keyframes pulse-ready-anim {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.03); opacity: 0.95; }
 }
 </style>

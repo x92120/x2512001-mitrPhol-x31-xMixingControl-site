@@ -15,6 +15,12 @@ export interface PlantData {
     Circulation_Temperature?: number
     watchdog?: number
     last_update?: string
+    lastScan?: {
+        batch_record_id: string
+        material_id: string
+        net_weight: number
+        timestamp: string
+    }
 }
 
 const mqttClient = ref<mqtt.MqttClient | null>(null)
@@ -76,9 +82,39 @@ export function useMQTT() {
             })
 
             mqttClient.value.on('message', (topic, message) => {
+                const messageStr = message.toString()
+                console.log('📥 [MQTT raw]', topic, messageStr)
+
                 try {
-                    const payload = JSON.parse(message.toString())
-                    console.log('📥 [useMQTT] Topic:', topic, 'Payload:', payload)
+                    let payload: any
+                    
+                    // Smart Parsing Strategy
+                    if (messageStr.startsWith('{')) {
+                        try {
+                            payload = JSON.parse(messageStr)
+                        } catch (e) {
+                            // High-robustness fallback for industrial scanner malformed JSON
+                            // Handles: {"b:ID","n:W"} OR {"b":ID,"n":W} OR {"b":"ID","n":"W"}
+                            payload = {}
+                            // Match anything that looks like key : value, stripping quotes
+                            const pairs = messageStr.match(/"?(\w+)"?\s*:\s*"?([^,"}]*)"?/g)
+                            if (pairs) {
+                                pairs.forEach(pair => {
+                                    const m = pair.match(/"?(\w+)"?\s*:\s*"?([^,"}]*)"?/)
+                                    if (m) {
+                                        const key = m[1]!
+                                        let val: any = m[2]!.replace(/"/g, '').trim()
+                                        const num = Number(val)
+                                        payload[key] = isNaN(num) || val === '' ? val : num
+                                    }
+                                })
+                            }
+                        }
+                    } else {
+                        payload = { raw: messageStr }
+                    }
+
+                    console.log('📥 [Parsed Payload]', payload)
                     
                     // Trigger registered callbacks
                     messageCallbacks.forEach(cb => cb(topic, payload))
@@ -119,19 +155,36 @@ export function useMQTT() {
                             [plantId]: {
                                 ...prev,
                                 ...actualPayload,
-                                Step_no: (actualPayload[`MIX0${plantId}.STEP_NO`] ?? actualPayload.Step_No ?? actualPayload.Step_no ?? prev.Step_no) || 0,
-                                Step_Timer: (actualPayload[`MIX0${plantId}.STEP_TIMER`] ?? actualPayload.Step_Timer ?? prev.Step_Timer) || 0,
-                                watchdog: actualPayload[`MIX0${plantId}.WATCHDOG`] ?? actualPayload['Watch-Dog'] ?? prev.watchdog,
-                                Hopper_Weight: round2(actualPayload[`MIX0${plantId}.HOPPER.SCALE`] ?? prev.Hopper_Weight),
-                                MixingTank_Agitator_Speed: round2(actualPayload[`MIX0${plantId}.MIXING.AJITATOR SPEED`] ?? prev.MixingTank_Agitator_Speed),
-                                HighShare_Speed: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.SPEED`] ?? prev.HighShare_Speed),
-                                HighShare_Temperature: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.TEMPERATURE`] ?? prev.HighShare_Temperature),
-                                Mixing_Tank_Volume: round2(actualPayload[`MIX0${plantId}.MIXING.SCALE`] ?? prev.Mixing_Tank_Volume),
-                                Mixing_Tank_Temperature: round2(actualPayload[`MIX0${plantId}.MIXING.TEMPERATURE`] ?? prev.Mixing_Tank_Temperature),
-                                Circulation_Speed: round2(actualPayload[`MIX0${plantId}.CIRCULATION.PUMP SPEED`] ?? prev.Circulation_Speed),
-                                Flow_Rate: round2(actualPayload[`MIX0${plantId}.CIRCULATION.FLOW RATE`] ?? prev.Flow_Rate),
-                                Circulation_Temperature: round2(actualPayload[`MIX0${plantId}.CIRCULATION.TEMPERATURE`] ?? prev.Circulation_Temperature),
+                                Step_no: (actualPayload[`MIX0${plantId}.STEP_NO`] ?? actualPayload.Step_No ?? actualPayload.Step_no ?? actualPayload.Current_Step ?? actualPayload.Step_No_Act ?? prev.Step_no) || 0,
+                                Step_Timer: (actualPayload[`MIX0${plantId}.STEP_TIMER`] ?? actualPayload.Step_Timer ?? actualPayload.Timer_Act ?? prev.Step_Timer) || 0,
+                                watchdog: actualPayload[`MIX0${plantId}.WATCHDOG`] ?? actualPayload['Watch-Dog'] ?? actualPayload.Watch_Doc ?? prev.watchdog,
+                                Hopper_Weight: round2(actualPayload[`MIX0${plantId}.HOPPER.SCALE`] ?? actualPayload[`MIX0${plantId}.Hopper_Weight`] ?? actualPayload.Hopper_Weight ?? actualPayload.HopperScale_Act ?? prev.Hopper_Weight),
+                                MixingTank_Agitator_Speed: round2(actualPayload[`MIX0${plantId}.MIXING.AJITATOR SPEED`] ?? actualPayload.MixingTank_Agitator_Speed ?? actualPayload[`MIX0${plantId}.Agitator_Act`] ?? actualPayload.Agitator_Act ?? actualPayload.Agitator_Speed ?? prev.MixingTank_Agitator_Speed),
+                                HighShare_Speed: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.SPEED`] ?? actualPayload.HighShare_Speed ?? actualPayload[`MIX0${plantId}.HighShear_Act`] ?? actualPayload.HighShear_Act ?? actualPayload.HighShare_Speed_Act ?? prev.HighShare_Speed),
+                                HighShare_Temperature: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.TEMPERATURE`] ?? actualPayload.HighShare_Temperature ?? actualPayload[`MIX0${plantId}.HighShear_Temp`] ?? actualPayload.HighShear_Temp ?? prev.HighShare_Temperature),
+                                Mixing_Tank_Volume: round2(actualPayload[`MIX0${plantId}.MIXING.SCALE`] ?? actualPayload.Mixing_Tank_Volume ?? actualPayload.Mixing_Tank_Weight ?? actualPayload[`MIX0${plantId}.MixTank_Weight`] ?? actualPayload.MixTank_Weight ?? actualPayload.Scale_Act ?? prev.Mixing_Tank_Volume),
+                                Mixing_Tank_Temperature: round2(actualPayload[`MIX0${plantId}.MIXING.TEMPERATURE`] ?? actualPayload.Mixing_Tank_Temperature ?? actualPayload[`MIX0${plantId}.MixTank_Temp`] ?? actualPayload.MixTank_Temp ?? actualPayload.Temp_Act ?? prev.Mixing_Tank_Temperature),
+                                Circulation_Speed: round2(actualPayload[`MIX0${plantId}.CIRCULATION.PUMP SPEED`] ?? actualPayload.Circulation_Speed ?? actualPayload.Circulation_Pump_Act ?? prev.Circulation_Speed),
+                                Flow_Rate: round2(actualPayload[`MIX0${plantId}.CIRCULATION.FLOW RATE`] ?? actualPayload.Flow_Rate ?? actualPayload.Flow_Rate_Act ?? prev.Flow_Rate),
+                                Circulation_Temperature: round2(actualPayload[`MIX0${plantId}.CIRCULATION.TEMPERATURE`] ?? actualPayload.Circulation_Temperature ?? actualPayload.Circulation_Temp_Act ?? prev.Circulation_Temperature),
                                 last_update: new Date().toLocaleTimeString()
+                            }
+                        }
+
+                        // Also handle scanner data specifically if it contains 'b'
+                        if (actualPayload.b) {
+                            const prevData = plantsData.value[plantId];
+                            plantsData.value = {
+                                ...plantsData.value,
+                                [plantId]: {
+                                    ...prevData,
+                                    lastScan: {
+                                        batch_record_id: String(actualPayload.b),
+                                        material_id: String(actualPayload.m || ''),
+                                        net_weight: Number(actualPayload.n || 0),
+                                        timestamp: new Date().toLocaleTimeString()
+                                    }
+                                }
                             }
                         }
                     }

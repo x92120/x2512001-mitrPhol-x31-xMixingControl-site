@@ -227,32 +227,42 @@ const confirmQcCheck = () => {
 }
 
 const sendStepToPLC = (index: number) => {
-     const s = skuSteps.value[index]
-     if (!s) return;
-     const topic = `mixing/plant/${activePlantId.value}/step_cmd`
-     const payload = {
-        batch_id: selectedBatchId.value,
-        step_no: index + 1, // 1-based
-        phase: s.phase_number,
-        phase_id: s.phase_id,
-        action_code: s.action_code || '',
-        re_code: s.re_code || '',
-        action_description: s.action_description || '',
-        destination: s.destination || '',
-        require: s.require || 0,
-        uom: s.uom || 'kg',
-        low_tol: s.low_tol || 0,
-        high_tol: s.high_tol || 0,
-        agitator_rpm: s.agitator_rpm || 0,
-        high_shear_rpm: s.high_shear_rpm || 0,
-        temperature: s.temperature || 0,
-        temp_low: s.temp_low || 0,
-        temp_high: s.temp_high || 0,
-        step_time: s.step_time || 0,
-        step_timer_control: s.step_timer_control || 0,
+    const s = skuSteps.value[index]
+    if (!s) return;
+    
+    const topic = `mixing/plant/${activePlantId.value}/step_cmd`
+    const payload = {
+        // --- DB100 IDENTIFIERS ---
+        Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
+        Plan_ID: batchInfo.value?.plan_id || '-',
+        Batch_ID: selectedBatchId.value || '-',
+        SKU_Name: batchInfo.value?.sku_name || '-',
+        Phase_ID: String(s.phase_number || ''),
+        Step_ID: Number(s.sub_step || 0),
+        
+        // --- SETPOINTS ---
+        Step_Time_SP: Number(s.step_time || 0) * 60, // Conv to seconds
+        Step_Status: 1, // 1=Active
+        Material_ID: s.mat_sap_code || '',
+        Re_Code_ID: s.re_code || '',
+        Req_Qty: Number(s.require || 0),
+        
+        // Profiles & Speeds
+        TT_SP: [Number(s.temperature || 0)], // Array fallback
+        Agitator_Speed: Number(s.agitator_rpm || 0),
+        High_Shear_SP: Number(s.high_shear_rpm || 0),
+        PH_Target: Number(s.ph_sp || 0),
+        Brix_Target: Number(s.brix_sp || 0),
+        
+        // Command Flags
+        HMI_Command: 1, // 1=START
+        Cmd_NewStep: true,
+        
         timestamp: new Date().toISOString()
-     }
-     publishMessage(topic, payload)
+    }
+    
+    publishMessage(topic, payload)
+    console.log('PLC DB100 Command Sent:', payload)
 }
 
 // ── PLC Commands ──
