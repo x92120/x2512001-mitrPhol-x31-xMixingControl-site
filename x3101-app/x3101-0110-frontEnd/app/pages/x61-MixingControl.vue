@@ -46,7 +46,7 @@ const isPlcConnected = computed(() => plcConnectedGlobal.value && !!plantData.va
 const fetchBatchInfo = async () => {
     loading.value = true
     try {
-        const remoteApiBaseUrl = appConfig.apiBaseUrl || 'http://127.0.0.1:8001'
+        const remoteApiBaseUrl = appConfig.apiBaseUrl || 'http://127.0.0.1:8023'
         const data = await $fetch<any>(`${remoteApiBaseUrl}/edge/active-batch`, {
              headers: getAuthHeader() as Record<string, string>
         })
@@ -96,7 +96,7 @@ const fetchBatchInfo = async () => {
 const fetchSkuSteps = async (skuId: string) => {
     loading.value = true
     try {
-        const remoteApiBaseUrl = appConfig.apiBaseUrl || 'http://127.0.0.1:8001'
+        const remoteApiBaseUrl = appConfig.apiBaseUrl || 'http://127.0.0.1:8023'
         // Fallback to central API directly since Edge buffer is failing
         const endpoint = `${remoteApiBaseUrl}/sku-steps/?sku_id=${skuId}`
         const data = await $fetch<any[]>(endpoint, {

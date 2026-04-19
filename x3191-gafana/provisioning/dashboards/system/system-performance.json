@@ -1,0 +1,20 @@
+{
+  "title": "System Performance Overview",
+  "uid": "system-perf",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "CPU & Memory Load",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"cpu\" or r[\"_measurement\"] == \"mem\") |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"system\")",
+          "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "timezone": "browser"
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=xMixing FastAPI Backend (port 8023)
+After=network.target docker.service mysql.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=x-root
+Group=x-root
+WorkingDirectory=/home/x-root/xApp/x01-mitrPhol-x23/x2301-app/x230102-backEnd/x0201-fastAPI
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8023
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/x-root/xApp/x01-mitrPhol-x23/backend.log
+StandardError=append:/home/x-root/xApp/x01-mitrPhol-x23/backend.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,53 @@
+apiVersion: 1
+
+providers:
+  - name: 'System Performance'
+    orgId: 1
+    folder: 'System'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/system
+
+  - name: 'Production Monitor'
+    orgId: 1
+    folder: 'ProductionMonitor'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/production-monitor
+
+  - name: 'SPP Mix-01'
+    orgId: 1
+    folder: 'SPP/Mix-01'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/spp/Mix-01
+
+  - name: 'SPP Mix-02'
+    orgId: 1
+    folder: 'SPP/Mix-02'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/spp/Mix-02
+
+  - name: 'SPP Mix-03'
+    orgId: 1
+    folder: 'SPP/Mix-03'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/spp/Mix-03
+
+  - name: 'Network Diagnostics'
+    orgId: 1
+    folder: 'Network'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/network
+
+  - name: 'Mixing Overview'
+    orgId: 1
+    folder: 'Mixing Overview'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards/mixing-overview

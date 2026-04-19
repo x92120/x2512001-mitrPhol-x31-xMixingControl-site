@@ -1,0 +1,94 @@
+{
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "title": "Mixing Line 1", "type": "row" },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 }, "id": 1, "title": "Mix 1 Volume", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-01.*/ or r[\"topic\"] =~ /.*plant\\/1.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "masskg", "min": 0, "max": 1500, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1400 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 }, "id": 2, "title": "Mix 1 Temperature", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-01.*/ or r[\"topic\"] =~ /.*plant\\/1.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 }, "id": 3, "title": "Mix 1 Agitator Speed", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-01.*/ or r[\"topic\"] =~ /.*plant\\/1.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 }, "id": 4, "title": "Mix 1 High Share", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-01.*/ or r[\"topic\"] =~ /.*plant\\/1.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 2000, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "purple", "value": 1800 } ] } } }
+    },
+    {
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 5 }, "id": 5, "title": "Mix 1 Trends", "type": "timeseries", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-01.*/ or r[\"topic\"] =~ /.*plant\\/1.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/ or r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/ or r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/ or r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"mean\")", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 8, "lineWidth": 2 }, "unit": "none" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/.*Volume|Weight|Scale.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "cyan" } }, { "id": "unit", "value": "masskg" }, { "id": "min", "value": 0 }, { "id": "max", "value": 1500 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Temp.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "unit", "value": "celsius" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 }, { "id": "custom.axisPlacement", "value": "right" } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Agitator.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*High.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 2000 }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }, "id": 200, "title": "Mixing Line 2", "type": "row" },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 13 }, "id": 11, "title": "Mix 2 Volume", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-02.*/ or r[\"topic\"] =~ /.*plant\\/2.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "masskg", "min": 0, "max": 1500, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1400 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 13 }, "id": 12, "title": "Mix 2 Temperature", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-02.*/ or r[\"topic\"] =~ /.*plant\\/2.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 13 }, "id": 13, "title": "Mix 2 Agitator Speed", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-02.*/ or r[\"topic\"] =~ /.*plant\\/2.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 13 }, "id": 14, "title": "Mix 2 High Share", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-02.*/ or r[\"topic\"] =~ /.*plant\\/2.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 2000, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "purple", "value": 1800 } ] } } }
+    },
+    {
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 17 }, "id": 15, "title": "Mix 2 Trends", "type": "timeseries", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-02.*/ or r[\"topic\"] =~ /.*plant\\/2.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/ or r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/ or r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/ or r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"mean\")", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 8, "lineWidth": 2 }, "unit": "none" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/.*Volume|Weight|Scale.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "cyan" } }, { "id": "unit", "value": "masskg" }, { "id": "min", "value": 0 }, { "id": "max", "value": 1500 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Temp.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "unit", "value": "celsius" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 }, { "id": "custom.axisPlacement", "value": "right" } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Agitator.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*High.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 2000 }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    { "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }, "id": 300, "title": "Mixing Line 3", "type": "row" },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 25 }, "id": 21, "title": "Mix 3 Volume", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "masskg", "min": 0, "max": 1500, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1400 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 25 }, "id": 22, "title": "Mix 3 Temperature", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 25 }, "id": 23, "title": "Mix 3 Agitator Speed", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } } }
+    },
+    {
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 25 }, "id": 24, "title": "Mix 3 High Share", "type": "gauge", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> last()", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 2000, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "purple", "value": 1800 } ] } } }
+    },
+    {
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 29 }, "id": 25, "title": "Mix 3 Trends", "type": "timeseries", "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [ { "query": "from(bucket: \"SPP\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/) |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/ or r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/ or r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/ or r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/) |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false) |> yield(name: \"mean\")", "refId": "A" } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 8, "lineWidth": 2 }, "unit": "none" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/.*Volume|Weight|Scale.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "cyan" } }, { "id": "unit", "value": "masskg" }, { "id": "min", "value": 0 }, { "id": "max", "value": 1500 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Temp.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "unit", "value": "celsius" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 }, { "id": "custom.axisPlacement", "value": "right" } ] }, { "matcher": { "id": "byRegexp", "options": "/.*Agitator.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 100 } ] }, { "matcher": { "id": "byRegexp", "options": "/.*High.*/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "unit", "value": "rotrpm" }, { "id": "min", "value": 0 }, { "id": "max", "value": 2000 }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ],
+  "refresh": "5s", "schemaVersion": 38, "style": "dark", "tags": ["production", "monitor"], "timezone": "browser", "title": "Full Production Monitor", "uid": "full-production-monitor-with-trends", "version": 1
+}

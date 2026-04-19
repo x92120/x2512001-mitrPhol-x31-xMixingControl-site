@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="4in"
+   height="3in"
+   viewBox="0 0 400 300"
+   version="1.1"
+   id="svg44"
+   sodipodi:docname="prebatch-label_4x3.svg"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs48" />
+  <sodipodi:namedview
+     id="namedview46"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="in"
+     showgrid="true"
+     showguides="true"
+     inkscape:zoom="3.8105198"
+     inkscape:cx="95.393809"
+     inkscape:cy="205.61499"
+     inkscape:window-width="1920"
+     inkscape:window-height="945"
+     inkscape:window-x="0"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg44">
+    <inkscape:grid
+       type="xygrid"
+       id="grid154"
+       spacingx="0.52083333"
+       spacingy="0.52083333" />
+    <sodipodi:guide
+       position="15.625,180.20833"
+       orientation="1,0"
+       id="guide210"
+       inkscape:locked="false" />
+  </sodipodi:namedview>
+  <!-- Outer Double Border (4x3 inch) -->
+  <rect
+     x="5"
+     y="5"
+     width="390"
+     height="290"
+     rx="10"
+     fill="none"
+     stroke="black"
+     stroke-width="2"
+     id="rect2" />
+  <rect
+     x="8"
+     y="8"
+     width="384"
+     height="284"
+     rx="8"
+     fill="none"
+     stroke="black"
+     stroke-width="0.5"
+     id="rect4" />
+  <!-- Header -->
+  <rect
+     x="15"
+     y="15"
+     width="370"
+     height="40"
+     rx="5"
+     fill="black"
+     id="rect6" />
+  <text
+     x="200"
+     y="42"
+     font-family="Arial, sans-serif"
+     font-size="20"
+     font-weight="bold"
+     fill="white"
+     text-anchor="middle"
+     id="text8">PRE-BATCH PACKING</text>
+  <!-- Left Side Data -->
+  <text
+     x="15.170898"
+     y="66.878258"
+     fill="#000000"
+     font-size="10px"
+     font-family="Arial"
+     id="text10">SKU</text>
+  <text
+     x="15.367188"
+     y="81.90625"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial"
+     id="text12">S77S743200 / Cafe Amazon</text>
+  <text
+     x="14.804688"
+     y="98.39193"
+     fill="#000000"
+     font-size="10px"
+     font-family="Arial"
+     id="text14">Batch ID</text>
+  <text
+     x="15.367188"
+     y="113.15625"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial"
+     id="text16">P260316-03-01-040-CL001A-1</text>
+  <text
+     x="15.625"
+     y="226.5625"
+     fill="#000000"
+     font-size="16px"
+     font-weight="bold"
+     font-family="Arial"
+     id="text16-7">1/1</text>
+  <text
+     x="14.702148"
+     y="129.64192"
+     fill="#000000"
+     font-size="10px"
+     font-family="Arial"
+     id="text18">Ingredient</text>
+  <text
+     x="15.270508"
+     y="151.35808"
+     fill="#000000"
+     font-size="22px"
+     font-weight="bold"
+     font-family="Arial"
+     id="text20">CL001A</text>
+  <text
+     x="15.425781"
+     y="167.54948"
+     fill="#000000"
+     font-size="12px"
+     font-family="Arial"
+     id="text22">1217150041000003</text>
+  <!-- Right Side Data -->
+  <text
+     x="14.804688"
+     y="187.40234"
+     fill="#000000"
+     font-size="10px"
+     font-family="Arial"
+     id="text24">Plan Date</text>
+  <text
+     x="62.5"
+     y="187.5"
+     fill="#000000"
+     font-size="12px"
+     font-family="Arial"
+     id="text26">2026-03-17 // 2026-03-19</text>
+  <text
+     x="14.804688"
+     y="199.58821"
+     fill="#000000"
+     font-size="10px"
+     font-family="Arial"
+     id="text24-3">Prepare Date</text>
+  <text
+     x="77.925781"
+     y="201.40364"
+     fill="#000000"
+     font-size="12px"
+     font-family="Arial"
+     id="text26-6">17/03/2026</text>
+  <!-- Bottom Section -->
+  <text
+     x="15.625"
+     y="250"
+     fill="#000000"
+     font-size="12px"
+     font-weight="bold"
+     font-family="Arial"
+     id="text34">Weight: 0.2400 kg / 0.2400</text>
+  <text
+     x="14.886719"
+     y="263.75732"
+     fill="#000000"
+     font-size="9px"
+     font-family="Arial"
+     id="text36">Pkg No: 1/1</text>
+  <text
+     x="15.625"
+     y="286.45834"
+     fill="#000000"
+     font-size="8px"
+     font-family="Arial"
+     id="text38">Log: 1. intake-2026-02-26-006 / 0.2400 kg</text>
+  <!-- QR Code -->
+  <g
+     transform="translate(260, 160) scale(1.2)"
+     id="g40">
+    <image x="0" y="0" width="100" height="100" href="data:image/png;base64,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" />
+  </g>
+  <text
+     x="380"
+     y="290"
+     text-anchor="end"
+     fill="black"
+     font-size="7"
+     font-family="Arial"
+     id="text42">xDev.co.th</text>
+</svg>

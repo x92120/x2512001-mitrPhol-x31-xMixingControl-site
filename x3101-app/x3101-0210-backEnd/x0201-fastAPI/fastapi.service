@@ -1,0 +1,16 @@
+[Unit]
+Description=FastAPI Backend for x2512001-mitrPhol
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=x-root
+WorkingDirectory=/home/x-root/xApp/x2512001-mitrPhol-r02/x02-backEnd/x0201-fastAPI
+ExecStart=/home/x-root/xApp/x2512001-mitrPhol-r02/x02-backEnd/x0201-fastAPI/venv/bin/python -u main.py
+Restart=always
+RestartSec=5
+Environment=PORT=8023
+
+[Install]
+WantedBy=multi-user.target

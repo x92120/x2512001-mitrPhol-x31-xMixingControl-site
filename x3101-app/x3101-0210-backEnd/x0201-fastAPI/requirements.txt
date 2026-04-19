@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+email-validator
+python-dotenv
+openpyxl
+pandas
+psutil
+influxdb-client
+docxtpl
