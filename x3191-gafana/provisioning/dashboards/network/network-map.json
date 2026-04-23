@@ -1,0 +1,111 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "basemap": {
+          "config": {
+            "showLabels": true,
+            "style": "osm"
+          },
+          "name": "OpenStreetMap",
+          "type": "osm"
+        },
+        "controls": {
+          "showAttribution": true,
+          "showDebug": false,
+          "showMeasure": false,
+          "showScale": true,
+          "showZoom": true
+        },
+        "layers": [
+          {
+            "config": {
+              "showLegend": true,
+              "style": {
+                "color": { "fixed": "green" },
+                "opacity": 0.8,
+                "rotation": { "fixed": 0 },
+                "size": { "fixed": 15 },
+                "symbol": { "fixed": "img/icons/marker.svg" }
+              }
+            },
+            "location": {
+              "latitude": "lat",
+              "longitude": "lon",
+              "mode": "coords"
+            },
+            "name": "Network Nodes",
+            "tooltip": true,
+            "type": "markers"
+          }
+        ],
+        "tooltip": { "mode": "details" },
+        "view": {
+          "id": "coords",
+          "lat": 15.5,
+          "lon": 101.5,
+          "zoom": 6
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+          "query": "import \"array\"\n\narray.from(rows: [\n    {_time: now(), lat: 14.8384, lon: 99.6961, name: \"Plant 1 - Dan Chang\", status: \"Online\", throughput: \"45 Mbps\"},\n    {_time: now(), lat: 16.3683, lon: 102.1283, name: \"Plant 2 - Phu Khiao\", status: \"Online\", throughput: \"62 Mbps\"},\n    {_time: now(), lat: 16.4322, lon: 103.5061, name: \"Plant 3 - Kalasin\", status: \"Online\", throughput: \"38 Mbps\"}\n])",
+          "refId": "A"
+        }
+      ],
+      "title": "Network Node Locations (Geomap)",
+      "type": "geomap"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["network", "location", "map", "geomap"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Location Map",
+  "uid": "network-location-map",
+  "version": 1
+}

@@ -1,0 +1,298 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Throughput (Mbps)",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "bps"
+        }
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["max", "mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"eno2\"}[5m]) * 8",
+          "legendFormat": "Download: PCI ETHERNET (eno2)",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"enx0a1a002a2224\"}[5m]) * 8",
+          "legendFormat": "Download: USB ETHERNET (enx0a1a002a2224)",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"wlo1\"}[5m]) * 8",
+          "legendFormat": "Download: WI-FI (wlo1)",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_transmit_bytes_total{device=\"eno2\"}[5m]) * -8",
+          "legendFormat": "Upload: PCI ETHERNET (eno2)",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_transmit_bytes_total{device=\"enx0a1a002a2224\"}[5m]) * -8",
+          "legendFormat": "Upload: USB ETHERNET (enx0a1a002a2224)",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_transmit_bytes_total{device=\"wlo1\"}[5m]) * -8",
+          "legendFormat": "Upload: WI-FI (wlo1)",
+          "range": true,
+          "refId": "F"
+        }
+      ],
+      "title": "Network Traffic: PCI, USB & WI-FI (Real-time)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Daily Usage",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "decbytes"
+        }
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 9 },
+      "id": 6,
+      "options": {
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "increase(node_network_receive_bytes_total{device=\"eno2\"}[24h])",
+          "interval": "24h",
+          "legendFormat": "PCI In (Daily)",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "increase(node_network_receive_bytes_total{device=\"enx0a1a002a2224\"}[24h])",
+          "interval": "24h",
+          "legendFormat": "USB In (Daily)",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "increase(node_network_receive_bytes_total{device=\"wlo1\"}[24h])",
+          "interval": "24h",
+          "legendFormat": "WI-FI In (Daily)",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Daily Data Consumption (Last 31 Days)",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          },
+          "unit": "bps"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 19 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"eno2\"}[5m]) * 8",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "PCI Ethernet In",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          },
+          "unit": "bps"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 19 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"enx0a1a002a2224\"}[5m]) * 8",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "USB Ethernet In",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "purple", "value": null }
+            ]
+          },
+          "unit": "bps"
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 19 },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "irate(node_network_receive_bytes_total{device=\"wlo1\"}[5m]) * 8",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "WI-FI Inbound (wlo1)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["network", "traffic", "pci", "usb", "wifi"],
+  "templating": { "list": [] },
+  "time": { "from": "now-31d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network Traffic (Wired & WI-FI)",
+  "uid": "network-traffic-combined",
+  "version": 1
+}

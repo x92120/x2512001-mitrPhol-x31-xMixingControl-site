@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mitr Phol | Advanced Mixing SCADA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b0e14;
+            --surface: rgba(22, 27, 34, 0.7);
+            --surface-hover: rgba(33, 38, 45, 0.9);
+            --accent-cyan: #00f2ff;
+            --accent-green: #39ff14;
+            --accent-orange: #ff9d00;
+            --accent-red: #ff3131;
+            --text-main: #e6edf3;
+            --text-dim: #8b949e;
+            --border: rgba(255, 255, 255, 0.08);
+            --glow-cyan: rgba(0, 242, 255, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            background-image: 
+                radial-gradient(circle at 0% 0%, rgba(0, 242, 255, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 100% 100%, rgba(57, 255, 20, 0.05) 0%, transparent 50%);
+        }
+
+        /* Layout */
+        .app-shell {
+            display: grid;
+            grid-template-rows: 80px 1fr;
+            height: 100vh;
+            padding: 1rem;
+            gap: 1rem;
+        }
+
+        /* Header */
+        header {
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px var(--glow-cyan);
+        }
+
+        .brand h1 {
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .system-status {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.875rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        /* Main Dashboard */
+        main {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 1rem;
+            overflow: hidden;
+        }
+
+        .scada-viewport {
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .viewport-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .viewport-content {
+            flex-grow: 1;
+            position: relative;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* SVG Process Flow */
+        .pfd-container {
+            width: 100%;
+            max-width: 900px;
+        }
+
+        .tank {
+            fill: rgba(255,255,255,0.05);
+            stroke: var(--border);
+            stroke-width: 2;
+        }
+
+        .liquid {
+            fill: url(#liquid-grad);
+            transition: height 0.5s ease;
+        }
+
+        .pipe {
+            fill: none;
+            stroke: var(--border);
+            stroke-width: 4;
+            stroke-linecap: round;
+        }
+
+        .pipe-flow {
+            stroke: var(--accent-cyan);
+            stroke-dasharray: 10, 20;
+            animation: flow 2s linear infinite;
+        }
+
+        @keyframes flow {
+            from { stroke-dashoffset: 30; }
+            to { stroke-dashoffset: 0; }
+        }
+
+        /* Side Panel */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .card {
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 1rem;
+        }
+
+        /* Gauges */
+        .gauge-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .gauge-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .gauge {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background: conic-gradient(var(--accent-cyan) 75%, transparent 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .gauge::after {
+            content: '';
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            background: var(--bg);
+            border-radius: 50%;
+        }
+
+        .gauge-value {
+            position: relative;
+            z-index: 1;
+            font-size: 1.25rem;
+            font-weight: 800;
+            color: var(--accent-cyan);
+        }
+
+        /* Alerts */
+        .alert-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .alert-item {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            border-left: 4px solid var(--accent-green);
+        }
+
+        .alert-item.warning { border-left-color: var(--accent-orange); }
+        .alert-item.error { border-left-color: var(--accent-red); }
+
+        .alert-info h4 { font-size: 0.875rem; margin-bottom: 2px; }
+        .alert-info p { font-size: 0.75rem; color: var(--text-dim); }
+
+        /* Controls */
+        .control-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 0.75rem;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .btn:hover { background: var(--surface-hover); border-color: var(--accent-cyan); }
+        .btn.active { background: var(--accent-cyan); color: var(--bg); border-color: var(--accent-cyan); }
+
+        /* Metric Highlights */
+        .metric-hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: auto;
+            padding: 2rem;
+            background: linear-gradient(to top, rgba(0,242,255,0.05), transparent);
+        }
+
+        .hero-val {
+            font-size: 3rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .hero-label {
+            font-size: 0.875rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        /* Interactive Elements */
+        .valve {
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .valve:hover { transform: scale(1.1); }
+    </style>
+</head>
+<body>
+    <div class="app-shell">
+        <header>
+            <div class="brand">
+                <div class="logo-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0b0e14" stroke-width="3">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <h1>Mitr Phol · Advanced Mixing</h1>
+            </div>
+            <div class="system-status">
+                <div class="status-item">
+                    <span class="dot"></span>
+                    <span>SERVER: ONLINE</span>
+                </div>
+                <div class="status-item">
+                    <span style="color: var(--accent-cyan)">Uptime: 142h 12m</span>
+                </div>
+                <div id="clock" style="font-family: 'JetBrains Mono'">13:46:00</div>
+            </div>
+        </header>
+
+        <main>
+            <section class="scada-viewport">
+                <div class="viewport-header">
+                    <h2 style="font-size: 1.5rem; font-weight: 800;">PROCESS FLOW DIAGRAM (PFD)</h2>
+                    <p style="color: var(--text-dim); font-size: 0.875rem;">Real-time production monitoring line x31</p>
+                </div>
+                <div class="viewport-content">
+                    <svg class="pfd-container" viewBox="0 0 800 400">
+                        <defs>
+                            <linearGradient id="liquid-grad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stop-color="var(--accent-cyan)" />
+                                <stop offset="100%" stop-color="#0066cc" />
+                            </linearGradient>
+                        </defs>
+                        
+                        <!-- Pipes -->
+                        <path class="pipe" d="M 50 100 L 150 100" />
+                        <path class="pipe-flow" d="M 50 100 L 150 100" />
+                        
+                        <path class="pipe" d="M 250 100 L 350 100" />
+                        <path class="pipe-flow" d="M 250 100 L 350 100" />
+
+                        <!-- Tank 1 (Silo) -->
+                        <rect x="150" y="50" width="100" height="150" rx="10" class="tank" />
+                        <rect id="liquid-1" x="152" y="120" width="96" height="78" rx="8" class="liquid" />
+                        <text x="200" y="130" text-anchor="middle" fill="white" font-size="12" font-weight="800">SILO A</text>
+                        <text x="200" y="150" text-anchor="middle" fill="var(--accent-cyan)" font-size="14" font-weight="800">78.4%</text>
+
+                        <!-- Tank 2 (Mixer) -->
+                        <path d="M 350 50 L 550 50 L 550 250 Q 450 300 350 250 Z" class="tank" />
+                        <path d="M 352 150 L 548 150 L 548 248 Q 450 295 352 248 Z" class="liquid" style="opacity: 0.6" />
+                        <circle cx="450" cy="150" r="40" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" />
+                        <!-- Agitator -->
+                        <path id="agitator" d="M 430 150 L 470 150 M 450 130 L 450 170" stroke="var(--accent-green)" stroke-width="3">
+                            <animateTransform attributeName="transform" type="rotate" from="0 450 150" to="360 450 150" dur="2s" repeatCount="indefinite" />
+                        </path>
+                        <text x="450" y="80" text-anchor="middle" fill="white" font-size="14" font-weight="800">MIXING TANK 01</text>
+                    </svg>
+                </div>
+                <div class="metric-hero">
+                    <div>
+                        <div class="hero-label">Daily Yield</div>
+                        <div class="hero-val">124.5<span style="font-size: 1.5rem; color: var(--text-dim)"> tons</span></div>
+                    </div>
+                    <div style="text-align: right">
+                        <div class="hero-label">Process Efficiency</div>
+                        <div class="hero-val" style="color: var(--accent-green)">94.1%</div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="side-panel">
+                <div class="card">
+                    <div class="card-title">Key Performance Metrics</div>
+                    <div class="gauge-grid">
+                        <div class="gauge-container">
+                            <div class="gauge" style="background: conic-gradient(var(--accent-cyan) 88%, transparent 0)">
+                                <div class="gauge-value">88.3</div>
+                            </div>
+                            <div class="hero-label" style="font-size: 0.6rem">Mixer Level</div>
+                        </div>
+                        <div class="gauge-container">
+                            <div class="gauge" style="background: conic-gradient(var(--accent-orange) 65%, transparent 0)">
+                                <div class="gauge-value">91.2</div>
+                            </div>
+                            <div class="hero-label" style="font-size: 0.6rem">Temperature</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="flex-grow: 1">
+                    <div class="card-title">System Alerts & Logs</div>
+                    <div class="alert-list">
+                        <div class="alert-item">
+                            <div class="alert-info">
+                                <h4>System Operational</h4>
+                                <p>All nodes responding at 45ms</p>
+                            </div>
+                        </div>
+                        <div class="alert-item warning">
+                            <div class="alert-info">
+                                <h4>Low Pressure Silo B</h4>
+                                <p>Check feeder conveyor belt</p>
+                            </div>
+                        </div>
+                        <div class="alert-item error">
+                            <div class="alert-info">
+                                <h4>Sync Delay Detected</h4>
+                                <p>Edge buffer at 85% capacity</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">Quick Control Panel</div>
+                    <div class="control-group">
+                        <button class="btn active">AUTO MODE</button>
+                        <button class="btn">MANUAL</button>
+                    </div>
+                    <div class="control-group">
+                        <button class="btn" style="color: var(--accent-red)">EMERGENCY STOP</button>
+                        <button class="btn" style="color: var(--accent-green)">START BATCH</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        // Real-time Clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toLocaleTimeString('en-GB', { hour12: false });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Simulate Dynamic Values
+        setInterval(() => {
+            const val = (Math.random() * 5 + 85).toFixed(1);
+            // In a real app, this would be updated via MQTT
+        }, 3000);
+    </script>
+</body>
+</html>

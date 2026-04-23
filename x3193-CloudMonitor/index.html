@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud MQTT Collector | Mitr Phol x31</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0a0b10;
+            --card-bg: rgba(20, 22, 32, 0.7);
+            --accent-blue: #00f2ff;
+            --accent-green: #39ff14;
+            --accent-red: #ff3131;
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --border-glow: rgba(0, 242, 255, 0.2);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 20% 20%, rgba(0, 242, 255, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(57, 255, 20, 0.05) 0%, transparent 40%);
+        }
+
+        .header {
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            background: rgba(10, 11, 16, 0.8);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-weight: 800;
+            font-size: 1.25rem;
+            letter-spacing: -1px;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border-radius: 99px;
+            background: rgba(255, 255, 255, 0.05);
+            font-size: 0.8rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            box-shadow: 0 0 10px var(--accent-red);
+        }
+
+        .status-dot.online {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .main-container {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 2rem;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .plant-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 24px;
+            padding: 1.75rem;
+            backdrop-filter: blur(20px);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+        }
+
+        .plant-card:hover {
+            border-color: var(--accent-blue);
+            box-shadow: 0 10px 40px rgba(0, 242, 255, 0.1);
+            transform: translateY(-8px);
+        }
+
+        .plant-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            align-items: flex-start;
+        }
+
+        .plant-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: #fff;
+        }
+
+        .timestamp {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            background: rgba(255,255,255,0.05);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .metric-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+        }
+
+        .metric-box {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1.25rem;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .metric-label {
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+        }
+
+        .metric-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--accent-blue);
+            line-height: 1;
+        }
+
+        .metric-unit {
+            font-size: 0.8rem;
+            font-weight: 400;
+            color: var(--text-secondary);
+            margin-left: 0.25rem;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 120px);
+            position: sticky;
+            top: 100px;
+        }
+
+        .log-container {
+            background: #050608;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .log-header {
+            padding: 1.25rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255,255,255,0.02);
+        }
+
+        .log-content {
+            padding: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            overflow-y: auto;
+            flex-grow: 1;
+            scroll-behavior: smooth;
+        }
+
+        .log-entry {
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .log-timestamp { color: var(--accent-green); opacity: 0.8; }
+        .log-topic { color: var(--accent-blue); font-weight: 600; }
+        .log-payload { color: #e2e8f0; display: block; margin-top: 4px; word-break: break-all; }
+
+        @media (max-width: 1024px) {
+            .main-container { grid-template-columns: 1fr; }
+            .sidebar { height: 400px; position: static; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">MITR PHOL · CLOUD COLLECTOR</div>
+        <div class="status-badge">
+            <div id="status-dot" class="status-dot"></div>
+            <span id="status-text">INITIATING...</span>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="dashboard-grid">
+            <!-- Plant 1 -->
+            <div class="plant-card" id="plant-1">
+                <div class="plant-header">
+                    <div class="plant-title">PLANT 01</div>
+                    <div class="timestamp" id="p1-time">NO DATA</div>
+                </div>
+                <div class="metric-group">
+                    <div class="metric-box">
+                        <div class="metric-label">Volume</div>
+                        <div class="metric-value"><span id="p1-vol">0.00</span><span class="metric-unit">L</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Temp</div>
+                        <div class="metric-value"><span id="p1-temp">0.0</span><span class="metric-unit">°C</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Agitator</div>
+                        <div class="metric-value"><span id="p1-agitator">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">High Share</div>
+                        <div class="metric-value"><span id="p1-hss">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plant 2 -->
+            <div class="plant-card" id="plant-2">
+                <div class="plant-header">
+                    <div class="plant-title">PLANT 02</div>
+                    <div class="timestamp" id="p2-time">NO DATA</div>
+                </div>
+                <div class="metric-group">
+                    <div class="metric-box">
+                        <div class="metric-label">Volume</div>
+                        <div class="metric-value"><span id="p2-vol">0.00</span><span class="metric-unit">L</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Temp</div>
+                        <div class="metric-value"><span id="p2-temp">0.0</span><span class="metric-unit">°C</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Agitator</div>
+                        <div class="metric-value"><span id="p2-agitator">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">High Share</div>
+                        <div class="metric-value"><span id="p2-hss">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plant 3 -->
+            <div class="plant-card" id="plant-3">
+                <div class="plant-header">
+                    <div class="plant-title">PLANT 03</div>
+                    <div class="timestamp" id="p3-time">NO DATA</div>
+                </div>
+                <div class="metric-group">
+                    <div class="metric-box">
+                        <div class="metric-label">Volume</div>
+                        <div class="metric-value"><span id="p3-vol">0.00</span><span class="metric-unit">L</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Temp</div>
+                        <div class="metric-value"><span id="p3-temp">0.0</span><span class="metric-unit">°C</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Agitator</div>
+                        <div class="metric-value"><span id="p3-agitator">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">High Share</div>
+                        <div class="metric-value"><span id="p3-hss">0</span><span class="metric-unit">RPM</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar">
+            <div class="log-container">
+                <div class="log-header">
+                    <span style="font-weight: 700; font-size: 0.75rem; letter-spacing: 0.1em;">LIVE TRAFFIC STREAM</span>
+                    <button id="clear-log" style="background: rgba(255,49,49,0.1); border: 1px solid var(--accent-red); color: var(--accent-red); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.65rem; font-weight: 700;">CLEAR</button>
+                </div>
+                <div id="log-content" class="log-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const CLOUD_HOST = '152.42.166.150';
+        const WS_PORT = 15675;
+        const USER = 'admin';
+        const PASS = 'admin';
+
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const logContent = document.getElementById('log-content');
+        const clearLogBtn = document.getElementById('clear-log');
+
+        function addLog(topic, message) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
+            entry.innerHTML = `<span class="log-timestamp">${now}</span> <span class="log-topic">${topic}</span> <span class="log-payload">${message}</span>`;
+            logContent.insertBefore(entry, logContent.firstChild);
+            if (logContent.childNodes.length > 100) logContent.removeChild(logContent.lastChild);
+        }
+
+        function updatePlantData(plantId, data) {
+            const id = plantId.toString();
+            try {
+                if (data.Mixing_Tank_Volume !== undefined) document.getElementById(`p${id}-vol`).innerText = parseFloat(data.Mixing_Tank_Volume).toFixed(2);
+                if (data.Mixing_Tank_Temperature !== undefined) document.getElementById(`p${id}-temp`).innerText = parseFloat(data.Mixing_Tank_Temperature).toFixed(1);
+                if (data.MixingTank_Agitator_Speed !== undefined) document.getElementById(`p${id}-agitator`).innerText = data.MixingTank_Agitator_Speed;
+                if (data.HighShare_Speed !== undefined) document.getElementById(`p${id}-hss`).innerText = data.HighShare_Speed;
+                
+                document.getElementById(`p${id}-time`).innerText = new Date().toLocaleTimeString('en-GB', { hour12: false });
+                
+                const card = document.getElementById(`plant-${id}`);
+                card.style.borderColor = 'var(--accent-blue)';
+                card.style.boxShadow = '0 0 20px rgba(0, 242, 255, 0.2)';
+                setTimeout(() => { 
+                    card.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+                    card.style.boxShadow = 'none';
+                }, 300);
+            } catch (e) { console.error("Update error", e); }
+        }
+
+        const options = {
+            username: USER,
+            password: PASS,
+            clientId: 'mitrphol_collector_' + Math.random().toString(16).slice(2, 8),
+            protocol: 'ws',
+            reconnectPeriod: 5000
+        };
+
+        const client = mqtt.connect(`ws://${CLOUD_HOST}:${WS_PORT}/ws`, options);
+
+        client.on('connect', () => {
+            statusDot.classList.add('online');
+            statusText.innerText = 'CONNECTED · ' + CLOUD_HOST;
+            addLog('SYSTEM', 'Link established with Cloud Broker');
+            client.subscribe('#');
+        });
+
+        client.on('error', (err) => {
+            statusDot.classList.remove('online');
+            statusText.innerText = 'LINK FAILURE';
+            addLog('CRITICAL', err.message);
+        });
+
+        client.on('message', (topic, message) => {
+            const msgStr = message.toString();
+            addLog(topic, msgStr);
+
+            try {
+                const data = JSON.parse(msgStr);
+                if (topic.includes('plant/')) {
+                    const plantId = topic.split('/').pop();
+                    updatePlantData(plantId, data);
+                } else if (topic.startsWith('MIX-')) {
+                    const plantId = parseInt(topic.split('-')[1]);
+                    updatePlantData(plantId, data);
+                }
+            } catch (e) {}
+        });
+
+        client.on('close', () => {
+            statusDot.classList.remove('online');
+            statusText.innerText = 'CONNECTION CLOSED';
+        });
+
+        clearLogBtn.onclick = () => { logContent.innerHTML = ''; };
+    </script>
+</body>
+</html>

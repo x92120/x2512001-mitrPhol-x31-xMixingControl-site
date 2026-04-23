@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  mytb:
+    image: thingsboard/tb-postgres:latest
+    container_name: mytb
+    restart: always
+    ports:
+      - "9090:9090"   # UI
+      - "1884:1883"   # MQTT (Mapped to 1884 to avoid conflict with RabbitMQ)
+      - "7070:7070"   # Edge
+      - "5683:5683/udp" # CoAP
+    environment:
+      - TB_QUEUE_TYPE=common
+      - TZ=Asia/Bangkok
+    volumes:
+      - ./mytb-data:/data
+      - ./mytb-logs:/var/log/thingsboard

@@ -28,7 +28,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "Usage (%)",
+            "axisLabel": "CPU (%)",
             "axisPlacement": "auto",
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -41,31 +41,29 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 90 }
+              { "color": "green", "value": null }
             ]
           },
           "unit": "percent"
         }
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "legend": { "calcs": ["lastNotNull", "max", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["max", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "editorMode": "code",
-          "expr": "100 - (avg by (instance) (irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-          "legendFormat": "CPU Usage ({{instance}})",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[5m]) * 100)",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "CPU Performance (Overall)",
+      "title": "Container CPU Usage",
       "type": "timeseries"
     },
     {
@@ -77,11 +75,11 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "Traffic (B/s)",
+            "axisLabel": "RAM Usage",
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 15,
-            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
             "lineWidth": 2,
             "pointSize": 5,
             "showPoints": "auto"
@@ -93,26 +91,26 @@
               { "color": "green", "value": null }
             ]
           },
-          "unit": "Bps"
+          "unit": "decbytes"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
       "id": 2,
       "options": {
-        "legend": { "calcs": ["max", "mean"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "editorMode": "code",
-          "expr": "irate(node_network_receive_bytes_total{device!~\"lo|docker.*|veth.*\"}[5m])",
-          "legendFormat": "In: {{device}}",
+          "expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Network Traffic Inbound",
+      "title": "Container Memory Usage",
       "type": "timeseries"
     },
     {
@@ -124,7 +122,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "Traffic (B/s)",
+            "axisLabel": "Network (B/s)",
             "axisPlacement": "auto",
             "drawStyle": "line",
             "fillOpacity": 15,
@@ -143,23 +141,31 @@
           "unit": "Bps"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
       "id": 3,
       "options": {
-        "legend": { "calcs": ["max", "mean"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["max", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "editorMode": "code",
-          "expr": "irate(node_network_transmit_bytes_total{device!~\"lo|docker.*|veth.*\"}[5m])",
-          "legendFormat": "Out: {{device}}",
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[5m]))",
+          "legendFormat": "In: {{name}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (name) (rate(container_network_transmit_bytes_total{name!=\"\"}[5m]) * -1)",
+          "legendFormat": "Out: {{name}}",
+          "range": true,
+          "refId": "B"
         }
       ],
-      "title": "Network Traffic Outbound",
+      "title": "Container Network Traffic",
       "type": "timeseries"
     },
     {
@@ -171,85 +177,44 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 80 },
-              { "color": "red", "value": 90 }
+              { "color": "green", "value": null }
             ]
           },
-          "unit": "percent"
+          "unit": "none"
         }
       },
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 16 },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 18 },
       "id": 4,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["count"], "fields": "", "values": false },
         "textMode": "value"
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
           "editorMode": "code",
-          "expr": "100 - (avg(irate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "expr": "count(container_last_seen{name!=\"\"})",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Current CPU Load",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 80 },
-              { "color": "red", "value": 95 }
-            ]
-          },
-          "unit": "percent"
-        }
-      },
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 16 },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "textMode": "value"
-      },
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "editorMode": "code",
-          "expr": "100 * (1 - ((node_memory_MemFree_bytes + node_memory_Buffers_bytes + node_memory_Cached_bytes) / node_memory_MemTotal_bytes))",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Current RAM Usage",
+      "title": "Running Containers Count",
       "type": "stat"
     }
   ],
-  "refresh": "5s",
+  "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["system", "performance", "cpu", "network"],
+  "tags": ["docker", "containers", "performance", "network"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "System Performance & Network Traffic",
-  "uid": "system-perf-detailed",
+  "title": "Docker Container Performance & Network",
+  "uid": "docker-performance",
   "version": 1
 }

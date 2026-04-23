@@ -3,7 +3,7 @@
   "editable": true, "fiscalYearStartMonth": 0, "graphTooltip": 1, "links": [], "liveNow": false,
   "panels": [
     {
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
       "id": 10,
       "title": "Current Step ID",
       "type": "stat",
@@ -31,9 +31,9 @@
       }
     },
     {
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 3 },
       "id": 1,
-      "title": "Current Tank Volume",
+      "title": "Tank Volume",
       "type": "gauge",
       "datasource": { "type": "influxdb", "uid": "InfluxDB" },
       "targets": [
@@ -45,9 +45,9 @@
       "fieldConfig": { "defaults": { "unit": "masskg", "min": 0, "max": 1500, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1400 } ] } } }
     },
     {
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 4 },
+      "gridPos": { "h": 5, "w": 5, "x": 4, "y": 3 },
       "id": 2,
-      "title": "Current Temperature",
+      "title": "Temperature",
       "type": "gauge",
       "datasource": { "type": "influxdb", "uid": "InfluxDB" },
       "targets": [
@@ -59,9 +59,9 @@
       "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 } ] } } }
     },
     {
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
+      "gridPos": { "h": 5, "w": 5, "x": 9, "y": 3 },
       "id": 3,
-      "title": "Current Agitator Speed",
+      "title": "Agitator Speed",
       "type": "gauge",
       "datasource": { "type": "influxdb", "uid": "InfluxDB" },
       "targets": [
@@ -73,9 +73,9 @@
       "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } } }
     },
     {
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
+      "gridPos": { "h": 5, "w": 5, "x": 14, "y": 3 },
       "id": 4,
-      "title": "Current High Share",
+      "title": "High Shear",
       "type": "gauge",
       "datasource": { "type": "influxdb", "uid": "InfluxDB" },
       "targets": [
@@ -87,14 +87,28 @@
       "fieldConfig": { "defaults": { "unit": "rotrpm", "min": 0, "max": 2000, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "purple", "value": 1800 } ] } } }
     },
     {
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 3 },
+      "id": 11,
+      "title": "Steam Percent",
+      "type": "gauge",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [
+        {
+          "query": "from(bucket: \"SPP\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/)\n  |> filter(fn: (r) => r[\"_field\"] =~ /.*Steam_CV.*/ or r[\"_field\"] =~ /.*Steam_Percent.*/ or r[\"_field\"] =~ /.*Steam_Pressure.*/)\n  |> last()",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null }, { "color": "orange", "value": 80 } ] } } }
+    },
+    {
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
       "id": 5,
       "title": "Plant 3 Process Overview (Combined Trends)",
       "type": "timeseries",
       "datasource": { "type": "influxdb", "uid": "InfluxDB" },
       "targets": [
         {
-          "query": "from(bucket: \"SPP\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/)\n  |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/ or r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/ or r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/ or r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/ or r[\"_field\"] =~ /.*Current_Step.*/)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
+          "query": "from(bucket: \"SPP\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/)\n  |> filter(fn: (r) => r[\"_field\"] =~ /.*MixTank_Weight.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Volume.*/ or r[\"_field\"] =~ /.*Scale_Act.*/ or r[\"_field\"] =~ /.*MixTank_Temp.*/ or r[\"_field\"] =~ /.*Mixing_Tank_Temperature.*/ or r[\"_field\"] =~ /.*Temp_Act.*/ or r[\"_field\"] =~ /.*Agitator_Act.*/ or r[\"_field\"] =~ /.*MixingTank_Agitator_Speed.*/ or r[\"_field\"] =~ /.*HighShear_Act.*/ or r[\"_field\"] =~ /.*HighShare_Speed.*/ or r[\"_field\"] =~ /.*Steam_CV.*/ or r[\"_field\"] =~ /.*Steam_Percent.*/ or r[\"_field\"] =~ /.*Steam_Pressure.*/ or r[\"_field\"] =~ /.*Current_Step.*/)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")",
           "refId": "A"
         }
       ],
@@ -150,10 +164,43 @@
               { "id": "max", "value": 2000 },
               { "id": "custom.axisPlacement", "value": "right" }
             ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "/.*Steam.*/" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "unit", "value": "percent" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 100 },
+              { "id": "custom.axisPlacement", "value": "right" }
+            ]
           }
         ]
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 16 },
+      "id": 12,
+      "title": "Steam Usage History (%)",
+      "type": "timeseries",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB" },
+      "targets": [
+        {
+          "query": "from(bucket: \"SPP\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"topic\"] =~ /.*MIX-03.*/ or r[\"topic\"] =~ /.*plant\\/3.*/)\n  |> filter(fn: (r) => r[\"_field\"] =~ /.*Steam_CV.*/ or r[\"_field\"] =~ /.*Steam_Percent.*/ or r[\"_field\"] =~ /.*Steam_Pressure.*/)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"steam\")",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 20, "lineWidth": 3 },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
     }
   ],
   "refresh": "5s",
@@ -166,5 +213,5 @@
   "timezone": "browser",
   "title": "Mix-03 Dashboard (Step ID)",
   "uid": "mix03-spp-with-step-id",
-  "version": 1
+  "version": 3
 }
