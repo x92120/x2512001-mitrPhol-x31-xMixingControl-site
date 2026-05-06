@@ -24,6 +24,13 @@ def sync_batch_to_edge(
         
     plan = remote_db.query(models.ProductionPlan).filter(models.ProductionPlan.id == batch.plan_id).first()
     sku_code = plan.sku_id if plan else "UNKNOWN"
+    sku_name = plan.sku_name if plan and plan.sku_name else None
+    
+    # If the production plan was missing the sku_name description, look it up from sku_masters!
+    if not sku_name and sku_code != "UNKNOWN":
+        sku_master = remote_db.query(models.Sku).filter(models.Sku.sku_id == sku_code).first()
+        if sku_master:
+            sku_name = sku_master.sku_name
     
     # Fetch Remote Steps
     remote_steps = remote_db.query(models.SkuStep).filter(models.SkuStep.sku_id == sku_code).all()
@@ -38,7 +45,7 @@ def sync_batch_to_edge(
             "batch_id": batch.batch_id,
             "plan_id": plan.plan_id if plan else None,
             "sku_code": sku_code,
-            "sku_name": plan.sku_name if plan else None,
+            "sku_name": sku_name,
             "plant": 1,
             "target_weight": batch.batch_size
         })

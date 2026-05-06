@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Decode QR</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+</head>
+<body>
+    <img id="qrImage" src="./qr_image-1.png" style="display:none;" />
+    <canvas id="canvas"></canvas>
+    <div id="output">Decoding...</div>
+
+    <script>
+        window.onload = function() {
+            var img = document.getElementById('qrImage');
+            var canvas = document.getElementById('canvas');
+            var ctx = canvas.getContext('2d');
+            
+            // wait until image is fully loaded
+            if(img.complete) {
+                process();
+            } else {
+                img.onload = process;
+            }
+
+            function process() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0, img.width, img.height);
+                var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                var code = jsQR(imageData.data, imageData.width, imageData.height);
+                
+                if (code) {
+                    document.getElementById('output').innerText = "DATA: " + code.data;
+                    console.log("QR Data:", code.data);
+                } else {
+                    document.getElementById('output').innerText = "DATA: NOT FOUND";
+                }
+            }
+        };
+    </script>
+</body>
+</html>

@@ -500,6 +500,11 @@ def get_recheck_batch_details(batch_id: str, db: Session = Depends(get_db)):
     all_box_ids = set()
 
     for req in reqs:
+        # MIX ingredients are dispensed during production, not pre-packed
+        wh_clean = (req.wh or "FH").upper()
+        if wh_clean in ("MIX", "MIXING"):
+            continue
+
         # Find matching packed records for this requirement
         matching_recs = [r for r in recs if r.req_id == req.id]
         packed_count = len(matching_recs)
@@ -507,9 +512,17 @@ def get_recheck_batch_details(batch_id: str, db: Session = Depends(get_db)):
         total_packages = matching_recs[0].total_packages if matching_recs else 0
 
         # Determine recheck status from recs
-        all_checked = packed_count > 0 and all(r.recheck_status == 1 for r in matching_recs)
-        any_error = any(r.recheck_status == 2 for r in matching_recs)
-        recheck_status = 1 if all_checked else (2 if any_error else 0)
+        if packed_count > 0:
+            all_checked = all(r.recheck_status == 1 for r in matching_recs)
+            any_error = any(r.recheck_status == 2 for r in matching_recs)
+            recheck_status = 1 if all_checked else (2 if any_error else 0)
+        else:
+            # Fallback: check prebatch_items table when no packed recs exist
+            linked_item = db.query(models.PreBatchItem).filter(
+                models.PreBatchItem.batch_id == batch_id,
+                models.PreBatchItem.re_code == req.re_code,
+            ).first()
+            recheck_status = (linked_item.recheck_status or 0) if linked_item else 0
 
         # Batch record IDs for this requirement (for scanning verification)
         rec_ids = [r.batch_record_id for r in matching_recs]
@@ -642,6 +655,97 @@ def update_production_batch_status(batch_id: int, status: str, db: Session = Dep
     if not db_batch:
         raise HTTPException(status_code=404, detail="Production batch not found")
     return db_batch
+
+
+class HoldBatchRequest(BaseModel):
+    held_by: Optional[str] = "operator"
+    reason: Optional[str] = None
+
+
+@router.patch("/production-batches/hold/{batch_id_str}")
+def hold_batch(batch_id_str: str, data: HoldBatchRequest, db: Session = Depends(get_db)):
+    """Put a batch on Hold.
+    Saves the previous status in a remark so Unhold can restore it.
+    FIFO: the next In-Progress batch in the same plan remains active.
+    """
+    batch = db.query(models.ProductionBatch).filter(
+        models.ProductionBatch.batch_id == batch_id_str
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id_str}' not found")
+    if batch.status == "Hold":
+        raise HTTPException(status_code=400, detail="Batch is already on Hold")
+    if batch.status in ("Done", "Cancelled"):
+        raise HTTPException(status_code=400, detail=f"Cannot hold a batch with status '{batch.status}'")
+
+    prev_status = batch.status
+    batch.status = "Hold"
+    batch.updated_at = datetime.now()
+
+    # Log into plan history for audit trail
+    plan = db.query(models.ProductionPlan).filter(
+        models.ProductionPlan.id == batch.plan_id
+    ).first()
+    if plan:
+        history = models.ProductionPlanHistory(
+            plan_db_id=plan.id,
+            action="hold_batch",
+            old_status=prev_status,
+            new_status="Hold",
+            remarks=f"Batch {batch_id_str} held. Prev={prev_status}. Reason: {data.reason or '-'}. By: {data.held_by}",
+            changed_by=data.held_by or "operator",
+        )
+        db.add(history)
+
+    db.commit()
+    db.refresh(batch)
+    return {
+        "batch_id": batch.batch_id,
+        "status": batch.status,
+        "previous_status": prev_status,
+        "held_by": data.held_by,
+        "message": f"Batch '{batch_id_str}' is now on Hold. Previous status: {prev_status}."
+    }
+
+
+@router.patch("/production-batches/unhold/{batch_id_str}")
+def unhold_batch(batch_id_str: str, data: HoldBatchRequest, db: Session = Depends(get_db)):
+    """Release a batch from Hold — restores it to 'In-Progress' (FIFO queue).
+    The batch re-enters the queue and the operator can work on it next.
+    """
+    batch = db.query(models.ProductionBatch).filter(
+        models.ProductionBatch.batch_id == batch_id_str
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id_str}' not found")
+    if batch.status != "Hold":
+        raise HTTPException(status_code=400, detail=f"Batch is not on Hold (current: {batch.status})")
+
+    # Always restore to In-Progress so it re-enters the FIFO queue
+    batch.status = "In-Progress"
+    batch.updated_at = datetime.now()
+
+    plan = db.query(models.ProductionPlan).filter(
+        models.ProductionPlan.id == batch.plan_id
+    ).first()
+    if plan:
+        history = models.ProductionPlanHistory(
+            plan_db_id=plan.id,
+            action="unhold_batch",
+            old_status="Hold",
+            new_status="In-Progress",
+            remarks=f"Batch {batch_id_str} released from Hold. By: {data.held_by}",
+            changed_by=data.held_by or "operator",
+        )
+        db.add(history)
+
+    db.commit()
+    db.refresh(batch)
+    return {
+        "batch_id": batch.batch_id,
+        "status": batch.status,
+        "message": f"Batch '{batch_id_str}' released from Hold → In-Progress."
+    }
 
 @router.get("/production-batches/by-batch-id/{batch_id_str}", response_model=schemas.ProductionBatch)
 def get_production_batch_by_id_str(batch_id_str: str, db: Session = Depends(get_db)):
@@ -987,6 +1091,9 @@ def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
         "status": item.status,
         "packing_status": item.packing_status or 0,
         "batch_record_id": item.batch_record_id,
+        "recheck_status": item.recheck_status or 0,
+        "recheck_at": item.recheck_at,
+        "recheck_by": item.recheck_by,
     } for item in items]
 
 
@@ -1413,6 +1520,31 @@ def get_production_summary_stats(db: Session = Depends(get_db)):
         "timestamp": datetime.now()
     }
 
+@router.post("/prebatch-recs/reset-batch/{batch_id}")
+def reset_batch_recheck(batch_id: str, db: Session = Depends(get_db)):
+    """Reset the recheck status for all prebatch_recs and prebatch_items for a batch."""
+    
+    # 1. Update prebatch_recs
+    db.query(models.PreBatchRec).filter(
+        models.PreBatchRec.batch_record_id.like(f"{batch_id}%")
+    ).update({
+        "recheck_status": 0,
+        "recheck_at": None,
+        "recheck_by": None
+    }, synchronize_session=False)
+
+    # 2. Update prebatch_items
+    db.query(models.PreBatchItem).filter(
+        models.PreBatchItem.batch_id == batch_id
+    ).update({
+        "recheck_status": 0,
+        "recheck_at": None,
+        "recheck_by": None
+    }, synchronize_session=False)
+
+    db.commit()
+    return {"status": "OK", "message": f"Reset recheck status for batch {batch_id}"}
+
 @router.post("/prebatch-recs/recheck-bag")
 def verify_bag_scan(data: RecheckBagRequest, db: Session = Depends(get_db)):
     """
@@ -1482,6 +1614,28 @@ def verify_bag_scan(data: RecheckBagRequest, db: Session = Depends(get_db)):
         bag.recheck_status = 1 if is_ok else 2
         bag.recheck_at = datetime.now()
         bag.recheck_by = data.operator
+        
+        # Sync recheck status to the corresponding prebatch_item.
+        # If all recs for this re_code in the batch are verified, mark item as verified too.
+        req = db.query(models.PreBatchReq).filter(models.PreBatchReq.id == bag.req_id).first()
+        if req:
+            all_recs = db.query(models.PreBatchRec).filter(
+                models.PreBatchRec.req_id == req.id
+            ).all()
+            all_verified = all(r.recheck_status == 1 for r in all_recs)
+            any_failed = any(r.recheck_status == 2 for r in all_recs)
+            synced_status = 2 if any_failed else (1 if all_verified else 0)
+            
+            linked_item = db.query(models.PreBatchItem).filter(
+                models.PreBatchItem.batch_id == req.batch_id,
+                models.PreBatchItem.re_code == req.re_code,
+            ).first()
+            if linked_item:
+                linked_item.recheck_status = synced_status
+                if synced_status > 0:
+                    linked_item.recheck_at = datetime.now()
+                    linked_item.recheck_by = data.operator
+
     if item:
         item.recheck_status = 1 if is_ok else 2
         item.recheck_at = datetime.now()
@@ -1499,6 +1653,52 @@ def verify_bag_scan(data: RecheckBagRequest, db: Session = Depends(get_db)):
             "tolerance": tolerance,
             "diff": (bag.net_volume or 0) - (target_vol or 0)
         }
+    }
+
+
+@router.post("/prebatch-recs/force-verify-ingredient")
+def force_verify_ingredient(data: RecheckBagRequest, db: Session = Depends(get_db)):
+    """Force verify all bags for a specific ingredient in a batch."""
+    if not data.batch_id:
+        raise HTTPException(status_code=400, detail="batch_id is required")
+        
+    re_code = data.bag_barcode # Using bag_barcode field to pass re_code
+    now = datetime.now()
+    
+    # 1. Update all PreBatchRecs for this batch and re_code
+    reqs = db.query(models.PreBatchReq).filter(
+        models.PreBatchReq.batch_id == data.batch_id,
+        models.PreBatchReq.re_code == re_code
+    ).all()
+    
+    recs_updated = 0
+    for req in reqs:
+        recs = db.query(models.PreBatchRec).filter(
+            models.PreBatchRec.req_id == req.id
+        ).all()
+        for r in recs:
+            r.recheck_status = 1
+            r.recheck_at = now
+            r.recheck_by = data.operator
+            recs_updated += 1
+            
+    # 2. Update ALL PreBatchItems with this re_code in the batch
+    items = db.query(models.PreBatchItem).filter(
+        models.PreBatchItem.batch_id == data.batch_id,
+        models.PreBatchItem.re_code == re_code
+    ).all()
+    
+    for item in items:
+        item.recheck_status = 1
+        item.recheck_at = now
+        item.recheck_by = data.operator
+        
+    db.commit()
+    
+    return {
+        "status": "OK",
+        "message": f"Verified ingredient {re_code} ({recs_updated} bags, {len(items)} items)",
+        "re_code": re_code
     }
 
 
@@ -1736,6 +1936,13 @@ def get_archived_label(label_type: str, date: str, filename: str):
 def clear_plan_prebatch(plan_id: str, fix_fv052a: bool = False, db: Session = Depends(get_db)):
     """Clear ALL prebatch data for a plan: recs, origins, items reset, batch flags reset."""
     from sqlalchemy import text as sql_t
+
+    # 0. Delete prebatch_rec_from
+    rec_from_deleted = db.execute(sql_t("""
+        DELETE f FROM prebatch_rec_from f
+        JOIN prebatch_recs r ON f.prebatch_rec_id = r.id
+        WHERE r.plan_id = :p
+    """), {"p": plan_id}).rowcount
 
     # 1. Delete prebatch_recs
     recs_deleted = db.execute(sql_t("DELETE FROM prebatch_recs WHERE plan_id = :p"), {"p": plan_id}).rowcount

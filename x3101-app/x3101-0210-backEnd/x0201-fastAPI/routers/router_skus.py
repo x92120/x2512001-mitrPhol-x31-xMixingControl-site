@@ -109,11 +109,29 @@ def delete_sku(sku_db_id: int, db: Session = Depends(get_db)):
 
 @router.get("/sku-steps/", response_model=List[schemas.SkuStep])
 def get_sku_steps(sku_id: str = None, skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
-    """Get all SKU steps, optionally filtered by sku_id."""
+    """Get all SKU steps, optionally filtered by sku_id. Includes mat_sap_code from ingredients table."""
+    from sqlalchemy import text as sa_text
     query = db.query(models.SkuStep)
     if sku_id:
         query = query.filter(models.SkuStep.sku_id == sku_id)
-    return query.offset(skip).limit(limit).all()
+    steps = query.offset(skip).limit(limit).all()
+    
+    # Enrich steps with mat_sap_code from ingredients table via re_code lookup
+    re_codes = list(set(s.re_code for s in steps if s.re_code))
+    sap_map = {}
+    if re_codes:
+        rows = db.execute(sa_text(
+            "SELECT re_code, mat_sap_code FROM ingredients WHERE re_code IN :codes"
+        ).bindparams(codes=tuple(re_codes))).fetchall()
+        sap_map = {r[0]: r[1] for r in rows}
+    
+    # Attach mat_sap_code to each step object for serialization
+    result = []
+    for s in steps:
+        step_dict = schemas.SkuStep.model_validate(s).model_dump()
+        step_dict['mat_sap_code'] = sap_map.get(s.re_code, '')
+        result.append(step_dict)
+    return result
 
 
 @router.post("/sku-steps/", response_model=schemas.SkuStep)

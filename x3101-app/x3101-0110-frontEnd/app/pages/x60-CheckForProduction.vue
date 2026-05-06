@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { appConfig } from '~/appConfig/config'
 import { generateQrDataUrl } from '~/composables/useQrCode'
@@ -10,7 +11,25 @@ const { getAuthHeader, user } = useAuth()
 const { t } = useI18n()
 
 // --- MQTT Integration ---
-const { connect, disconnect, onMessage, offMessage } = useMQTT()
+const { connect, disconnect, onMessage, offMessage, publishMessage, plantsData } = useMQTT()
+
+const activePlcBatches = computed(() => {
+    if (!plantsData.value) return []
+    const active = []
+    for (const [plantId, data] of Object.entries(plantsData.value)) {
+        const batchId = String((data as any).Batch_ID || (data as any).batch_id || '').replace(/\0/g, '').trim()
+        if (batchId && batchId !== '-' && batchId !== '0') {
+            active.push({
+                plant: plantId,
+                batch_id: batchId,
+                sku_name: String((data as any).SKU_Name || '').replace(/\0/g, '').trim(),
+                phase: (data as any).Phase_ID || 0,
+                step: (data as any).Step_ID || 0
+            })
+        }
+    }
+    return active
+})
 
 // --- State ---
 const boxId = ref('')
@@ -47,6 +66,48 @@ const fetchAwaitingBatches = async () => {
             headers: getAuthHeader() as Record<string, string>
         })
     } catch { /* ignore */ }
+}
+
+// ── Hold / Unhold ──────────────────────────────────────────────────────────
+const holdDialog = ref(false)
+const holdTarget = ref<any>(null)   // the batch object being acted on
+const holdReason = ref('')
+const holdLoading = ref(false)
+
+const openHoldDialog = (batch: any, event: Event) => {
+    event.stopPropagation()
+    holdTarget.value = batch
+    holdReason.value = ''
+    holdDialog.value = true
+}
+
+const confirmHold = async () => {
+    if (!holdTarget.value) return
+    holdLoading.value = true
+    const batchId = holdTarget.value.batch_id
+    const isHeld = holdTarget.value.status === 'Hold'
+    const endpoint = isHeld ? 'unhold' : 'hold'
+    try {
+        await $fetch(`${appConfig.apiBaseUrl}/production-batches/${endpoint}/${batchId}`, {
+            method: 'PATCH',
+            headers: { ...getAuthHeader() as Record<string, string>, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ held_by: user?.value?.username || 'operator', reason: holdReason.value || null })
+        })
+        $q.notify({
+            type: isHeld ? 'positive' : 'warning',
+            icon: isHeld ? 'play_circle' : 'pause_circle',
+            message: isHeld
+                ? `Batch ${batchId} released from Hold → In-Progress`
+                : `Batch ${batchId} is now on Hold`,
+            timeout: 3000, position: 'top'
+        })
+        holdDialog.value = false
+        await fetchPlansAndBatches()
+    } catch (err: any) {
+        $q.notify({ type: 'negative', message: err?.data?.detail || 'Hold action failed', position: 'top' })
+    } finally {
+        holdLoading.value = false
+    }
 }
 
 // Box scan input (top bar)
@@ -111,7 +172,7 @@ const feedback = ref<{ show: boolean, type: 'success' | 'error' | 'warning', mes
 })
 
 // Wrong Box full-screen alert overlay
-const wrongBoxAlert = ref<{ show: boolean, bagCode: string, expectedBox: string }>({ show: false, bagCode: '', expectedBox: '' })
+const wrongBoxAlert = ref<{ show: boolean, bagCode: string, expectedBox: string, newBatchId: string }>({ show: false, bagCode: '', expectedBox: '', newBatchId: '' })
 
 // Sound Settings
 const showSoundSettings = ref(false)
@@ -246,9 +307,64 @@ const getTreeBatchSPP = (batch: any) => {
     return batch.spp_boxed_at || batch.spp_boxed || false
 }
 
+// ── FIFO (First In, First Out) Enforcement ──────────────────────────────────
+// For each plan: the FIRST batch that is not Done/Cancelled is the ONLY active batch.
+const fifoActiveBatchByPlan = computed<Record<string, string>>(() => {
+    const map: Record<string, string> = {}
+    for (const plan of allPlans.value) {
+        const sorted = [...(plan.batches || [])].sort((a: any, b: any) =>
+            (a.batch_id || '').localeCompare(b.batch_id || '')
+        )
+        const active = sorted.find((b: any) =>
+            !['Done', 'Cancelled'].includes(b.status || '')
+        )
+        if (active) map[plan.plan_id] = active.batch_id
+    }
+    return map
+})
+
+// Is this batch the FIFO-active batch for its plan?
+const isFifoBatch = (batchId: string): boolean => {
+    return Object.values(fifoActiveBatchByPlan.value).includes(batchId)
+}
+
+// Get the plan that contains a given batch
+const getPlanForBatch = (batchId: string): any => {
+    return allPlans.value.find((p: any) =>
+        (p.batches || []).some((b: any) => b.batch_id === batchId)
+    ) || null
+}
+
+// Get the FIFO-active batch blocking access to the given batch
+const getFifoBlocker = (batchId: string): string | null => {
+    const plan = getPlanForBatch(batchId)
+    if (!plan) return null
+    return fifoActiveBatchByPlan.value[plan.plan_id] || null
+}
 
 
 const selectBatchFromTree = (batch: any) => {
+    if (batch.batch_id === selectedBatchId.value) return
+
+    if (isRecheckInProgress.value) {
+        $q.dialog({
+            title: 'Warning',
+            message: 'All pre-batches must be re-checked in one session; selecting another batch will trigger a full reset of the current batch. Do you want to proceed?',
+            cancel: true,
+            persistent: true
+        }).onOk(async () => {
+            await resetBatchRecheck()
+            actuallySelectBatch(batch)
+        })
+        return
+    }
+    
+    actuallySelectBatch(batch)
+}
+
+const actuallySelectBatch = (batch: any) => {
+    recheckBatchId.value = null
+    batchRecheck.value = null
     selectedBatchId.value = batch.batch_id
     selectedPlanId.value = batch.plan_id || ''
     fetchBatchPreBatchData(batch.batch_id)
@@ -267,6 +383,12 @@ const prebatchLoading = ref(false)
 const fetchBatchPreBatchData = async (batchId: string) => {
     prebatchLoading.value = true
     try {
+        // Fire reset in background (don't block UI) + fetch data in parallel
+        const resetPromise = $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/reset-batch/${batchId}`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>
+        }).catch(() => {})
+
         const [items, recs] = await Promise.all([
             $fetch<any[]>(`${appConfig.apiBaseUrl}/prebatch-items/by-batch/${batchId}`, {
                 headers: getAuthHeader() as Record<string, string>
@@ -275,8 +397,25 @@ const fetchBatchPreBatchData = async (batchId: string) => {
                 headers: getAuthHeader() as Record<string, string>
             }).catch(() => [])
         ])
-        batchPreBatchItems.value = items || []
-        batchPackedRecs.value = recs || []
+
+        const loadedItems = items || []
+        // Set all statuses locally (instant UI, no DB round-trip dependency)
+        for (const item of loadedItems) {
+            const wh = (item.wh || '').toUpperCase()
+            if (wh === 'MIX' || wh === 'MIXING') {
+                item.recheck_status = 1  // Auto-verified (no scan needed)
+            } else {
+                item.recheck_status = 0  // Requires scanning
+            }
+        }
+        // Also reset packed recs status locally
+        const loadedRecs = recs || []
+        for (const rec of loadedRecs) {
+            rec.recheck_status = 0
+        }
+        batchPreBatchItems.value = loadedItems
+        batchPackedRecs.value = loadedRecs
+        // resetPromise runs in background (fire-and-forget, DB sync)
     } catch (e) {
         console.error('Error fetching prebatch data:', e)
     } finally {
@@ -334,12 +473,54 @@ const toggleVerificationStatus = async (item: any) => {
 const quickCheckIngredient = async (ing: any) => {
     loading.value = true
     try {
-        for (const item of ing.items) {
-            if (item.recheck_status !== 1) {
-                await toggleVerificationStatus(item)
+        await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/force-verify-ingredient`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>,
+            body: {
+                batch_id: selectedBatchId.value,
+                bag_barcode: ing.re_code,
+                operator: user.value?.username || 'Operator'
+            }
+        })
+        
+        // Update local state directly so UI reacts instantly
+        ing.recheck_status = 1
+        for (const item of (ing.items || [])) {
+            item.recheck_status = 1
+            item.status = 2 // OK
+        }
+        
+        // Also update original refs just in case
+        if (batchPreBatchItems.value) {
+            batchPreBatchItems.value.forEach((i: any) => {
+                if (i.re_code === ing.re_code) i.recheck_status = 1
+            })
+        }
+        if (batchPackedRecs.value) {
+            batchPackedRecs.value.forEach((r: any) => {
+                if (r.re_code === ing.re_code) r.recheck_status = 1
+            })
+        }
+
+        playSound('success')
+        $q.notify({ type: 'positive', message: `✅ ${ing.re_code} verified`, position: 'top', timeout: 500 })
+        
+        // Refresh batchRecheck so Start Production button unlocks
+        if (recheckBatchId.value) {
+            try {
+                const data = await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/recheck-batch/${recheckBatchId.value}`, {
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                batchRecheck.value = data
+            } catch (e) {
+                console.error('Silent refresh failed:', e)
             }
         }
-        $q.notify({ type: 'positive', message: `${ing.re_code} verified`, position: 'top', timeout: 500 })
+
+    } catch (e) {
+        console.error('[Verify] Force verify API failed', e)
+        playSound('error')
+        $q.notify({ type: 'negative', message: `Failed to force verify ${ing.re_code}`, position: 'top' })
     } finally {
         loading.value = false
     }
@@ -373,18 +554,52 @@ const openSkuDetail = async () => {
 }
 
 const goToStartProduction = async () => {
-    if (selectedBatchId.value) {
-        loading.value = true
+    if (!selectedBatchId.value) return
+    loading.value = true
+    try {
+        // 1. Call backend to prepare PLC recipe (DB1780)
         try {
-            // [Bypassed for testing]
-            useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}`)
-        } catch (e: any) {
-            console.error('Edge buffer sync err:', e)
-            $q.notify({ type: 'warning', message: 'Edge Buffer Bypassed' })
-            useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}`)
-        } finally {
-            loading.value = false
+            await $fetch(`${appConfig.apiBaseUrl}/plc/send-recipe/${selectedBatchId.value}`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>
+            })
+            console.log('[StartProd] PLC recipe prepared for:', selectedBatchId.value)
+        } catch (e) {
+            console.warn('[StartProd] PLC recipe endpoint unavailable, continuing anyway:', e)
         }
+
+        // 2. Publish MQTT start=1 signal to the plant's command topic
+        const plantId = (selectedBatchInfo.value?.plant || '01').replace(/\D/g, '') || '1'
+        const topic = `mixing/plant/${Number(plantId)}/cmd`
+        publishMessage(topic, {
+            command: 'READY_TO_START',
+            start: 1,
+            batch_id: selectedBatchId.value,
+            sku_id: selectedBatchInfo.value?.sku_id || '',
+            plan_id: selectedBatchInfo.value?.plan_id || '',
+            timestamp: new Date().toISOString()
+        })
+        console.log('[StartProd] MQTT start=1 sent to topic:', topic)
+
+        $q.notify({
+            type: 'positive',
+            icon: 'rocket_launch',
+            message: 'Production START signal sent!',
+            caption: `Batch: ${selectedBatchId.value}`,
+            position: 'top',
+            timeout: 2000
+        })
+
+        // 3. Navigate to Mixing Control page — operator confirms there
+        await useRouter().push(
+            `/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&from_check=1`
+        )
+    } catch (e: any) {
+        console.error('[StartProd] Error:', e)
+        $q.notify({ type: 'warning', message: 'Could not send start signal, navigating anyway.' })
+        useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&from_check=1`)
+    } finally {
+        loading.value = false
     }
 }
 
@@ -425,19 +640,31 @@ const getPhaseColor = (step: any) => {
     return phaseColorMap.value[key] || ''
 }
 
+const isAllPrepackVerified = computed(() => {
+    if (!batchRecheck.value || !batchRecheck.value.summary) return false
+    return batchRecheck.value.summary.all_ok
+})
+
 const canStartProduction = computed(() => {
-    if (!selectedBatchId.value) return false
-    
-    // EVERY ingredient in EVERY warehouse group MUST be verified (recheck_status === 1)
-    for (const group of prebatchByWarehouse.value) {
-        if (!group.ingredients.every((ing: any) => ing.recheck_status === 1)) {
-            return false
-        }
+    if (!selectedBatchId.value) {
+        console.debug('[canStart] ❌ No selectedBatchId')
+        return false
     }
     
-    // Ensure we actually have items to check (avoid enabling on empty batches)
-    return prebatchByWarehouse.value.length > 0
+    // FIFO: must be the first active batch in its plan
+    if (!isFifoBatch(selectedBatchId.value)) {
+        console.debug('[canStart] ❌ Not FIFO batch. fifoMap:', JSON.stringify(fifoActiveBatchByPlan.value), 'selected:', selectedBatchId.value)
+        return false
+    }
+    
+    if (!isAllPrepackVerified.value) {
+        return false
+    }
+    
+    console.debug('[canStart] ✅ All checks passed!')
+    return true
 })
+
 
 // Info about the currently selected batch (from tree/loaded plan data)
 const selectedBatchInfo = computed(() => {
@@ -571,7 +798,22 @@ const fetchBoxDetails = async (id: string) => {
         boxDetails.value = data
         boxId.value = id
         showFeedback('success', `Box loaded: ${data.total_bags} bags found`, 'BOX SCANNED')
-        fetchBatchPreBatchData(id)
+        
+        // Extract the proper batch_id from the box barcode.
+        // Box barcodes have format: {batch_id}-{re_code}-{pkg_no}
+        // Batch IDs have format: P{date}-{line}-{seq} (e.g., P260321-02-02-001)
+        // We detect by finding a match in allPlans' batch list
+        let targetBatchId = id
+        for (const plan of allPlans.value) {
+            for (const batch of (plan.batches || [])) {
+                if (id.startsWith(batch.batch_id)) {
+                    targetBatchId = batch.batch_id
+                    break
+                }
+            }
+            if (targetBatchId !== id) break
+        }
+        fetchBatchPreBatchData(targetBatchId)
         // Auto-focus bag scan for immediate scanning
         nextTick(() => { bagScanRef.value?.focus() })
     } catch (error: any) {
@@ -634,6 +876,40 @@ const fetchBatchRecheck = async (batchId: string) => {
     return true
 }
 
+// ── Reset batch recheck ──
+const confirmResetBatchRecheck = () => {
+    $q.dialog({
+        title: 'Confirm Reset',
+        message: 'Are you sure you want to reset all re-check verification for this batch? You will have to re-scan everything.',
+        cancel: true,
+        persistent: true
+    }).onOk(() => {
+        resetBatchRecheck()
+    })
+}
+
+const resetBatchRecheck = async () => {
+    if (!recheckBatchId.value) return
+    loading.value = true
+    try {
+        await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/reset-batch/${recheckBatchId.value}`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>
+        })
+        
+        showFeedback('success', `All checked status for batch ${recheckBatchId.value} has been reset.`, 'RESET SUCCESS')
+        playSound('success')
+        
+        // Refresh batch recheck and prebatch items
+        await fetchBatchRecheck(recheckBatchId.value)
+    } catch (error: any) {
+        console.error('Error resetting batch recheck:', error)
+        showFeedback('error', 'Failed to reset batch checking status.', 'RESET ERROR')
+    } finally {
+        loading.value = false
+    }
+}
+
 // ── Batch-level bag verify ──
 const verifyBatchBag = async (bagBarcode: string) => {
     if (!recheckBatchId.value) return
@@ -664,10 +940,33 @@ const verifyBatchBag = async (bagBarcode: string) => {
     } catch (error: any) {
         const detail = error.data?.detail || 'Verification failed'
         if (detail.includes('does not belong') || detail.includes('not found')) {
-            wrongBoxAlert.value = { show: true, bagCode: bagBarcode, expectedBox: recheckBatchId.value }
-            playSound('wrong_box')
-            showFeedback('error', `BAG [${bagBarcode}] does NOT belong to this batch!`, '⚠ WRONG BATCH ⚠')
-            setTimeout(() => { wrongBoxAlert.value.show = false }, 3500)
+            // Extract the potential new batch ID from the bag barcode (e.g., P260420-02-02-014-CL009A-1 -> P260420-02-02-014)
+            let parsedNewBatchId = ''
+            if (bagBarcode.startsWith('P')) {
+                const parts = bagBarcode.split('-')
+                if (parts.length >= 4) {
+                    parsedNewBatchId = parts.slice(0, 4).join('-')
+                }
+            }
+            
+            if (bagBarcode === recheckBatchId.value) {
+                showFeedback('warning', 'You scanned the Batch Label! Please scan an Ingredient Bag instead.', 'BATCH LABEL SCANNED')
+                playSound('error')
+                setScanFeedback('error')
+            } else if (parsedNewBatchId === recheckBatchId.value) {
+                showFeedback('error', `Ingredient not found in batch recipe: ${bagBarcode}`, 'INVALID INGREDIENT')
+                playSound('error')
+                setScanFeedback('error')
+            } else {
+                wrongBoxAlert.value = { 
+                    show: true, 
+                    bagCode: bagBarcode, 
+                    expectedBox: recheckBatchId.value || '', 
+                    newBatchId: parsedNewBatchId 
+                }
+                playSound('wrong_box')
+                showFeedback('error', `BAG [${bagBarcode}] does NOT belong to this batch!`, '⚠ WRONG BATCH ⚠')
+            }
         } else {
             showFeedback('error', detail, 'ERROR')
             playSound('error')
@@ -679,6 +978,30 @@ const verifyBatchBag = async (bagBarcode: string) => {
     }
 }
 
+const handleWrongBoxSwitch = async () => {
+    const newBatch = wrongBoxAlert.value.newBatchId
+    const bagBarcode = wrongBoxAlert.value.bagCode
+    wrongBoxAlert.value.show = false
+    
+    if (!newBatch) return
+    
+    // Simulate a unified scan to route to the new batch and verify the bag
+    await parseAndHandleScan(bagBarcode, 'bag')
+}
+
+const startNewBatch = () => {
+    selectedBatchId.value = null
+    recheckBatchId.value = ''
+    boxId.value = ''
+    batchPreBatchItems.value = []
+    batchPackedRecs.value = []
+    batchRecheck.value = null
+    wrongBoxAlert.value.show = false
+    boxScanInput.value = ''
+    bagScanInput.value = ''
+    treeSearch.value = ''
+}
+
 const handleMqttBarcode = (topic: string, payload: any) => {
     // Topic can be 'Barcode' or contain 'barcode'
     if (topic === 'Barcode' || topic.toLowerCase().endsWith('/barcode')) {
@@ -688,9 +1011,12 @@ const handleMqttBarcode = (topic: string, payload: any) => {
         let barcodeStr = ''
         if (typeof payload === 'object' && payload !== null) {
             // If it's the standard scanner JSON: {"b":"...", "m":"...", ...}
-            if (payload.b) {
-                // Re-stringify to let parseAndHandleScan deal with its custom regex logic
-                barcodeStr = JSON.stringify(payload)
+            // Keys may be uppercase (B, M, P, N, T) or lowercase (b, m, p, n, t)
+            if (payload.b || payload.B) {
+                // Normalize keys to lowercase before re-stringify
+                const normalized: Record<string, any> = {}
+                for (const [k, v] of Object.entries(payload)) { normalized[k.toLowerCase()] = v }
+                barcodeStr = JSON.stringify(normalized)
             } else {
                 // Fallback: use first string field or raw
                 barcodeStr = payload.raw || JSON.stringify(payload)
@@ -720,7 +1046,10 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
     if (barcode.startsWith('{')) {
         // 1) Try standard JSON.parse first (for valid JSON like the MQTT Barcode topic)
         try {
-            scanFields = JSON.parse(barcode)
+            const rawParsed = JSON.parse(barcode)
+            // Normalize keys to lowercase so both {B:...} and {b:...} work
+            scanFields = {}
+            for (const [k, v] of Object.entries(rawParsed)) { scanFields[k.toLowerCase()] = v }
             parsedOk = true
         } catch {
             // 2) Fallback: Custom key:value parser for scanner's non-standard format
@@ -757,7 +1086,9 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
             } else {
                 candidate = batchRecordId
             }
-            barcode = batchRecordId  // Full record ID for bag verification
+            // Normalize to uppercase to match database format (labels may use lowercase 'p')
+            candidate = candidate.toUpperCase()
+            barcode = batchRecordId.toUpperCase()  // Full record ID for bag verification
             isJson = true
             console.log('[Scanner Parse]', { candidate, batchRecordId, scanFields })
         }
@@ -796,7 +1127,41 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
     // If the scanned candidate is DIFFERENT from current batch, force reload new batch
     const isNewBatchScan = candidate.startsWith('P') && candidate !== selectedBatchId.value
 
+    // ── FIFO GATE ──────────────────────────────────────────────────────────
+    // Only allow scanning the FIRST non-Done batch in the plan (First In, First Out).
+    // Check only when we have a recognised batch_id scan (starts with P and 4 parts).
+    if (candidate.startsWith('P') && candidate.split('-').length >= 4) {
+        const isKnownBatch = allBatches.value.some(b => b.batch_id === candidate)
+        if (isKnownBatch && !isFifoBatch(candidate)) {
+            const blocker = getFifoBlocker(candidate)
+            showFeedback(
+                'error',
+                blocker
+                    ? `FIFO: Complete batch "${blocker}" first before scanning "${candidate}"`
+                    : `Batch "${candidate}" is not the active FIFO batch`,
+                '⛔ OUT OF ORDER (FIFO)'
+            )
+            playSound('error')
+            setScanFeedback('error')
+            bagScanInput.value = ''
+            boxScanInput.value = ''
+            $q.notify({
+                type: 'negative',
+                icon: 'block',
+                message: '⛔ FIFO ORDER VIOLATION',
+                caption: blocker ? `Must complete: ${blocker}` : 'Batch not in FIFO order',
+                position: 'center',
+                timeout: 4000,
+                classes: 'text-h6 q-pa-md shadow-10'
+            })
+            playSound('error')
+            return
+        }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     if (!batchAlreadyLoaded || isNewBatchScan) {
+
         // ═══ STEP 1: LOAD BATCH ═══
         
         // Find matching batch
@@ -856,7 +1221,7 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
     let matCodeFromScan = ''
     
     if (isJson && scanFields.b) {
-        fullRecordId = String(scanFields.b)
+        fullRecordId = String(scanFields.b).toUpperCase()
         const parts = fullRecordId.split('-')
         if (parts.length >= 5) {
             // Batch: PYYMMDD-Plan-Plant-Seq, then RE code parts, then bag number
@@ -875,7 +1240,30 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
         const parts = barcode.split('-')
         if (parts.length > 3) {
             const batchParts = batchId.split('-').length
-            reCodeFromScan = parts.slice(batchParts, parts.length - 1).join('-')
+            const extracted = parts.slice(batchParts, parts.length - 1).join('-')
+            if (extracted) {
+                reCodeFromScan = extracted
+            } else {
+                // Fallback: barcode doesn't contain the full batch prefix
+                // Try last segment (before optional bag number), e.g. "01-01-001-FV045A" → "FV045A"
+                const lastPart = parts[parts.length - 1] || ''
+                const secondLast = parts.length >= 2 ? parts[parts.length - 2] || '' : ''
+                // If last part looks like a bag number (pure digits), RE code is second-to-last
+                if (/^\d+$/.test(lastPart) && secondLast) {
+                    reCodeFromScan = secondLast
+                } else {
+                    reCodeFromScan = lastPart
+                }
+            }
+        } else if (parts.length >= 2) {
+            // Short barcode: last segment is likely the RE code
+            const lastPart = parts[parts.length - 1] || ''
+            const secondLast = parts.length >= 2 ? parts[parts.length - 2] || '' : ''
+            if (/^\d+$/.test(lastPart) && secondLast) {
+                reCodeFromScan = secondLast
+            } else {
+                reCodeFromScan = lastPart
+            }
         }
     }
     
@@ -883,6 +1271,7 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
     
     // Find matching ingredient across all warehouse groups
     let matched = false
+    const fullRecordIdUpper = fullRecordId.toUpperCase()
     for (const group of prebatchByWarehouse.value) {
         // Multi-strategy matching: RE code, material code, or partial match
         const ing = group.ingredients.find((i: any) => {
@@ -892,8 +1281,8 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
             if (rc === scan) return true
             // Case-insensitive match
             if (rc.toLowerCase() === scan.toLowerCase()) return true
-            // RE code contained in full record ID
-            if (fullRecordId.includes(rc)) return true
+            // RE code contained in full record ID (case-insensitive)
+            if (fullRecordIdUpper.includes(rc.toUpperCase())) return true
             // Material code match (fallback)
             if (matCodeFromScan && i.items?.some((it: any) => String(it.mat_sap_code) === matCodeFromScan || String(it.material_id) === matCodeFromScan)) return true
             return false
@@ -915,6 +1304,19 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
             playSound('success')
             showFeedback('success', `✅ ${ing.re_code} — Verified!`, 'PREBATCH OK')
             matched = true
+            
+            // Refresh batchRecheck so UI status badges and Start Production button are updated dynamically!
+            if (recheckBatchId.value) {
+                try {
+                    const data = await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/recheck-batch/${recheckBatchId.value}`, {
+                        headers: getAuthHeader() as Record<string, string>
+                    })
+                    batchRecheck.value = data
+                } catch (e) {
+                    console.error('Silent refresh failed:', e)
+                }
+            }
+            
             break
         } else if (ing && ing.recheck_status === 1) {
             setScanFeedback('success')
@@ -1473,6 +1875,44 @@ const printQCReport = async () => {
   finally { qcReportLoading.value = false }
 }
 
+const isRecheckInProgress = computed(() => {
+    return recheckBatchId.value 
+        && batchRecheck.value?.summary?.checked > 0 
+        && !isAllPrepackVerified.value;
+})
+
+const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (isRecheckInProgress.value) {
+        const message = 'All pre-batches must be re-checked in one session; leaving or refreshing this page will trigger a full reset.'
+        e.returnValue = message
+        return message
+    }
+}
+
+const handleUnload = () => {
+    if (isRecheckInProgress.value) {
+        navigator.sendBeacon(`${appConfig.apiBaseUrl}/prebatch-recs/reset-batch/${recheckBatchId.value}`)
+    }
+}
+
+onBeforeRouteLeave((to, from, next) => {
+    if (isRecheckInProgress.value) {
+        $q.dialog({
+            title: 'Warning',
+            message: 'All pre-batches must be re-checked in one session; leaving or refreshing this page will trigger a full reset. Do you want to proceed?',
+            cancel: true,
+            persistent: true
+        }).onOk(async () => {
+            await resetBatchRecheck()
+            next()
+        }).onCancel(() => {
+            next(false)
+        })
+    } else {
+        next()
+    }
+})
+
 onMounted(() => {
     fetchPlansAndBatches()
     fetchAwaitingBatches()
@@ -1480,11 +1920,16 @@ onMounted(() => {
     // Connect to MQTT and listen for barcodes
     connect()
     onMessage(handleMqttBarcode)
+    
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('unload', handleUnload)
 })
 
 onUnmounted(() => {
     offMessage(handleMqttBarcode)
     disconnect()
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+    window.removeEventListener('unload', handleUnload)
 })
 </script>
 
@@ -1497,6 +1942,16 @@ onUnmounted(() => {
       <div class="bg-blue-9 text-white q-pa-sm rounded-borders shadow-2 row items-center q-gutter-xs" style="flex-shrink: 0;">
         <q-icon name="fact_check" size="sm" />
         <div class="text-subtitle1 text-weight-bolder" style="white-space: nowrap;">Check for Production</div>
+      </div>
+
+      <!-- PLC ACTIVE PRODUCTION BANNERS -->
+      <div v-for="active in activePlcBatches" :key="active.plant" class="bg-cyan-1 border-cyan-3 rounded-borders q-px-sm q-py-xs row items-center q-gutter-x-sm shadow-1" style="border: 1px solid #4dd0e1; flex-shrink: 0;">
+         <q-icon name="precision_manufacturing" color="cyan-9" size="xs" />
+         <div class="text-cyan-10 text-weight-bold" style="font-size: 12px; line-height: 1;">PLC-{{active.plant}} RUNNING</div>
+         <q-separator vertical color="cyan-3" />
+         <q-badge color="cyan-8" style="font-size: 11px;">Batch: {{ active.batch_id }}</q-badge>
+         <q-badge color="cyan-8" style="font-size: 11px;" v-if="active.sku_name">SKU: {{ active.sku_name }}</q-badge>
+         <q-badge color="cyan-9" style="font-size: 11px;">Step: {{ active.phase }} / {{ active.step }}</q-badge>
       </div>
 
       <!-- Unified Scan Input -->
@@ -1530,6 +1985,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Action buttons -->
+      <q-btn flat dense icon="restart_alt" label="Re scan" color="warning" @click="confirmResetBatchRecheck" :disable="!recheckBatchId" class="q-mr-sm"><q-tooltip>Reset all re-check current and re new scan</q-tooltip></q-btn>
       <q-btn flat round dense icon="print" color="blue-9" @click="printBatchIngredientReport" :disable="!selectedBatchInfo"><q-tooltip>Print Batch Ingredient Report</q-tooltip></q-btn>
       <q-btn flat round dense icon="assessment" color="blue-9" @click="showQCReportDialog = true"><q-tooltip>QC Report</q-tooltip></q-btn>
       <q-btn flat round dense icon="volume_up" color="blue-9" @click="showSoundSettings = true"><q-tooltip>{{ t('sound.title') }}</q-tooltip></q-btn>
@@ -1583,20 +2039,90 @@ onUnmounted(() => {
 
                           <!-- Batch Level -->
                           <q-list dense>
-                            <q-item v-for="batch in (plan.batches || [])" :key="batch.batch_id" clickable dense
+                            <q-item
+                              v-for="batch in (plan.batches || [])" :key="batch.batch_id"
+                              clickable dense
                               :active="recheckBatchId === batch.batch_id || boxId === batch.batch_id || selectedBatchId === batch.batch_id"
-                              active-class="bg-blue-1" @click="boxScanInput = batch.batch_id; selectBatchFromTree(batch); onBoxScanSubmit()"
-                              style="min-height: 28px; padding-left: 64px;">
-                              <q-item-section avatar style="min-width: 18px;"><q-icon name="science" size="12px" color="indigo" /></q-item-section>
-                              <q-item-section><q-item-label class="text-weight-bold ellipsis">{{ batch.batch_id }} · {{ (batch.batch_size || 0).toFixed(1) }}kg</q-item-label></q-item-section>
+                              active-class="bg-blue-1"
+                              @click="
+                                isFifoBatch(batch.batch_id)
+                                  ? (boxScanInput = batch.batch_id, selectBatchFromTree(batch), onBoxScanSubmit())
+                                  : $q.notify({ type: 'negative', icon: 'block', message: '⛔ FIFO: Not active batch', caption: `Complete ${getFifoBlocker(batch.batch_id)} first`, position: 'top', timeout: 3000 })
+                              "
+                              :class="[
+                                batch.status === 'Hold' ? 'bg-amber-1' : '',
+                                !isFifoBatch(batch.batch_id) && batch.status !== 'Hold' && batch.status !== 'Done' ? 'fifo-locked-item' : ''
+                              ]"
+                              style="min-height: 28px; padding-left: 64px;"
+                              :style="isFifoBatch(batch.batch_id) ? 'border-left: 3px solid #2e7d32;' : (batch.status === 'Done' ? '' : 'border-left: 3px solid #e0e0e0; opacity: 0.7;')"
+                            >
+                              <q-item-section avatar style="min-width: 18px;">
+                                <q-icon
+                                  :name="batch.status === 'Hold' ? 'pause_circle' : (batch.status === 'Done' ? 'check_circle' : (isFifoBatch(batch.batch_id) ? 'play_circle' : 'lock'))"
+                                  size="12px"
+                                  :color="batch.status === 'Hold' ? 'amber-9' : (batch.status === 'Done' ? 'grey-4' : (isFifoBatch(batch.batch_id) ? 'green-8' : 'grey-5'))"
+                                />
+                              </q-item-section>
+                              <q-item-section>
+                                <q-item-label
+                                  class="text-weight-bold ellipsis"
+                                  :class="
+                                    batch.status === 'Hold' ? 'text-amber-9' :
+                                    batch.status === 'Done' ? 'text-grey-5' :
+                                    isFifoBatch(batch.batch_id) ? 'text-green-9' : 'text-grey-6'
+                                  "
+                                >
+                                  {{ batch.batch_id }} · {{ (batch.batch_size || 0).toFixed(1) }}kg
+                                </q-item-label>
+                              </q-item-section>
                               <q-item-section side>
                                 <div class="row items-center q-gutter-xs">
-                                  <q-badge :color="getTreeBatchFH(batch) ? 'green' : 'grey-4'" style="font-size: 10px; padding: 1px 3px;">FH</q-badge>
-                                  <q-badge :color="getTreeBatchSPP(batch) ? 'green' : 'grey-4'" style="font-size: 10px; padding: 1px 3px;">SPP</q-badge>
+
+                                  <!-- FIFO ACTIVE badge -->
+                                  <q-badge
+                                    v-if="isFifoBatch(batch.batch_id) && batch.status !== 'Hold'"
+                                    color="green-8"
+                                    style="font-size: 9px; padding: 1px 4px; letter-spacing: 0.5px;"
+                                  >▶ ACTIVE</q-badge>
+
+                                  <!-- FIFO QUEUED badge (locked) -->
+                                  <q-badge
+                                    v-else-if="!isFifoBatch(batch.batch_id) && batch.status !== 'Done' && batch.status !== 'Hold'"
+                                    color="grey-4" text-color="grey-7"
+                                    style="font-size: 9px; padding: 1px 4px;"
+                                  >
+                                    <q-icon name="lock" size="9px" class="q-mr-xs" />QUEUED
+                                    <q-tooltip>FIFO: Complete {{ getFifoBlocker(batch.batch_id) }} first</q-tooltip>
+                                  </q-badge>
+
+                                  <!-- HOLD badge -->
+                                  <q-badge v-else-if="batch.status === 'Hold'" color="amber-9" style="font-size: 10px; padding: 1px 5px; letter-spacing: 0.5px;">HOLD</q-badge>
+
+                                  <!-- FH / SPP status (active or done only) -->
+                                  <template v-if="isFifoBatch(batch.batch_id) || batch.status === 'Done'">
+                                    <q-badge :color="getTreeBatchFH(batch) ? 'green' : 'grey-4'" style="font-size: 10px; padding: 1px 3px;">FH</q-badge>
+                                    <q-badge :color="getTreeBatchSPP(batch) ? 'green' : 'grey-4'" style="font-size: 10px; padding: 1px 3px;">SPP</q-badge>
+                                  </template>
+
+                                  <!-- Hold/Unhold toggle button -->
+                                  <q-btn
+                                    flat round dense
+                                    :icon="batch.status === 'Hold' ? 'play_circle' : 'pause_circle'"
+                                    size="8px"
+                                    :color="batch.status === 'Hold' ? 'positive' : 'amber-9'"
+                                    @click.stop="openHoldDialog(batch, $event)"
+                                    style="width: 20px; height: 20px;"
+                                  >
+                                    <q-tooltip>{{ batch.status === 'Hold' ? 'Unhold Batch' : 'Hold Batch' }}</q-tooltip>
+                                  </q-btn>
                                   <q-btn flat round dense icon="print" size="8px" color="indigo-4" @click.stop="printBatchLabelReport(batch.batch_id)" style="width: 20px; height: 20px;"><q-tooltip>Print Labels</q-tooltip></q-btn>
                                 </div>
                               </q-item-section>
+                              <q-tooltip v-if="!isFifoBatch(batch.batch_id) && batch.status !== 'Done' && batch.status !== 'Hold'">
+                                ⛔ FIFO LOCKED — Complete {{ getFifoBlocker(batch.batch_id) }} first
+                              </q-tooltip>
                             </q-item>
+
                           </q-list>
                         </q-expansion-item>
                       </template>
@@ -1622,12 +2148,29 @@ onUnmounted(() => {
                 <q-icon name="assignment" size="18px" class="q-mr-xs" />
                 <span>{{ selectedBatchInfo.plan_id }} · {{ selectedBatchInfo.sku_name }}</span>
                 <q-space />
-                <q-btn v-if="selectedBatchId" :disable="!canStartProduction" dense push color="deep-purple-9" text-color="white" icon="rocket_launch" label="Start Production" @click="goToStartProduction" class="q-mr-sm text-weight-bold" style="font-size: 12px; padding: 2px 8px;">
-                  <q-tooltip v-if="!canStartProduction">Check all ingredients first</q-tooltip>
-                </q-btn>
-                <div v-if="canStartProduction" class="row items-center q-mr-md bg-green-2 text-green-10 q-px-sm rounded-borders text-weight-bolder shadow-1 pulse-ready">
-                   <q-icon name="check_circle" class="q-mr-xs" /> READY FOR PRODUCTION
+                <div class="q-mr-sm bg-yellow text-black q-pa-xs rounded-borders" style="font-size:10px;">
+                  allOk: {{ isAllPrepackVerified }}, fifo: {{ isFifoBatch(selectedBatchId) }}
                 </div>
+                <q-btn
+                  v-if="selectedBatchId"
+                  dense push
+                  icon="rocket_launch"
+                  label="START PRODUCTION"
+                  @click="goToStartProduction"
+                  :loading="loading"
+                  class="q-mr-sm text-weight-bolder start-prod-btn"
+                  style="font-size: 12px; padding: 2px 12px; letter-spacing: 0.5px; transition: background 0.3s, box-shadow 0.3s;"
+                  :style="canStartProduction
+                    ? (loading
+                        ? 'background:#2e7d32 !important; color:white !important; box-shadow: 0 0 12px rgba(46,125,50,0.6);'
+                        : 'background:#1565c0 !important; color:white !important; box-shadow: 0 0 10px rgba(21,101,192,0.5);')
+                    : 'background:#bdbdbd !important; color:#757575 !important; box-shadow:none; cursor:not-allowed;'"
+                  :disable="!canStartProduction"
+                >
+                  <q-tooltip v-if="!canStartProduction">Verify all FH &amp; SPP ingredients first</q-tooltip>
+                </q-btn>
+
+
                 <q-btn dense flat color="teal-9" icon="visibility" label="Check for Production Detail" @click="openSkuDetail" class="q-mr-sm" style="font-size: 12px;" />
                 <q-badge :color="selectedBatchInfo.fh_boxed ? 'green' : 'grey-4'" class="q-mr-xs" style="font-size: 12px;">FH</q-badge>
                 <q-badge :color="selectedBatchInfo.spp_boxed ? 'green' : 'grey-4'" style="font-size: 12px;">SPP</q-badge>
@@ -1876,6 +2419,62 @@ onUnmounted(() => {
       </q-card>
     </q-dialog>
 
+    <!-- ===== HOLD / UNHOLD CONFIRM DIALOG ===== -->
+    <q-dialog v-model="holdDialog" persistent>
+      <q-card style="min-width: 360px; border-radius: 12px; overflow: hidden;">
+        <!-- Header -->
+        <div :class="holdTarget?.status === 'Hold' ? 'bg-positive' : 'bg-amber-9'" class="q-pa-md row items-center q-gutter-sm">
+          <q-icon :name="holdTarget?.status === 'Hold' ? 'play_circle' : 'pause_circle'" size="28px" color="white" />
+          <div class="text-white text-weight-bold text-subtitle1">
+            {{ holdTarget?.status === 'Hold' ? 'Unhold Batch' : 'Hold Batch' }}
+          </div>
+        </div>
+
+        <q-card-section class="q-pt-md">
+          <!-- Batch Info -->
+          <div class="q-mb-md row items-center q-gutter-sm">
+            <q-icon name="science" color="indigo" />
+            <span class="text-weight-bold text-indigo-9 text-subtitle2">{{ holdTarget?.batch_id }}</span>
+            <q-badge :color="holdTarget?.status === 'Hold' ? 'amber-9' : 'blue'">
+              {{ holdTarget?.status || '-' }}
+            </q-badge>
+          </div>
+
+          <!-- Info message -->
+          <q-banner v-if="holdTarget?.status !== 'Hold'" dense class="bg-amber-1 text-amber-10 rounded-borders q-mb-md" style="font-size: 12px;">
+            <template v-slot:avatar><q-icon name="info" color="amber-9" /></template>
+            This batch will be put on <b>Hold</b>. The next <b>In-Progress</b> batch in the queue (FIFO) will be processed first.
+          </q-banner>
+          <q-banner v-else dense class="bg-green-1 text-green-10 rounded-borders q-mb-md" style="font-size: 12px;">
+            <template v-slot:avatar><q-icon name="info" color="green" /></template>
+            Batch will be released from Hold and return to <b>In-Progress</b> status (re-enters FIFO queue).
+          </q-banner>
+
+          <!-- Reason input (only for Hold) -->
+          <q-input
+            v-if="holdTarget?.status !== 'Hold'"
+            v-model="holdReason"
+            outlined dense
+            label="Reason (optional)"
+            placeholder="e.g. Awaiting QC check, material shortage..."
+            maxlength="100"
+          />
+        </q-card-section>
+
+        <q-card-actions align="right" class="q-pa-md q-pt-none">
+          <q-btn flat label="Cancel" color="grey" v-close-popup :disable="holdLoading" />
+          <q-btn
+            unelevated
+            :label="holdTarget?.status === 'Hold' ? 'Release (Unhold)' : 'Confirm Hold'"
+            :icon="holdTarget?.status === 'Hold' ? 'play_circle' : 'pause_circle'"
+            :color="holdTarget?.status === 'Hold' ? 'positive' : 'amber-9'"
+            :loading="holdLoading"
+            @click="confirmHold"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
     <!-- ===== SOUND SETTINGS DIALOG ===== -->
     <q-dialog v-model="showSoundSettings">
       <q-card style="min-width: 420px" class="bg-grey-9 text-white">
@@ -1961,7 +2560,7 @@ onUnmounted(() => {
 
     <!-- ===== WRONG BOX FULL-SCREEN ALERT ===== -->
     <Teleport to="body">
-      <div v-if="wrongBoxAlert.show" class="wrong-box-overlay" @click="wrongBoxAlert.show = false">
+      <div v-if="wrongBoxAlert.show" class="wrong-box-overlay">
         <div class="wrong-box-content">
           <q-icon name="gpp_bad" size="120px" color="white" />
           <div class="wrong-box-title">{{ t('wrongBox.title') }}</div>
@@ -1973,7 +2572,42 @@ onUnmounted(() => {
           <div class="wrong-box-detail">
             {{ t('wrongBox.currentBox') }}: <strong>{{ wrongBoxAlert.expectedBox }}</strong>
           </div>
-          <div class="wrong-box-instruction">{{ t('wrongBox.removeImmediately') }}</div>
+          
+          <div class="row q-gutter-md justify-center q-mt-xl">
+            <q-btn 
+              color="grey-9" 
+              text-color="white" 
+              size="lg" 
+              icon="reply" 
+              label="Continue Current Batch" 
+              @click="wrongBoxAlert.show = false; bagScanRef?.focus()"
+              class="q-px-xl q-py-md text-weight-bold"
+              style="border: 2px solid rgba(255,255,255,0.4);"
+            />
+            
+            <q-btn 
+              v-if="wrongBoxAlert.newBatchId && wrongBoxAlert.newBatchId !== wrongBoxAlert.expectedBox"
+              color="indigo-9" 
+              text-color="white" 
+              size="lg" 
+              icon="switch_access_shortcut" 
+              :label="'Switch to ' + wrongBoxAlert.newBatchId" 
+              @click="handleWrongBoxSwitch"
+              class="q-px-xl q-py-md text-weight-bold"
+              style="border: 2px solid rgba(255,255,255,0.8);"
+            />
+            <q-btn 
+              v-else
+              color="negative" 
+              text-color="white" 
+              size="lg" 
+              icon="restart_alt" 
+              label="Start New Batch" 
+              @click="startNewBatch"
+              class="q-px-xl q-py-md text-weight-bold"
+              style="border: 2px solid rgba(255,255,255,0.8);"
+            />
+          </div>
         </div>
       </div>
     </Teleport>
@@ -2185,5 +2819,39 @@ onUnmounted(() => {
 @keyframes pulse-ready-anim {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.03); opacity: 0.95; }
+}
+
+/* START PRODUCTION button — 3 states */
+.start-prod-btn {
+  border-radius: 6px !important;
+  min-height: 30px !important;
+  transition: background 0.3s ease, box-shadow 0.3s ease, transform 0.15s ease !important;
+}
+/* Enabled (blue) — subtle attention pulse */
+.start-prod-btn:not([disabled]):not(.q-btn--loading) {
+  animation: start-btn-pulse 2s ease-in-out infinite;
+}
+@keyframes start-btn-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(21,101,192,0.4); transform: scale(1); }
+  50%       { box-shadow: 0 0 16px rgba(21,101,192,0.75); transform: scale(1.02); }
+}
+/* Click moment — grow slightly */
+.start-prod-btn:not([disabled]):active {
+  transform: scale(0.97) !important;
+}
+
+/* FIFO locked batch row */
+.fifo-locked-item {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 6px,
+    rgba(0,0,0,0.02) 6px,
+    rgba(0,0,0,0.02) 12px
+  ) !important;
+  cursor: not-allowed !important;
+}
+.fifo-locked-item:hover {
+  background: #fafafa !important;
 }
 </style>

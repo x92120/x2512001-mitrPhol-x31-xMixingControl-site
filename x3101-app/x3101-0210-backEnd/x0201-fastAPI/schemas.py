@@ -246,6 +246,7 @@ class SkuStep(SkuStepBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    mat_sap_code: Optional[str] = None
 
     class Config:
         from_attributes = True
