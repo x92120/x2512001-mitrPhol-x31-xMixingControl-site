@@ -183,8 +183,13 @@ def build_recipe_payload(
         else:
             processes.append(_empty_process(i + 1))
 
+    # --- Count total active steps ---
+    total_steps = sum(
+        len(steps) for _, steps in sorted_phases
+    )
+
     # --- Build final DB 1780 payload ---
-    return {
+    payload = {
         "DB": 1780,
         "DBName": "DB_RecipeData",
         "Header": {
@@ -195,8 +200,50 @@ def build_recipe_payload(
             "PlantID": _parse_int(plant_id, 1),
             "BatchSize": _parse_float(batch_size, 0.0),
             "ProcessCount": len(sorted_phases),
+            "TotalSteps": total_steps,
             "RecipeReady": False,
             "StartCmd": False,
         },
         "Processes": processes,
     }
+
+    # --- Calculate CRC checksum ---
+    payload["Header"]["CRC"] = calculate_recipe_crc(payload)
+
+    return payload
+
+
+def calculate_recipe_crc(payload: Dict[str, Any]) -> int:
+    """
+    Calculate an additive checksum over all critical recipe values.
+    
+    This checksum is written to the PLC alongside the recipe data.
+    The PLC can independently calculate the same checksum using
+    FC_CalcChecksum and compare to verify no data was lost.
+    
+    Fields included: StepNo, ActionCode, Require×100, Temperature×100,
+                     AgitatorRPM, HighShearRPM, StepTime
+    """
+    checksum = 0
+    process_count = payload["Header"].get("ProcessCount", 0)
+
+    for i, proc in enumerate(payload["Processes"]):
+        if i >= process_count:
+            break
+        checksum += proc.get("ProcessNo", 0)
+        checksum += proc.get("StepCount", 0)
+
+        step_count = proc.get("StepCount", 0)
+        for j, step in enumerate(proc.get("Steps", [])):
+            if j >= step_count:
+                break
+            checksum += step.get("StepNo", 0)
+            checksum += _parse_int(step.get("ActionCode", "0"), 0)
+            checksum += int(_parse_float(step.get("Require", 0), 0.0))
+            checksum += int(_parse_float(step.get("Temperature", 0), 0.0))
+            checksum += int(_parse_float(step.get("AgitatorRPM", 0), 0.0))
+            checksum += int(_parse_float(step.get("HighShearRPM", 0), 0.0))
+            checksum += step.get("StepTime", 0)
+
+    # Keep within 32-bit signed int range
+    return checksum & 0x7FFFFFFF

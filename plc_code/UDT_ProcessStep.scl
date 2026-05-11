@@ -1,0 +1,49 @@
+TYPE "UDT_ProcessStep"
+VERSION : 0.1
+   STRUCT
+      // ── Step Identity ──
+      StepNo         : Int;              // Sub-step number (10, 20, 30...)
+      ActionCode     : Int;              // 10010=Setup, 10030=Batching, 21010=ManualAdd, 20010=Dissolve
+      
+      // ── Material ──
+      ReCode         : String[25];       // Ingredient code (e.g., "RO-Water", "White Sugar")
+      SapCode        : String[20];       // SAP material number
+      Destination    : Int;              // 0=MixTank, 1=Hopper, 2=PreMix
+      
+      // ── Weight ──
+      Require        : Real;             // Target weight (kg)
+      LowTol         : Real;             // Low tolerance (kg)
+      HighTol        : Real;             // High tolerance (kg)
+      
+      // ── Temperature ──
+      Temperature    : Real;             // Setpoint (°C)
+      TempLow        : Real;             // Low limit (°C)
+      TempHigh       : Real;             // High limit (°C)
+      
+      // ── Speed ──
+      AgitatorRPM    : Real;             // Agitator setpoint (RPM)
+      HighShearRPM   : Real;             // High-shear mixer setpoint (RPM)
+      
+      // ── Timer ──
+      StepTime       : Int;              // Step duration (seconds)
+      StepTimerCtl   : Int;              // 0=no timer, 1=auto start, 2=manual start
+      
+      // ── Control ──
+      SetupStep      : Int;              // Setup step flag
+      Condition      : Int;              // Step condition code
+      IsManual       : Bool;             // TRUE = wait for operator (ActionCode 21010/30020)
+      
+      // ── QC Flags ──
+      QcTemp         : Bool;             // Requires QC temperature check
+      RecordSteam    : Bool;             // Record steam pressure
+      RecordCTW      : Bool;             // Record CTW
+      BrixRecord     : Bool;             // Requires Brix recording
+      PhRecord       : Bool;             // Requires pH recording
+      MasterStep     : Bool;             // Is a phase-start step
+      StepActive     : Bool;             // TRUE = this slot has valid data
+      
+      // ── QC Setpoints ──
+      BrixSP         : Real;             // Brix target
+      PhSP           : Real;             // pH target
+   END_STRUCT;
+END_TYPE

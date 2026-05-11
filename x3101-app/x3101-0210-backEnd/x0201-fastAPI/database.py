@@ -74,7 +74,7 @@ def get_db():
         db.close()
 
 # Engine and session for Locally Dockerized Buffer DB
-LOCAL_DB_HOST = "127.0.0.1"
+LOCAL_DB_HOST = os.getenv("LOCAL_DB_HOST", "127.0.0.1")
 local_engine = _create_engine_for(LOCAL_DB_HOST)
 LocalSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=local_engine)
 

@@ -1,0 +1,10 @@
+TYPE "UDT_Process"
+VERSION : 0.1
+   STRUCT
+      ProcessNo      : Int;              // Phase number (10, 20, 30, 40...)
+      PhaseID        : Int;              // Phase ID from database
+      StepCount      : Int;              // Number of active steps (0-8)
+      ProcessActive  : Bool;             // TRUE = this phase has data
+      Steps          : Array[0..7] of "UDT_ProcessStep";
+   END_STRUCT;
+END_TYPE

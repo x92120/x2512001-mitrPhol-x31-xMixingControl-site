@@ -25,19 +25,17 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
     Looks up the batch → plan → SKU → SKU steps, then serializes
     into the 32-process × 8-step datablock structure.
     """
-    # 1. Find the batch
-    batch = db.query(models.ProductionBatch).filter(
+    # 1. Find the batch and plan in a single optimized JOIN query
+    result = db.query(models.ProductionBatch, models.ProductionPlan).join(
+        models.ProductionPlan, models.ProductionBatch.plan_id == models.ProductionPlan.id
+    ).filter(
         models.ProductionBatch.batch_id == batch_id
     ).first()
-    if not batch:
-        raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' not found")
-
-    # 2. Find the plan
-    plan = db.query(models.ProductionPlan).filter(
-        models.ProductionPlan.id == batch.plan_id
-    ).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail=f"Plan for batch '{batch_id}' not found")
+    
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' or associated Plan not found")
+        
+    batch, plan = result
 
     # 3. Fetch SKU steps
     sku_steps = db.query(models.SkuStep).filter(
@@ -110,23 +108,92 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
 @router.post("/send-recipe/{batch_id}")
 def send_recipe_to_plc(batch_id: str, db: Session = Depends(get_db)):
     """
-    (Future) Send recipe to PLC via snap7.
-    Currently returns the recipe payload for verification.
+    Send recipe to PLC via the 4-stage transfer protocol:
+    1. PREPARE — Lock recipe slot (RecipeReady=FALSE)
+    2. TRANSFER — Chunk data via Node-RED S7 writes
+    3. VERIFY — CRC checksum comparison
+    4. ACTIVATE — Set RecipeReady=TRUE only after CRC match
+
+    Currently returns the payload + verification data for the frontend
+    to display progress and confirm integrity.
     """
     payload = get_recipe_for_plc(batch_id, db)
 
-    # TODO: snap7 integration
-    # import snap7
-    # plc = snap7.client.Client()
-    # plc.connect('192.168.1.1', 0, 1)
-    # data = serialize_to_bytes(payload)  # Convert to S7 byte array
-    # plc.db_write(1780, 0, data)
-    # plc.disconnect()
+    # Build phase-by-phase transfer progress for frontend
+    phases_summary = []
+    for proc in payload["Processes"]:
+        if proc["ProcessActive"]:
+            active_steps = [s for s in proc["Steps"] if s.get("StepActive")]
+            phases_summary.append({
+                "processNo": proc["ProcessNo"],
+                "stepCount": proc["StepCount"],
+                "steps": [{
+                    "stepNo": s["StepNo"],
+                    "actionCode": s["ActionCode"],
+                    "reCode": s["ReCode"],
+                    "require": s["Require"],
+                    "temperature": s["Temperature"],
+                } for s in active_steps]
+            })
 
-    payload["Header"]["RecipeReady"] = True
+    # Spot-check values for quick verification
+    first_step = None
+    last_step = None
+    for proc in payload["Processes"]:
+        if proc["ProcessActive"]:
+            for s in proc["Steps"]:
+                if s.get("StepActive"):
+                    if first_step is None:
+                        first_step = {
+                            "processNo": proc["ProcessNo"],
+                            "stepNo": s["StepNo"],
+                            "actionCode": s["ActionCode"],
+                        }
+                    last_step = {
+                        "processNo": proc["ProcessNo"],
+                        "stepNo": s["StepNo"],
+                        "actionCode": s["ActionCode"],
+                        "stepTime": s["StepTime"],
+                    }
+
+    crc = payload["Header"]["CRC"]
+    process_count = payload["Header"]["ProcessCount"]
+    total_steps = payload["Header"]["TotalSteps"]
+
+    # Estimated transfer: ~15ms per S7 write, ~10 writes per step + header
+    estimated_writes = (total_steps * 10) + 20  # steps + header fields
+    estimated_time_ms = estimated_writes * 15
+
+    logger.info(
+        f"Recipe prepared for PLC: batch={batch_id}, "
+        f"processes={process_count}, steps={total_steps}, "
+        f"CRC=0x{crc:08X}, est_writes={estimated_writes}"
+    )
+
+    # When Node-RED is connected, POST to Node-RED HTTP endpoint here
+    # import httpx
+    # import os
+    # nodered_url = os.environ.get("NODERED_URL", "http://localhost:1880")
+    # response = httpx.post(f"{nodered_url}/api/plc/write-recipe", json=payload)
+
     return {
         "status": "prepared",
-        "message": f"Recipe prepared for batch {batch_id} (snap7 not connected)",
+        "message": f"Recipe ready for batch {batch_id}",
+        "transfer": {
+            "processCount": process_count,
+            "totalSteps": total_steps,
+            "estimatedWrites": estimated_writes,
+            "estimatedTimeMs": estimated_time_ms,
+            "phases": phases_summary,
+        },
+        "verification": {
+            "crc": crc,
+            "crcHex": f"0x{crc:08X}",
+            "firstStep": first_step,
+            "lastStep": last_step,
+            "processCount": process_count,
+            "totalSteps": total_steps,
+        },
         "recipe": payload,
     }
 

@@ -308,6 +308,32 @@ class ProductionBatch(Base):
     plan = relationship("ProductionPlan", back_populates="batches")
 
 
+class ProductionStepLog(Base):
+    __tablename__ = "production_step_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(String(100), index=True, nullable=False)
+    phase_id = Column(String(50))
+    step_id = Column(Integer)
+    action_code = Column(String(50))
+    re_code = Column(String(50))
+    target_value = Column(Float)
+    actual_value = Column(Float)
+    completed_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    operator = Column(String(50))
+
+class ProductionQcRecord(Base):
+    __tablename__ = "production_qc_records"
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(String(100), index=True, nullable=False)
+    step_id = Column(Integer)
+    brix_target = Column(Float)
+    brix_actual = Column(Float)
+    ph_target = Column(Float)
+    ph_actual = Column(Float)
+    recorded_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    operator = Column(String(50))
+
+
 # ── PreBatch (Legacy — kept for backward compat) ─────────────────────────────
 
 class PreBatchReq(Base):

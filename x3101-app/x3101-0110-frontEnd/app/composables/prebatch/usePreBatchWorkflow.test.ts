@@ -34,7 +34,7 @@ const $fetchMock = vi.fn()
 
 // ── Stub appConfig ──
 vi.mock('~/appConfig/config', () => ({
-  appConfig: { apiBaseUrl: 'http://test:8001' },
+  appConfig: { apiBaseUrl: 'http://test:8023' },
 }))
 
 import { usePreBatchWorkflow, type WorkflowDeps } from './usePreBatchWorkflow'
@@ -930,7 +930,7 @@ describe('usePreBatchWorkflow', () => {
       await fetchScanDialogItems()
 
       expect($fetchMock).toHaveBeenCalledWith(
-        'http://test:8001/prebatch-items/batches-by-ingredient/PLAN-1/FH-001',
+        'http://test:8023/prebatch-items/batches-by-ingredient/PLAN-1/FH-001',
         expect.objectContaining({ headers: { Authorization: 'Bearer test' } })
       )
       expect(scanDialogItems.value).toEqual(mockData)

@@ -1,0 +1,30 @@
+FUNCTION "FC_CalcChecksum" : DInt
+VERSION : 0.1
+VAR_TEMP
+    i, j       : Int;
+    checksum   : DInt;
+    stepData   : "UDT_ProcessStep";
+END_VAR
+
+BEGIN
+    #checksum := 0;
+    
+    FOR #i := 0 TO "DB_RecipeData".ProcessCount - 1 DO
+        #checksum := #checksum + "DB_RecipeData".Processes[#i].ProcessNo;
+        #checksum := #checksum + "DB_RecipeData".Processes[#i].StepCount;
+        
+        FOR #j := 0 TO "DB_RecipeData".Processes[#i].StepCount - 1 DO
+            #stepData := "DB_RecipeData".Processes[#i].Steps[#j];
+            #checksum := #checksum + #stepData.StepNo;
+            #checksum := #checksum + #stepData.ActionCode;
+            #checksum := #checksum + REAL_TO_DINT(#stepData.Require);
+            #checksum := #checksum + REAL_TO_DINT(#stepData.Temperature);
+            #checksum := #checksum + REAL_TO_DINT(#stepData.AgitatorRPM);
+            #checksum := #checksum + REAL_TO_DINT(#stepData.HighShearRPM);
+            #checksum := #checksum + #stepData.StepTime;
+        END_FOR;
+    END_FOR;
+    
+    // Mask to 31-bit positive DInt (simulating the python 0x7FFFFFFF mask)
+    "FC_CalcChecksum" := #checksum AND 16#7FFFFFFF;
+END_FUNCTION

@@ -1,0 +1,74 @@
+DATA_BLOCK "DB_RecipeData"
+{ S7_Optimized_Access := 'FALSE' }
+VERSION : 0.1
+   STRUCT
+      // ════════════════════════════════════════════
+      //  SECTION A: HEADER (Written by PC at download)
+      // ════════════════════════════════════════════
+      PlanID            : String[30];     // Production plan ID
+      BatchID           : String[20];     // Batch ID (e.g., "P260309-01-01-001")
+      SkuID             : String[20];     // SKU code
+      SkuName           : String[50];     // SKU name
+      PlantID           : Int;            // Plant number (1, 2...)
+      BatchSize         : Real;           // Total batch weight (kg)
+      ProcessCount      : Int;            // Number of active phases
+      TotalSteps        : Int;            // Total steps across all phases
+      
+      // ── Transfer Control ──
+      RecipeLoading     : Bool;           // TRUE during transfer (blocks StartCmd)
+      CRC_App           : DInt;           // Checksum calculated by App
+      CRC_PLC           : DInt;           // Checksum calculated by PLC
+      CRC_Match         : Bool;           // TRUE if CRC_App == CRC_PLC
+      Transfer_Error    : Int;            // 0=OK, 1=Timeout, 2=CRC Mismatch
+      
+      // ════════════════════════════════════════════
+      //  SECTION B: COMMANDS (Written by PC)
+      // ════════════════════════════════════════════
+      RecipeReady       : Bool;           // PC sets TRUE after recipe download complete & verified
+      StartCmd          : Bool;           // PC sets TRUE to start/resume batch
+      PauseCmd          : Bool;           // PC sets TRUE to pause
+      AbortCmd          : Bool;           // PC sets TRUE for emergency stop
+      PC_Heartbeat      : Bool;           // PC toggles every 1 second
+      
+      // ── Step Confirmation (Written by PC) ──
+      Confirm_Step      : Bool;           // PC sets TRUE to confirm current step
+      Confirm_Phase     : String[10];     // PC echoes back phase being confirmed
+      Confirm_SubStep   : Int;            // PC echoes back sub-step being confirmed
+      
+      // ════════════════════════════════════════════
+      //  SECTION C: STATUS (Written by PLC)
+      // ════════════════════════════════════════════
+      PLC_State         : Int;            // 0=Idle, 1=Executing, 2=WaitConfirm, 3=Paused, 4=Done, 9=Error
+      Current_Process   : Int;            // Current phase index (0-31)
+      Current_Step      : Int;            // Current step index within phase (0-7)
+      Current_Step_Flat : Int;            // Flat step counter (1-based, across all phases)
+      Step_Timer_Act    : Int;            // Remaining seconds on step timer
+      Step_Done         : Bool;           // TRUE when step execution is finished
+      Batch_Complete    : Bool;           // TRUE when all steps done
+      Error_Code        : Int;            // 0=None, 1=HeartbeatLost, 2=Timeout, 3=ConfirmMismatch, 4=CRC_Mismatch
+      
+      // ── Current Step Info (for Node-RED readback) ──
+      Active_Phase      : String[10];     // Current phase_number (e.g., "p0030")
+      Active_SubStep    : Int;            // Current sub_step (e.g., 10)
+      Active_ActionCode : Int;            // Current action code (e.g., 21010)
+      
+      // ════════════════════════════════════════════
+      //  SECTION D: ACTUALS (Written by PLC from I/O)
+      // ════════════════════════════════════════════
+      MixTank_Temp_Act  : Real;           // Actual tank temperature (°C)
+      MixTank_Weight_Act: Real;           // Actual tank weight (kg)
+      Agitator_RPM_Act  : Real;           // Actual agitator speed (RPM)
+      HighShear_RPM_Act : Real;           // Actual high-shear speed (RPM)
+      Hopper_Weight_Act : Real;           // Actual hopper weight (kg)
+      Brix_Act          : Real;           // Actual Brix reading
+      PH_Act            : Real;           // Actual pH reading
+      Circulation_Temp  : Real;           // Circulation temperature
+      Flow_Rate_Act     : Real;           // Flow rate
+      
+      // ════════════════════════════════════════════
+      //  SECTION E: RECIPE ARRAY (32 phases × 8 steps)
+      // ════════════════════════════════════════════
+      Processes         : Array[0..31] of "UDT_Process";
+   END_STRUCT;
+BEGIN
+END_DATA_BLOCK

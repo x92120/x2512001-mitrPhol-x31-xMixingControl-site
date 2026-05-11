@@ -1995,3 +1995,87 @@ def clear_plan_prebatch(plan_id: str, fix_fv052a: bool = False, db: Session = De
         "reqs_reset": reqs_reset,
         "batches_reset": batches_reset,
     }
+
+
+# =============================================================================
+# PRODUCTION LOGGING & QC RECORDS
+# =============================================================================
+
+class StepLogRequest(BaseModel):
+    batch_id: str
+    phase_id: Optional[str] = None
+    step_id: int
+    action_code: Optional[str] = None
+    re_code: Optional[str] = None
+    target_value: Optional[float] = None
+    actual_value: Optional[float] = None
+    operator: Optional[str] = "unknown"
+
+class QcRecordRequest(BaseModel):
+    batch_id: str
+    step_id: int
+    brix_target: Optional[float] = None
+    brix_actual: float
+    ph_target: Optional[float] = None
+    ph_actual: float
+    operator: Optional[str] = "unknown"
+
+@router.post("/production-batches/{batch_id_str}/log-step")
+def log_production_step(batch_id_str: str, log_data: StepLogRequest, db: Session = Depends(get_db)):
+    """Log a completed step from the PLC into the database history."""
+    try:
+        new_log = models.ProductionStepLog(
+            batch_id=batch_id_str,
+            phase_id=log_data.phase_id,
+            step_id=log_data.step_id,
+            action_code=log_data.action_code,
+            re_code=log_data.re_code,
+            target_value=log_data.target_value,
+            actual_value=log_data.actual_value,
+            operator=log_data.operator
+        )
+        db.add(new_log)
+        db.commit()
+        return {"status": "success", "message": f"Step {log_data.step_id} logged successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/production-batches/{batch_id_str}/qc-record")
+def save_qc_record(batch_id_str: str, qc_data: QcRecordRequest, db: Session = Depends(get_db)):
+    """Save QC data (Brix/pH) entered by the operator for a specific step."""
+    try:
+        new_qc = models.ProductionQcRecord(
+            batch_id=batch_id_str,
+            step_id=qc_data.step_id,
+            brix_target=qc_data.brix_target,
+            brix_actual=qc_data.brix_actual,
+            ph_target=qc_data.ph_target,
+            ph_actual=qc_data.ph_actual,
+            operator=qc_data.operator
+        )
+        db.add(new_qc)
+        db.commit()
+        return {"status": "success", "message": "QC data saved successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/production-batches/{batch_id_str}/logs")
+def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
+    """Get all executed step logs for a batch."""
+    logs = db.query(models.ProductionStepLog).filter(
+        models.ProductionStepLog.batch_id == batch_id_str
+    ).order_by(models.ProductionStepLog.completed_at.asc()).all()
+    
+    # Also fetch QC records
+    qc_records = db.query(models.ProductionQcRecord).filter(
+        models.ProductionQcRecord.batch_id == batch_id_str
+    ).all()
+    
+    return {
+        "batch_id": batch_id_str,
+        "logs": logs,
+        "qc_records": qc_records
+    }
+

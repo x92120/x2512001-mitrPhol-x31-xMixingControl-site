@@ -289,9 +289,13 @@ const copyPayloadToClipboard = () => {
     })
 }
 
-const confirmStartProduction = () => {
+const confirmStartProduction = async () => {
     startConfirmed.value = true
     confirmStartDialog.value = false
+    
+    if (selectedBatchId.value) {
+        await downloadRecipeToPlc(selectedBatchId.value)
+    }
 
     const plantId = activePlantId.value || '1'
     const topic = `mixing/plant/${plantId}/cmd`
@@ -359,6 +363,24 @@ const handlePlcMessage = (topic: string, payload: any) => {
         const completedIndex = Number(payload.step_no) - 1;
         const currentCompletedStep = skuSteps.value[completedIndex];
 
+        // LOG STEP TO BACKEND
+        if (currentCompletedStep) {
+            $fetch(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/log-step`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>,
+                body: {
+                    batch_id: selectedBatchId.value,
+                    phase_id: currentCompletedStep.phase_id,
+                    step_id: currentCompletedStep.sub_step,
+                    action_code: currentCompletedStep.action_code,
+                    re_code: currentCompletedStep.re_code,
+                    target_value: Number(currentCompletedStep.require || 0),
+                    actual_value: Number(actualHopperWeight.value || 0),
+                    operator: user?.value?.username || 'unknown'
+                }
+            }).catch(e => console.error('Failed to log step:', e));
+        }
+
         // Check if the COMPLETED step required a QC record BEFORE advancing
         if (currentCompletedStep && (
             currentCompletedStep.operation_brix_record || 
@@ -377,10 +399,19 @@ const handlePlcMessage = (topic: string, payload: any) => {
         // Normal Auto-Advance
         localStepIndex.value = completedIndex + 1 // Advance to next
         if (localStepIndex.value < skuSteps.value.length) {
-            setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+            // PLC is master, wait for it to advance and broadcast state
+            $q.notify({ type: 'info', message: `Step ${completedIndex + 1} Done. PLC proceeding.`, position: 'top', timeout: 1000 })
         } else {
             batchRunning.value = false
             $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+            
+            // Mark batch as Completed in backend
+            if (batchInfo.value?.db_id) {
+                $fetch(`${appConfig.apiBaseUrl}/production-batches/${batchInfo.value.db_id}/status?status=Done`, {
+                    method: 'PATCH',
+                    headers: getAuthHeader() as Record<string, string>
+                }).catch(e => console.error('Failed to mark batch complete in DB:', e));
+            }
         }
     }
 
@@ -405,7 +436,19 @@ const confirmQcCheck = () => {
         $q.notify({ type: 'warning', message: 'Please input Actual pH' }); return;
     }
 
-    // TODO: POST to Backend here: { batch_id: selectedBatchId.value, step_id: pendingQcStep.value.id, brix: actualBrix.value, ph: actualPh.value }
+    $fetch(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/qc-record`, {
+        method: 'POST',
+        headers: getAuthHeader() as Record<string, string>,
+        body: {
+            batch_id: selectedBatchId.value,
+            step_id: pendingQcStep.value.id || pendingQcStep.value.sub_step,
+            brix_target: Number(pendingQcStep.value.brix_sp || 0),
+            brix_actual: Number(actualBrix.value),
+            ph_target: Number(pendingQcStep.value.ph_sp || 0),
+            ph_actual: Number(actualPh.value),
+            operator: user?.value?.username || 'unknown'
+        }
+    }).catch(e => console.error('Failed to save QC record:', e));
 
     $q.notify({ type: 'positive', message: 'QC Data Recorded Successfully!', icon: 'check', timeout: 2000 })
     
@@ -415,76 +458,178 @@ const confirmQcCheck = () => {
     
     // Resume auto-advance
     if (localStepIndex.value < skuSteps.value.length) {
-        setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+        // We tell PLC to resume via HMI_Command / START
+        sendCommand('START')
         $q.notify({ type: 'info', message: `Resuming: Advanced to Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1000 })
     } else {
         batchRunning.value = false
         $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+        
+        // Mark batch as Completed in backend
+        if (batchInfo.value?.db_id) {
+            $fetch(`${appConfig.apiBaseUrl}/production-batches/${batchInfo.value.db_id}/status?status=Done`, {
+                method: 'PATCH',
+                headers: getAuthHeader() as Record<string, string>
+            }).catch(e => console.error('Failed to mark batch complete in DB:', e));
+        }
     }
 }
 
-const sendStepToPLC = (index: number) => {
-    const s = skuSteps.value[index]
-    if (!s) return;
+// ── Recipe Transfer State ──
+const downloadProgress = ref(0)
+const downloadDialog = ref(false)
+const downloadPhases = ref<any[]>([])
+const downloadVerification = ref<any>(null)
+const downloadError = ref('')
+const stepConfirmLoading = ref(false)
+
+const downloadRecipeToPlc = async (batchId: string) => {
+    downloadDialog.value = true
+    downloadProgress.value = 0
+    downloadPhases.value = []
+    downloadVerification.value = null
+    downloadError.value = ''
     
-    const topic = `mixing/plant/${activePlantId.value}/step_cmd`
+    try {
+        const remoteApiBaseUrl = appConfig.apiBaseUrl
+        
+        // Stage 1: PREPARE
+        downloadProgress.value = 10
+        
+        // Stage 2: TRANSFER + Stage 3: VERIFY
+        const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/send-recipe/${batchId}`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>
+        })
+        
+        downloadProgress.value = 60
+        console.log('PLC Recipe Response:', res)
+        
+        // Show phase-by-phase progress
+        if (res.transfer?.phases) {
+            for (let i = 0; i < res.transfer.phases.length; i++) {
+                downloadPhases.value.push({ ...res.transfer.phases[i], status: 'done' })
+                downloadProgress.value = 60 + ((i + 1) / res.transfer.phases.length) * 30
+                await new Promise(r => setTimeout(r, 150)) // Visual delay per phase
+            }
+        }
+        
+        // Stage 4: VERIFY — show CRC result
+        downloadProgress.value = 95
+        downloadVerification.value = res.verification
+        lastPlcPayload.value = res.recipe
+        
+        await new Promise(r => setTimeout(r, 500))
+        downloadProgress.value = 100
+        
+        $q.notify({ 
+            type: 'positive', 
+            icon: 'verified',
+            message: `✅ Recipe Downloaded — ${res.transfer?.totalSteps} steps, CRC: ${res.verification?.crcHex}`,
+            position: 'top', 
+            timeout: 3000 
+        })
+        
+    } catch (e: any) {
+        console.error('Failed to download recipe to PLC', e)
+        downloadError.value = e?.message || 'Transfer failed'
+        downloadProgress.value = 0
+        $q.notify({ type: 'negative', message: 'Failed to download recipe to PLC', position: 'top' })
+    }
+}
+
+const closeDownloadDialog = () => {
+    downloadDialog.value = false
+}
+
+// ── PLC State Tracking for Step Confirmation ──
+const plcState = computed(() => Number(plantData.value.PLC_State || 0))
+const stepDone = computed(() => Boolean(plantData.value.Step_Done || plantData.value.step_done))
+const isWaitingConfirm = computed(() => plcState.value === 2 || stepDone.value)
+
+// ── Step Confirmation (Operator confirms current step is done) ──
+const confirmStepDone = () => {
+    if (stepConfirmLoading.value) return // Double-click guard
+    
+    const step = currentStep.value
+    if (!step) return
+    
+    stepConfirmLoading.value = true
+    
+    const topic = `mixing/plant/${activePlantId.value}/step_confirm`
     const payload = {
-        // --- DB100 IDENTIFIERS ---
-        Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
-        Plan_ID: batchInfo.value?.plan_id || '-',
+        Confirm_Step: true,
+        Confirm_Phase_ID: String(step.phase_number || ''),
+        Confirm_Step_ID: Number(step.sub_step || 0),
         Batch_ID: selectedBatchId.value || '-',
-        SKU_Name: batchInfo.value?.sku_name || '-',
-        Phase_ID: String(s.phase_number || ''),
-        Step_ID: Number(s.sub_step || 0),
-        
-        // --- SETPOINTS ---
-        Step_Time_SP: Number(s.step_time || 0) * 60, // Conv to seconds
-        Step_Status: 1, // 1=Active
-        Material_ID: s.mat_sap_code || '',
-        Re_Code_ID: s.re_code || '',
-        Req_Qty: productionRequire(s),
-        
-        // Profiles & Speeds
-        TT_SP: [Number(s.temperature || 0)], // Array fallback
-        Agitator_Speed: Number(s.agitator_rpm || 0),
-        High_Shear_SP: Number(s.high_shear_rpm || 0),
-        PH_Target: Number(s.ph_sp || 0),
-        Brix_Target: Number(s.brix_sp || 0),
-        
-        // Command Flags
-        HMI_Command: 1, // 1=START
-        Cmd_NewStep: true,
-        
+        operator: user?.value?.username || 'unknown',
         timestamp: new Date().toISOString()
     }
     
-    // ─ Track last sent payload + command log ─
-    lastPlcPayload.value = payload
-    plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload: { ...payload } })
+    publishMessage(topic, payload)
+    
+    plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
     
+    $q.notify({ 
+        type: 'positive', 
+        icon: 'check_circle',
+        message: `✅ Step Confirmed: Phase ${step.phase_number} Step ${step.sub_step}`, 
+        position: 'top', 
+        timeout: 1500 
+    })
+    
+    // Smart double-click guard: wait 3 seconds, then check if PLC actually moved.
+    setTimeout(() => { 
+        stepConfirmLoading.value = false 
+        if (Number(plantData.value.PLC_State) === 2) {
+            $q.notify({ type: 'warning', message: '⚠️ No response from PLC. Please click Confirm again.', position: 'top', timeout: 3000 })
+        }
+    }, 3000)
+}
+
+const confirmStepFromRow = (step: any) => {
+    if (stepConfirmLoading.value) return
+    
+    stepConfirmLoading.value = true
+    
+    const topic = `mixing/plant/${activePlantId.value}/step_confirm`
+    const payload = {
+        Confirm_Step: true,
+        Confirm_Phase_ID: String(step.phase_number || ''),
+        Confirm_Step_ID: Number(step.sub_step || 0),
+        Batch_ID: selectedBatchId.value || '-',
+        operator: user?.value?.username || 'unknown',
+        timestamp: new Date().toISOString()
+    }
+    
     publishMessage(topic, payload)
-    console.log('PLC DB100 Command Sent:', payload)
+    
+    plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
+    if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
+    
+    $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}`, position: 'top', timeout: 1500 })
+    
+    // Smart double-click guard: wait 3 seconds, then check if PLC actually moved.
+    setTimeout(() => { 
+        stepConfirmLoading.value = false 
+        if (Number(plantData.value.PLC_State) === 2) {
+            $q.notify({ type: 'warning', message: '⚠️ No response from PLC. Please click Confirm again.', position: 'top', timeout: 3000 })
+        }
+    }, 3000)
 }
 
 // ── PLC Commands ──
 const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
-    if (!isPlcConnected.value) {
-        $q.notify({ type: 'negative', message: 'PLC is offline! Cannot send command.', position: 'top' })
-        return
-    }
-
     if (cmd === 'START') {
         if (skuSteps.value.length === 0) {
             $q.notify({ type: 'warning', message: 'No SKU steps found.', position: 'top' })
             return
         }
         batchRunning.value = true
-        // Resume from where we were (PLC feedback), or start from 0
         localStepIndex.value = currentStepIndex.value >= skuSteps.value.length ? 0 : currentStepIndex.value
-        sendStepToPLC(localStepIndex.value)
+        
         $q.notify({ type: 'positive', icon: 'settings_remote', message: `STARTED at Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1500 })
-        // Also send START state
         publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { 
             command: 'START',
             Batch_ID: selectedBatchId.value || '-'
@@ -497,9 +642,6 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
     } else if (cmd === 'NEXT_STEP') {
         batchRunning.value = true
         localStepIndex.value = currentStepIndex.value + 1
-        if(localStepIndex.value < skuSteps.value.length) {
-            sendStepToPLC(localStepIndex.value)
-        }
         return
     } else if (cmd === 'PAUSE') {
         batchRunning.value = false
@@ -510,32 +652,6 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
 
 const goBack = () => {
     router.push('/x60-CheckForProduction')
-}
-
-const confirmStepFromRow = (step: any) => {
-    if (!isPlcConnected.value) {
-        $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
-        return
-    }
-    
-    const topic = `mixing/plant/${activePlantId.value}/step_cmd`
-    const payload = {
-        Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
-        Batch_ID: selectedBatchId.value || '-',
-        Phase_ID: String(step.phase_number || ''),
-        Step_ID: Number(step.sub_step || 0),
-        Confirm_Phase: String(step.phase_number || ''),
-        Confirm_Step: Number(step.sub_step || 0),
-        Cmd_StartTimer: step.step_time ? 1 : 0,
-        HMI_Command: 2 // 2 for Next/Confirm
-    }
-    
-    publishMessage(topic, payload)
-    
-    plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
-    if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
-    
-    $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}`, position: 'top', timeout: 1500 })
 }
 
 const printProduction = () => {
@@ -572,6 +688,7 @@ const formatDuration = (sec: number) => {
 
 // Ensure active step expands
 watch(currentStepIndex, (newIdx) => {
+    manualAddScanned.value = false // Reset scan lock for new step
     if (newIdx < skuSteps.value.length) {
         const step = skuSteps.value[newIdx]
         if (step) {
@@ -584,6 +701,62 @@ watch(currentStepIndex, (newIdx) => {
         })
     }
 }, { immediate: true })
+
+// ── Manual Add Barcode Scanner (Action 21010) ──
+const manualAddScanned = ref(false)
+let barcodeBuffer = ''
+let barcodeTimeout: any = null
+
+const handleScannerInput = (e: KeyboardEvent) => {
+    // Only listen when we are waiting for confirmation on a manual add step
+    if (!batchRunning.value || !currentStep.value || currentStep.value.action_code !== '21010' || !isWaitingConfirm.value) return
+
+    if (e.key === 'Enter') {
+        const scannedCode = barcodeBuffer.trim().toUpperCase()
+        barcodeBuffer = ''
+        
+        let scannedReCode = scannedCode
+        
+        // Handle JSON payloads from new scanners
+        if (scannedCode.startsWith('{') && scannedCode.endsWith('}')) {
+            try {
+                const parsed = JSON.parse(scannedCode)
+                scannedReCode = String(parsed.r || parsed.R || parsed.RE_Code || parsed.re_code || scannedCode).toUpperCase()
+            } catch (err) {}
+        }
+
+        const requiredReCode = String(currentStep.value.re_code || '').trim().toUpperCase()
+        
+        if (scannedReCode === requiredReCode) {
+            manualAddScanned.value = true
+            $q.notify({ type: 'positive', icon: 'qr_code_scanner', message: 'Bag verified! You may now dump the ingredient and click Confirm.', timeout: 3000, position: 'top' })
+        } else {
+            $q.notify({ type: 'negative', icon: 'error', message: `Wrong Bag! Scanned: ${scannedReCode}, Expected: ${requiredReCode}`, timeout: 3000, position: 'top' })
+        }
+    } else {
+        barcodeBuffer += e.key
+        if (barcodeTimeout) clearTimeout(barcodeTimeout)
+        barcodeTimeout = setTimeout(() => { barcodeBuffer = '' }, 100)
+    }
+}
+
+onMounted(() => {
+    window.addEventListener('keypress', handleScannerInput)
+    if (process.client) {
+        setInterval(checkMqttConnection, 10000)
+        // Auto-connect if plantsData not present
+        if (!plcConnectedGlobal.value) {
+            console.log('[App] Auto-connecting MQTT on mount...')
+            connect()
+        }
+        checkShowConfirmDialog()
+    }
+})
+
+onUnmounted(() => {
+    window.removeEventListener('keypress', handleScannerInput)
+    offMessage(handlePlcMessage)
+})
 
 // ── Production Weights from Batch Data ──
 // Prebatch items contain the actual production weights (required_volume)
@@ -636,6 +809,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
             }
 
             batchInfo.value = { 
+                db_id: data.id,
                 batch_id: data.batch_id,
                 plan_id: data.plan_id || '-', 
                 sku_id: data.sku_id || skuId, 
@@ -836,7 +1010,7 @@ onUnmounted(() => {
           <q-btn flat round dense icon="arrow_back" color="white" @click="goBack" class="no-print" />
           <q-icon name="precision_manufacturing" size="sm" />
           <div class="column q-mr-md">
-            <div class="text-h6 text-weight-bolder" style="line-height: 1.2;">Mixing-Control 01</div>
+            <div class="text-h6 text-weight-bolder" style="line-height: 1.2;">Mixing-Control V2 (PLC Master)</div>
             <q-badge :color="isPlcConnected ? 'positive' : 'negative'" text-color="white" class="q-pa-xs q-px-sm text-weight-bold shadow-1 q-mt-xs" style="font-size: 11px; align-self: flex-start;">
                <q-icon :name="isPlcConnected ? 'wifi' : 'wifi_off'" size="12px" class="q-mr-xs" />
                PLC {{ isPlcConnected ? 'Connected' : 'Offline' }}
@@ -1178,12 +1352,33 @@ onUnmounted(() => {
                       </td>
                       <td class="text-center">{{ step.stamp_time || '-' }}</td>
                       <td class="text-center q-pa-none">
-                        <q-btn v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))"
-                               dense flat color="primary" icon="skip_next"
-                               @click.stop="confirmStepFromRow(step)"
-                               >
-                               <q-tooltip>Confirm & Next Step (or Start Timer)</q-tooltip>
-                        </q-btn>
+                        <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
+                          <!-- WAIT_CONFIRM state: Lock if 21010 and not scanned -->
+                          <template v-if="isWaitingConfirm">
+                              <q-btn v-if="currentStep.action_code === '21010' && !manualAddScanned"
+                                     dense unelevated color="orange-8" text-color="white" 
+                                     icon="qr_code_scanner" label="SCAN BAG"
+                                     disable class="confirm-pulse-orange">
+                                     <q-tooltip>Please scan the ingredient bag barcode to unlock</q-tooltip>
+                              </q-btn>
+                              
+                              <q-btn v-else
+                                     dense unelevated color="green-8" text-color="white" 
+                                     icon="check_circle" label="CONFIRM"
+                                     :loading="stepConfirmLoading"
+                                     class="confirm-pulse"
+                                     @click.stop="confirmStepDone()">
+                                     <q-tooltip>Confirm step done & advance to next</q-tooltip>
+                              </q-btn>
+                          </template>
+                          
+                          <!-- EXECUTING state: Show running indicator -->
+                          <q-btn v-else
+                                 dense flat color="blue-7" icon="hourglass_top"
+                                 disable>
+                                 <q-tooltip>Step executing... waiting for completion</q-tooltip>
+                          </q-btn>
+                        </template>
                       </td>
                     </tr>
                   </template>
@@ -1322,6 +1517,112 @@ onUnmounted(() => {
             class="text-weight-bolder q-px-lg"
             @click="confirmStartProduction"
           />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ═══ RECIPE DOWNLOAD PROGRESS DIALOG ═══ -->
+    <q-dialog v-model="downloadDialog" persistent backdrop-filter="blur(6px)">
+      <q-card style="width: 560px; max-width: 95vw; border-radius: 16px; border: 3px solid #1565c0; overflow: hidden;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); padding: 20px 24px; color: white;">
+          <div class="row items-center q-gutter-sm">
+            <q-icon :name="downloadProgress >= 100 ? 'verified' : 'cloud_download'" size="36px" color="cyan-3" />
+            <div>
+              <div class="text-h5 text-weight-bolder">
+                {{ downloadProgress >= 100 ? '✅ Recipe Downloaded' : '📥 Downloading Recipe to PLC...' }}
+              </div>
+              <div class="text-caption text-blue-2" style="opacity: 0.85;">
+                4-Stage Transfer: PREPARE → TRANSFER → VERIFY → ACTIVATE
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <q-separator />
+
+        <q-card-section class="q-pa-lg">
+          <!-- Progress Bar -->
+          <div class="q-mb-md">
+            <q-linear-progress 
+              :value="downloadProgress / 100" 
+              size="24px" 
+              rounded 
+              :color="downloadError ? 'negative' : downloadProgress >= 100 ? 'positive' : 'primary'"
+              track-color="blue-1"
+              stripe
+              :animation-speed="downloadProgress < 100 ? 800 : 0"
+            >
+              <div class="absolute-full flex flex-center">
+                <span class="text-weight-bold text-white" style="font-size: 12px;">
+                  {{ downloadProgress }}%
+                </span>
+              </div>
+            </q-linear-progress>
+          </div>
+
+          <!-- Error -->
+          <div v-if="downloadError" class="q-pa-sm bg-red-1 text-red-9 rounded-borders q-mb-md">
+            <q-icon name="error" class="q-mr-xs" /> {{ downloadError }}
+          </div>
+
+          <!-- Phase-by-Phase Progress -->
+          <div v-if="downloadPhases.length" class="q-mb-md">
+            <div class="text-caption text-weight-bold text-grey-7 q-mb-xs">PHASES TRANSFERRED:</div>
+            <div v-for="(p, i) in downloadPhases" :key="i" class="row items-center q-py-xs" style="border-bottom: 1px solid #e0e0e0;">
+              <q-icon name="check_circle" color="positive" size="18px" class="q-mr-sm" />
+              <div class="text-body2">
+                Phase {{ p.processNo }} — {{ p.stepCount }} step{{ p.stepCount > 1 ? 's' : '' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Verification Results -->
+          <div v-if="downloadVerification" class="q-pa-md bg-green-1 rounded-borders" style="border: 1px solid #66bb6a;">
+            <div class="text-subtitle2 text-weight-bold text-green-9 q-mb-sm">
+              <q-icon name="verified" class="q-mr-xs" /> Verification Passed
+            </div>
+            <div class="row q-col-gutter-sm">
+              <div class="col-6">
+                <div class="text-caption text-grey-7">CRC Checksum</div>
+                <div class="text-weight-bold text-mono">{{ downloadVerification.crcHex }}</div>
+              </div>
+              <div class="col-3">
+                <div class="text-caption text-grey-7">Phases</div>
+                <div class="text-weight-bold">{{ downloadVerification.processCount }}</div>
+              </div>
+              <div class="col-3">
+                <div class="text-caption text-grey-7">Steps</div>
+                <div class="text-weight-bold">{{ downloadVerification.totalSteps }}</div>
+              </div>
+            </div>
+            <div v-if="downloadVerification.firstStep" class="row q-col-gutter-sm q-mt-sm">
+              <div class="col-6">
+                <div class="text-caption text-grey-7">First Step</div>
+                <div class="text-body2">P{{ downloadVerification.firstStep.processNo }}-S{{ downloadVerification.firstStep.stepNo }}</div>
+              </div>
+              <div class="col-6">
+                <div class="text-caption text-grey-7">Last Step</div>
+                <div class="text-body2">P{{ downloadVerification.lastStep?.processNo }}-S{{ downloadVerification.lastStep?.stepNo }}</div>
+              </div>
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-separator />
+
+        <q-card-actions align="right" class="bg-grey-1 q-pa-md">
+          <q-btn
+            v-if="downloadProgress >= 100"
+            label="CLOSE — READY TO START"
+            color="green-8"
+            icon="check"
+            unelevated
+            class="text-weight-bolder q-px-lg"
+            @click="closeDownloadDialog"
+          />
+          <q-btn v-else-if="downloadError" label="Close" flat color="grey-7" @click="closeDownloadDialog" />
+          <q-spinner-dots v-else color="primary" size="30px" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -1668,5 +1969,15 @@ onUnmounted(() => {
   .production-table {
     font-size: 11px !important;
   }
+}
+
+/* Confirm button pulse animation */
+.confirm-pulse {
+  animation: confirmPulse 1.2s ease-in-out infinite;
+}
+@keyframes confirmPulse {
+  0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.6); }
+  50% { box-shadow: 0 0 0 8px rgba(46, 125, 50, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); }
 }
 </style>
