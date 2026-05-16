@@ -68,6 +68,29 @@ const activePlantId = computed(() => {
 })
 const plantData = computed(() => (plantsData.value[activePlantId.value] || {}) as any)
 
+const plcActiveBatchId = computed(() => {
+    const raw = plantData.value.Batch_ID || plantData.value.Batch_id || plantData.value.batch_id || ''
+    return String(raw).replace(/\0/g, '').trim()
+})
+const hasPlcActiveBatch = computed(() => {
+    const id = plcActiveBatchId.value
+    return id && id !== '-' && id !== '0'
+})
+const plcActivePlanId = computed(() => {
+    const raw = plantData.value.Plan_ID || plantData.value.Plan_id || plantData.value.plan_id || ''
+    return String(raw).replace(/\0/g, '').trim()
+})
+const plcActiveSkuName = computed(() => {
+    const raw = plantData.value.SKU_Name || plantData.value.SKU_name || plantData.value.sku_name || ''
+    return String(raw).replace(/\0/g, '').trim()
+})
+const plcActivePhaseId = computed(() => {
+    return String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || 0).replace(/\0/g, '').trim()
+})
+const plcActiveStepId = computed(() => {
+    return Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+})
+
 const actualAgitatorRpm = computed(() => plantData.value.MixingTank_Agitator_Speed ?? 0)
 const actualHighShearRpm = computed(() => plantData.value.HighShare_Speed ?? 0)
 const actualHighShearTemp = computed(() => plantData.value.HighShare_Temperature ?? 0)
@@ -674,15 +697,15 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
-watch(() => plantData.value, (newData) => {
-    if (!selectedBatchId.value && !loading.value) {
+watch([() => plantData.value, () => loading.value], ([newData, newLoading]) => {
+    if (!selectedBatchId.value && !newLoading && newData) {
         const plcBatchId = String(newData.Batch_ID || newData.Batch_id || newData.batch_id || '').replace(/\0/g, '').trim()
         if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
             console.log('Detected active batch on PLC, restoring:', plcBatchId)
             restoreBatchFromPlc(plcBatchId)
         }
     }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 // ── Standard Recipe Weights ──
 const standardRecipeTotal = computed(() => {
@@ -878,34 +901,28 @@ onUnmounted(() => {
           <!-- Row 1: Context -->
           <div class="row items-center q-gutter-sm">
             <template v-if="batchInfo">
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;">
+              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 90px; justify-content: center;">
                 <q-icon name="factory" size="16px" class="q-mr-xs" />{{ batchInfo.plant || '-' }}
               </q-badge>
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;">
+              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 220px; justify-content: flex-start;">
                 <q-icon name="assignment" size="16px" class="q-mr-xs" />Plan: {{ batchInfo.plan_id }}
-              </q-badge>
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;">
-                <q-icon name="inventory_2" size="16px" class="q-mr-xs" />SKU: {{ batchInfo.sku_id }}
-              </q-badge>
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;">
-                <q-icon name="science" size="16px" class="q-mr-xs" />Batch: {{ selectedBatchId }}
               </q-badge>
             </template>
             <template v-else>
-              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="plantData?.Plan_ID || plantData?.plan_id">
-                <q-icon name="assignment" size="16px" class="q-mr-xs" />Plan: {{ String(plantData?.Plan_ID || plantData?.plan_id || '-').replace(/\0/g, '').trim() }}
+              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="plcActivePlanId && plcActivePlanId !== '-'">
+                <q-icon name="assignment" size="16px" class="q-mr-xs" />Plan: {{ plcActivePlanId }}
               </q-badge>
-              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="plantData?.Batch_ID || plantData?.batch_id">
-                <q-icon name="science" size="16px" class="q-mr-xs" />Batch: {{ String(plantData?.Batch_ID || plantData?.batch_id || '-').replace(/\0/g, '').trim() }}
+              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="hasPlcActiveBatch">
+                <q-icon name="science" size="16px" class="q-mr-xs" />Batch: {{ plcActiveBatchId }}
               </q-badge>
-              <div class="text-caption text-deep-purple-2 q-ml-sm" v-if="!(plantData?.Batch_ID || plantData?.batch_id)">No Batch Selected</div>
+              <div class="text-caption text-deep-purple-2 q-ml-sm" v-if="!hasPlcActiveBatch">No Batch Selected</div>
             </template>
           </div>
           
           <!-- Row 2: Status -->
           <div class="row items-center q-gutter-sm">
             <template v-if="batchInfo">
-              <q-badge color="amber-4" text-color="grey-10" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;">
+              <q-badge color="amber-4" text-color="grey-10" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 90px; justify-content: center;">
                 {{ (batchInfo.batch_size || 0).toFixed(1) }} kg
               </q-badge>
 
@@ -913,7 +930,7 @@ onUnmounted(() => {
                 :color="handshakeStatus.noData ? 'grey-6' : (handshakeStatus.ok ? 'green-8' : 'red-8')"
                 text-color="white"
                 class="q-pa-xs q-px-sm text-weight-bold cursor-pointer"
-                style="font-size: 14px;"
+                style="font-size: 14px; width: 220px; justify-content: flex-start;"
                 @click="handshakeDialog = true"
               >
                 <q-icon :name="handshakeStatus.noData ? 'sync_disabled' : (handshakeStatus.ok ? 'verified' : 'error')" size="16px" class="q-mr-xs" />
@@ -943,20 +960,21 @@ onUnmounted(() => {
              <div class="text-h6 text-grey-7 text-weight-bold">Mixing Control Interface</div>
              
              <!-- ACTIVE PRODUCTION BANNER -->
-             <div v-if="plantData?.Batch_ID && String(plantData.Batch_ID).replace(/\0/g, '').trim() && String(plantData.Batch_ID).replace(/\0/g, '').trim() !== '-' && String(plantData.Batch_ID).replace(/\0/g, '').trim() !== '0'" class="q-mt-md bg-teal-1 q-pa-md rounded-borders shadow-2" style="border: 2px solid #009688; width: 600px; text-align: center;">
+             <div v-if="hasPlcActiveBatch" class="q-mt-md bg-teal-1 q-pa-md rounded-borders shadow-2" style="border: 2px solid #009688; width: 600px; text-align: center;">
                  <div class="text-teal-9 text-subtitle1 text-weight-bolder q-mb-sm"><q-icon name="sync" class="q-mr-xs"/>ACTIVE PRODUCTION DETECTED ON PLC</div>
                  <div class="row q-gutter-md justify-center q-mb-md">
-                    <q-badge color="teal-7" class="text-subtitle2 q-pa-sm">Batch: {{ String(plantData.Batch_ID).replace(/\0/g, '').trim() }}</q-badge>
-                    <q-badge color="teal-7" class="text-subtitle2 q-pa-sm" v-if="plantData.SKU_Name">SKU: {{ String(plantData.SKU_Name).replace(/\0/g, '').trim() }}</q-badge>
-                    <q-badge color="teal-9" class="text-subtitle2 q-pa-sm">Step: {{ plantData.Phase_ID || 0 }} / {{ plantData.Step_ID || 0 }}</q-badge>
+                    <q-badge color="teal-7" class="text-subtitle2 q-pa-sm" v-if="plcActivePlanId">Plan: {{ plcActivePlanId }}</q-badge>
+                    <q-badge color="teal-7" class="text-subtitle2 q-pa-sm">Batch: {{ plcActiveBatchId }}</q-badge>
+                    <q-badge color="teal-7" class="text-subtitle2 q-pa-sm" v-if="plcActiveSkuName">SKU: {{ plcActiveSkuName }}</q-badge>
+                    <q-badge color="teal-9" class="text-subtitle2 q-pa-sm">Step: {{ plcActivePhaseId }} / {{ plcActiveStepId }}</q-badge>
                  </div>
                  <div class="text-caption text-grey-8 q-mb-sm">The PLC is currently running a batch. Restoring session...</div>
-                 <q-btn color="teal-8" label="Force Restore Session" icon="settings_backup_restore" size="md" class="text-weight-bold" @click="restoreBatchFromPlc(String(plantData.Batch_ID).replace(/\0/g, '').trim())" :loading="loading" />
+                 <q-btn color="teal-8" label="Force Restore Session" icon="settings_backup_restore" size="md" class="text-weight-bold" @click="restoreBatchFromPlc(plcActiveBatchId)" :loading="loading" />
              </div>
              
              <div v-else class="text-subtitle1 text-grey-5 q-mt-sm">Please start production from the "Check for Production" page.</div>
              
-             <q-btn v-if="!(plantData?.Batch_ID && String(plantData.Batch_ID).replace(/\0/g, '').trim() && String(plantData.Batch_ID).replace(/\0/g, '').trim() !== '-' && String(plantData.Batch_ID).replace(/\0/g, '').trim() !== '0')" outline color="deep-purple" label="Go to Check for Production" icon="fact_check" class="q-mt-xl" @click="goBack" />
+             <q-btn v-if="!hasPlcActiveBatch" outline color="deep-purple" label="Go to Check for Production" icon="fact_check" class="q-mt-xl" @click="goBack" />
           </div>
         </template>
         

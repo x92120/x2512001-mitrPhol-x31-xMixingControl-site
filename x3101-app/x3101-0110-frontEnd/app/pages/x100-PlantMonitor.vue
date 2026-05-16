@@ -18,17 +18,17 @@
     <div class="row q-col-gutter-lg justify-center">
       <!-- Plant Cards -->
       <div v-for="id in ['1', '2', '3']" :key="id" class="col-12 col-md-4">
-        <q-card class="plant-card bg-white" :class="{'offline-dim': !plantsData[id]?.last_update}">
+        <q-card class="plant-card bg-white" :class="{'offline-dim': !isConnected || !plantsData[id]?.last_update}">
           <!-- Header Area -->
           <div class="plant-header q-pa-md" :class="`bg-gradient-${id}`">
             <div class="row items-center justify-between">
               <div class="text-h5 text-white text-weight-bolder">MIXING PLANT {{ id }}</div>
-              <q-badge :color="plantsData[id]?.last_update ? 'positive' : 'blue-grey-4'" align="middle" class="text-weight-bold text-caption shadow-2">
-                {{ plantsData[id]?.last_update ? 'ONLINE' : 'STANDBY' }}
+              <q-badge :color="(isConnected && plantsData[id]?.last_update) ? 'positive' : 'negative'" align="middle" class="text-weight-bold text-caption shadow-2">
+                {{ (isConnected && plantsData[id]?.last_update) ? 'ONLINE' : 'OFFLINE' }}
               </q-badge>
             </div>
             <div class="row items-center q-mt-md">
-              <q-icon name="favorite" color="white" size="14px" class="q-mr-xs" :class="{'heartbeat-anim text-pink-2': plantsData[id]?.watchdog}" />
+              <q-icon name="favorite" color="white" size="14px" class="q-mr-xs" :class="{'heartbeat-anim text-pink-2': isConnected && plantsData[id]?.watchdog}" />
               <span class="text-caption text-white q-mr-sm tech-font">{{ plantsData[id]?.watchdog || 0 }}</span>
               <q-linear-progress 
                 :value="(plantsData[id]?.watchdog || 0) / 100" 
