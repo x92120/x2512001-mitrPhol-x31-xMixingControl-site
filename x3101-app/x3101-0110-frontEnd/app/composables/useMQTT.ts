@@ -18,6 +18,21 @@ export interface PlantData {
     Circulation_Temperature?: number
     watchdog?: number
     last_update?: string
+    // PLC telemetry fields (from DB1517 readback)
+    Step_ID?: number | string
+    Batch_ID?: string
+    Plan_ID?: string
+    Plan_id?: string
+    plan_id?: string
+    SKU_Name?: string
+    SKU_name?: string
+    sku_name?: string
+    PLC_State?: number | string
+    Current_Step?: number | string
+    Phase_ID?: string
+    Phase_id?: string
+    phase_id?: string
+    step_id?: number
     // Node-RED /Mix-0X/Recipe individual topic fields
     IBC_REQ?: number       // MIX01.IBC_REQ  — IBC scale weight (kg)
     LS_REQ?: number        // MIX01.LS_REQ   — Line speed / liquid scale
@@ -296,7 +311,7 @@ export function useMQTT() {
                                         net_weight: Number(actualPayload.n || 0),
                                         timestamp: new Date().toLocaleTimeString()
                                     }
-                                }
+                                } as PlantData
                             }
                         }
                     }

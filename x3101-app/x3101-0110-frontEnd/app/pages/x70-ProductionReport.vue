@@ -22,7 +22,7 @@ const columns = [
   { name: 'plan_id', label: 'Plan ID', align: 'left' as const, field: 'plan_id' },
   { name: 'batch_size', label: 'Target Weight (kg)', align: 'right' as const, field: 'batch_size' },
   { name: 'status', label: 'Status', align: 'center' as const, field: 'status' },
-  { name: 'actions', label: 'View Record', align: 'center' as const }
+  { name: 'actions', label: 'View Record', align: 'center' as const, field: 'actions' }
 ]
 
 const loadBatches = async () => {
@@ -110,6 +110,10 @@ onMounted(() => {
   loadBatches()
 })
 
+const printReport = () => {
+  window.print()
+}
+
 </script>
 
 <template>
@@ -164,7 +168,7 @@ onMounted(() => {
           <div class="text-caption text-indigo-2">{{ selectedBatch.sku_name }} • Plan: {{ selectedBatch.plan_id }}</div>
         </div>
         <q-space />
-        <q-btn outline color="white" icon="print" label="Print Report" class="q-mr-sm" @click="() => { window.print() }" />
+        <q-btn outline color="white" icon="print" label="Print Report" class="q-mr-sm" @click="printReport" />
         <q-btn color="green-13" text-color="black" icon="download" label="Export PDF" unelevated />
       </div>
 

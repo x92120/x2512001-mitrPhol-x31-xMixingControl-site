@@ -37,7 +37,7 @@ const boxDetails = ref<any>(null)
 const loading = ref(false)
 
 // ── Batch-level recheck ──
-const recheckBatchId = ref('')
+const recheckBatchId = ref<string | null>('')
 const batchRecheck = ref<any>(null)      // Response from /recheck-batch/{batch_id}
 const recheckFH = computed(() => {
     if (!batchRecheck.value) return []
@@ -560,16 +560,17 @@ const openSkuDetail = async () => {
 const goToStartProduction = async () => {
     if (!selectedBatchId.value) return
     loading.value = true
-    try {
-        let rawPlant = selectedBatchInfo.value?.plant || ''
-        let extractedPlantId = rawPlant.replace(/\D/g, '')
-        if (!extractedPlantId && selectedBatchInfo.value?.plan_id) {
-            const parts = selectedBatchInfo.value.plan_id.split('-')
-            if (parts.length >= 3) {
-                extractedPlantId = parts[2].replace(/\D/g, '')
-            }
+    // Extract plant ID before try so it's available in catch
+    let rawPlant = selectedBatchInfo.value?.plant || ''
+    let extractedPlantId = rawPlant.replace(/\D/g, '')
+    if (!extractedPlantId && selectedBatchInfo.value?.plan_id) {
+        const parts = selectedBatchInfo.value.plan_id.split('-')
+        if (parts.length >= 3) {
+            extractedPlantId = parts[2].replace(/\D/g, '')
         }
-        const plantId = extractedPlantId || '1'
+    }
+    const plantId = extractedPlantId || '1'
+    try {
         console.log(`[StartProd] Extracted plantId=${plantId} from rawPlant=${rawPlant}, plan_id=${selectedBatchInfo.value?.plan_id}`)
 
         // 1. Send all recipe Data to DB1511 and verify readback
@@ -662,9 +663,9 @@ const skuStepsByPhase = computed(() => {
 const phaseColors = ['bg-blue-1', 'bg-grey-2']
 const phaseColorMap = computed(() => {
     const map: Record<string, string> = {}
-    const uniquePhases = [...new Set(skuSteps.value.map((s: any) => s.phase_id || s.phase_number || '0'))]
+    const uniquePhases: string[] = [...new Set(skuSteps.value.map((s: any) => String(s.phase_id || s.phase_number || '0')))]
     uniquePhases.forEach((ph, i) => {
-        map[ph] = phaseColors[i % phaseColors.length]
+        map[ph] = phaseColors[i % phaseColors.length] || 'bg-grey-2'
     })
     return map
 })
@@ -733,7 +734,7 @@ const prebatchByWarehouse = computed(() => {
         if (wh === 'FLAVOUR HOUSE') wh = 'FH'
         if (wh === 'SPECIALITY PREMIX') wh = 'SPP'
         if (!groups[wh]) groups[wh] = []
-        groups[wh].push(item)
+        groups[wh]!.push(item)
     }
     
     const whOrder = ['MIX', 'FH', 'SPP']
@@ -756,7 +757,7 @@ const prebatchByWarehouse = computed(() => {
         }
         
         const summaryItems = Object.keys(reCodeGroups).map(re => {
-            const reqItems = reCodeGroups[re]
+            const reqItems = reCodeGroups[re] || []
             const totalVol = reqItems.reduce((sum, i) => sum + (i.required_volume || 0), 0)
 
             let displayItems = reqItems
@@ -1423,7 +1424,7 @@ const verifyBag = async (bagBarcode: string) => {
         // Detect "wrong box" type errors
         if (detail.includes('does not belong') || detail.includes('not found')) {
             // WRONG BOX! Show alarming full-screen alert
-            wrongBoxAlert.value = { show: true, bagCode: bagBarcode, expectedBox: boxId.value }
+            wrongBoxAlert.value = { show: true, bagCode: bagBarcode, expectedBox: boxId.value, newBatchId: '' }
             playSound('wrong_box')
             showFeedback('error', `BAG [${bagBarcode}] does NOT belong to this box!`, '⚠ WRONG BOX ⚠')
             setTimeout(() => { wrongBoxAlert.value.show = false }, 3500)
@@ -2182,7 +2183,7 @@ onUnmounted(() => {
                 <span>{{ selectedBatchInfo.plan_id }} · {{ selectedBatchInfo.sku_name }}</span>
                 <q-space />
                 <div class="q-mr-sm bg-yellow text-black q-pa-xs rounded-borders" style="font-size:10px;">
-                  allOk: {{ isAllPrepackVerified }}, fifo: {{ isFifoBatch(selectedBatchId) }}
+                  allOk: {{ isAllPrepackVerified }}, fifo: {{ isFifoBatch(selectedBatchId || '') }}
                 </div>
                 <q-btn
                   v-if="selectedBatchId"

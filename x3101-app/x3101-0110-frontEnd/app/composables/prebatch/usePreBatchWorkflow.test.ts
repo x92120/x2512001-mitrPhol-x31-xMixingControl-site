@@ -455,8 +455,8 @@ describe('usePreBatchWorkflow', () => {
         { plan_id: 'P2', batch_id: 'B3' },
       ]
       expect(scanDialogTree.value).toHaveLength(2)
-      expect(scanDialogTree.value[0].items).toHaveLength(2)
-      expect(scanDialogTree.value[1].items).toHaveLength(1)
+      expect(scanDialogTree.value[0]!.items).toHaveLength(2)
+      expect(scanDialogTree.value[1]!.items).toHaveLength(1)
     })
 
     it('paginates items correctly', () => {
