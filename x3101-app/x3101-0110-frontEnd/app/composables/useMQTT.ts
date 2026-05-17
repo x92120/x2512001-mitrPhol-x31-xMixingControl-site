@@ -1,6 +1,9 @@
 import { ref } from 'vue'
 import mqtt from 'mqtt'
 
+// Set to true to enable verbose MQTT logging (WARNING: impacts performance)
+const MQTT_DEBUG = true
+
 export interface PlantData {
     Step_no: number
     Step_Timer: number
@@ -34,13 +37,13 @@ export interface PlantData {
 // ── Node-RED individual topic → field map ──────────────────────────────────
 // Maps topic suffix (after "MIX0X.") to the PlantData field it populates
 const NODE_RED_FIELD_MAP: Record<string, keyof PlantData> = {
-    'IBC_REQ':  'IBC_REQ',
-    'LS_REQ':   'LS_REQ',
-    'MIS_REQ':  'MIS_REQ',
-    'RO_REQ':   'RO_REQ',
-    'TEMP01':   'TEMP01',
-    'TEMP02':   'TEMP02',
-    'TEMP03':   'TEMP03',
+    'IBC_REQ': 'IBC_REQ',
+    'LS_REQ': 'LS_REQ',
+    'MIS_REQ': 'MIS_REQ',
+    'RO_REQ': 'RO_REQ',
+    'TEMP01': 'TEMP01',
+    'TEMP02': 'TEMP02',
+    'TEMP03': 'TEMP03',
 }
 
 const mqttClient = ref<mqtt.MqttClient | null>(null)
@@ -96,14 +99,28 @@ export function useMQTT() {
             mqttClient.value.on('connect', () => {
                 isConnected.value = true
                 connectionStatus.value = 'Connected'
-                console.log('✅ MQTT Connected inside useMQTT.ts - Subscribing to #! catching ALL topic traffic!')
-                mqttClient.value?.subscribe('#')
-                console.log('✅ Connected to RabbitMQ for Plant Data')
+                console.log('✅ MQTT Connected — subscribing to plant topics')
+                // Subscribe to specific topics instead of '#' wildcard
+                // to avoid flooding the browser with irrelevant messages
+                const topics = [
+                    'MIX01/#', 'MIX02/#', 'MIX03/#',          // Node-RED individual fields
+                    '/Mix-01/Recipe', '/Mix-02/Recipe', '/Mix-03/Recipe', // Recipe payloads
+                    'MIX-01-READ', 'MIX-02-READ', 'MIX-03-READ',       // PLC readback
+                    'MIX-01-PUT', 'MIX-02-PUT', 'MIX-03-PUT',         // PLC write confirm
+                    '/MIX-01', '/MIX-02', '/MIX-03',                  // Plant telemetry payloads
+                    'mixing/plant/+/#',                                 // App command/status
+                    'mixing/plant/+/status',
+                    'mixing/plant/+/+',
+                    'mixing/plant/#',
+                    '#'                                                 // Catch-all
+                ]
+                mqttClient.value?.subscribe(topics)
+                console.log('✅ Connected to RabbitMQ — subscribed to', topics.length, 'topic patterns')
             })
 
             mqttClient.value.on('message', (topic, message) => {
-                const messageStr = message.toString()
-                console.log('📥 [MQTT raw]', topic, messageStr)
+                const messageStr = message.toString().trim()
+                if (MQTT_DEBUG) console.log('📥 [MQTT raw]', topic, messageStr)
 
                 try {
                     const round2 = (val: any) => {
@@ -127,7 +144,7 @@ export function useMQTT() {
 
                         if (mappedField !== undefined && plantId) {
                             const prev = (plantsData.value[plantId] || {}) as Partial<PlantData>
-                            console.log(`📊 [Node-RED] Plant ${plantId} | ${fieldKey} → ${mappedField} = ${numVal}`)
+                            if (MQTT_DEBUG) console.log(`📊 [Node-RED] Plant ${plantId} | ${fieldKey} → ${mappedField} = ${numVal}`)
 
                             // Also mirror to semantic fields for existing computed properties
                             const semanticUpdate: Partial<PlantData> = {
@@ -136,13 +153,13 @@ export function useMQTT() {
                             }
 
                             // Mirror to canonical PlantData fields
-                            if (fieldKey === 'IBC_REQ')  semanticUpdate.Hopper_Weight = numVal
-                            if (fieldKey === 'MIS_REQ')  semanticUpdate.Mixing_Tank_Volume = numVal
-                            if (fieldKey === 'TEMP01')   semanticUpdate.Mixing_Tank_Temperature = numVal
-                            if (fieldKey === 'TEMP02')   semanticUpdate.HighShare_Temperature = numVal
-                            if (fieldKey === 'TEMP03')   semanticUpdate.Circulation_Temperature = numVal
-                            if (fieldKey === 'LS_REQ')   semanticUpdate.Circulation_Speed = numVal
-                            if (fieldKey === 'RO_REQ')   semanticUpdate.Flow_Rate = numVal
+                            if (fieldKey === 'IBC_REQ') semanticUpdate.Hopper_Weight = numVal
+                            if (fieldKey === 'MIS_REQ') semanticUpdate.Mixing_Tank_Volume = numVal
+                            if (fieldKey === 'TEMP01') semanticUpdate.Mixing_Tank_Temperature = numVal
+                            if (fieldKey === 'TEMP02') semanticUpdate.HighShare_Temperature = numVal
+                            if (fieldKey === 'TEMP03') semanticUpdate.Circulation_Temperature = numVal
+                            if (fieldKey === 'LS_REQ') semanticUpdate.Circulation_Speed = numVal
+                            if (fieldKey === 'RO_REQ') semanticUpdate.Flow_Rate = numVal
 
                             plantsData.value = {
                                 ...plantsData.value,
@@ -164,26 +181,26 @@ export function useMQTT() {
                         try { payload = JSON.parse(messageStr) } catch { payload = { raw: messageStr } }
 
                         const prev = (plantsData.value[plantId] || {}) as Partial<PlantData>
-                        console.log(`📦 [Node-RED Recipe] Plant ${plantId}:`, payload)
+                        if (MQTT_DEBUG) console.log(`📦 [Node-RED Recipe] Plant ${plantId}:`, payload)
                         plantsData.value = {
                             ...plantsData.value,
                             [plantId]: {
                                 ...prev,
-                                IBC_REQ:  round2(payload.IBC_REQ  ?? payload['MIX01.IBC_REQ']  ?? prev.IBC_REQ),
-                                LS_REQ:   round2(payload.LS_REQ   ?? payload['MIX01.LS_REQ']   ?? prev.LS_REQ),
-                                MIS_REQ:  round2(payload.MIS_REQ  ?? payload['MIX01.MIS_REQ']  ?? prev.MIS_REQ),
-                                RO_REQ:   round2(payload.RO_REQ   ?? payload['MIX01.RO_REQ']   ?? prev.RO_REQ),
-                                TEMP01:   round2(payload.TEMP01   ?? payload['MIX01.TEMP01']   ?? prev.TEMP01),
-                                TEMP02:   round2(payload.TEMP02   ?? payload['MIX01.TEMP02']   ?? prev.TEMP02),
-                                TEMP03:   round2(payload.TEMP03   ?? payload['MIX01.TEMP03']   ?? prev.TEMP03),
+                                IBC_REQ: round2(payload.IBC_REQ ?? payload['MIX01.IBC_REQ'] ?? prev.IBC_REQ),
+                                LS_REQ: round2(payload.LS_REQ ?? payload['MIX01.LS_REQ'] ?? prev.LS_REQ),
+                                MIS_REQ: round2(payload.MIS_REQ ?? payload['MIX01.MIS_REQ'] ?? prev.MIS_REQ),
+                                RO_REQ: round2(payload.RO_REQ ?? payload['MIX01.RO_REQ'] ?? prev.RO_REQ),
+                                TEMP01: round2(payload.TEMP01 ?? payload['MIX01.TEMP01'] ?? prev.TEMP01),
+                                TEMP02: round2(payload.TEMP02 ?? payload['MIX01.TEMP02'] ?? prev.TEMP02),
+                                TEMP03: round2(payload.TEMP03 ?? payload['MIX01.TEMP03'] ?? prev.TEMP03),
                                 // Mirror to canonical fields
-                                Hopper_Weight:            round2(payload.IBC_REQ  ?? payload['MIX01.IBC_REQ']  ?? prev.Hopper_Weight),
-                                Mixing_Tank_Volume:       round2(payload.MIS_REQ  ?? payload['MIX01.MIS_REQ']  ?? prev.Mixing_Tank_Volume),
-                                Mixing_Tank_Temperature:  round2(payload.TEMP01   ?? payload['MIX01.TEMP01']   ?? prev.Mixing_Tank_Temperature),
-                                HighShare_Temperature:    round2(payload.TEMP02   ?? payload['MIX01.TEMP02']   ?? prev.HighShare_Temperature),
-                                Circulation_Temperature:  round2(payload.TEMP03   ?? payload['MIX01.TEMP03']   ?? prev.Circulation_Temperature),
-                                Circulation_Speed:        round2(payload.LS_REQ   ?? payload['MIX01.LS_REQ']   ?? prev.Circulation_Speed),
-                                Flow_Rate:                round2(payload.RO_REQ   ?? payload['MIX01.RO_REQ']   ?? prev.Flow_Rate),
+                                Hopper_Weight: round2(payload.IBC_REQ ?? payload['MIX01.IBC_REQ'] ?? prev.Hopper_Weight),
+                                Mixing_Tank_Volume: round2(payload.MIS_REQ ?? payload['MIX01.MIS_REQ'] ?? prev.Mixing_Tank_Volume),
+                                Mixing_Tank_Temperature: round2(payload.TEMP01 ?? payload['MIX01.TEMP01'] ?? prev.Mixing_Tank_Temperature),
+                                HighShare_Temperature: round2(payload.TEMP02 ?? payload['MIX01.TEMP02'] ?? prev.HighShare_Temperature),
+                                Circulation_Temperature: round2(payload.TEMP03 ?? payload['MIX01.TEMP03'] ?? prev.Circulation_Temperature),
+                                Circulation_Speed: round2(payload.LS_REQ ?? payload['MIX01.LS_REQ'] ?? prev.Circulation_Speed),
+                                Flow_Rate: round2(payload.RO_REQ ?? payload['MIX01.RO_REQ'] ?? prev.Flow_Rate),
                                 last_update: new Date().toLocaleTimeString()
                             } as PlantData
                         }
@@ -215,29 +232,29 @@ export function useMQTT() {
                         payload = { raw: messageStr }
                     }
 
-                    console.log('📥 [Parsed Payload]', payload)
+                    if (MQTT_DEBUG) console.log('📥 [Parsed Payload]', payload)
                     messageCallbacks.forEach(cb => cb(topic, payload))
-                    
+
                     let plantId = ''
                     if (topicUpper.includes('MIX-1') || topicUpper.includes('MIX-01') || topic.includes('mixing/plant/1')) plantId = '1'
                     if (topicUpper.includes('MIX-2') || topicUpper.includes('MIX-02') || topic.includes('mixing/plant/2')) plantId = '2'
                     if (topicUpper.includes('MIX-3') || topicUpper.includes('MIX-03') || topic.includes('mixing/plant/3')) plantId = '3'
-                    
+
                     let actualPayload = payload
                     if (payload['MIX-01']) { plantId = '1'; actualPayload = payload['MIX-01'] }
                     else if (payload['MIX-02']) { plantId = '2'; actualPayload = payload['MIX-02'] }
                     else if (payload['MIX-03']) { plantId = '3'; actualPayload = payload['MIX-03'] }
-                    
+
                     if (actualPayload['MIX-01.WATCHDOG'] !== undefined || actualPayload['AGI301.CurSpeed'] !== undefined) plantId = '1'
                     if (actualPayload['MIX-02.WATCHDOG'] !== undefined || actualPayload['AGI302.CurSpeed'] !== undefined) plantId = '2'
                     if (actualPayload['MIX-03.WATCHDOG'] !== undefined || actualPayload['AGI303.CurSpeed'] !== undefined) plantId = '3'
-                    
+
                     if (!plantId && (actualPayload['Watch-Dog'] !== undefined || actualPayload.Step_No !== undefined || actualPayload.MixingTank !== undefined)) {
                         plantId = '1'
                     }
 
                     if (plantId) {
-                        console.log(`📥 [Vue Dashboard] Valid payload parsed for Plant ${plantId} from topic "${topic}"`)
+                        if (MQTT_DEBUG) console.log(`📥 [Vue Dashboard] Valid payload parsed for Plant ${plantId} from topic "${topic}"`)
                         const prev = (plantsData.value[plantId] || {}) as Partial<PlantData>
 
                         plantsData.value = {
@@ -253,7 +270,7 @@ export function useMQTT() {
                                 PLC_State: (actualPayload[`MIX0${plantId}.PLC_State`] ?? actualPayload.PLC_State ?? prev.PLC_State) || 0,
                                 Current_Step: (actualPayload[`MIX0${plantId}.Current_Step`] ?? actualPayload.Current_Step ?? prev.Current_Step) || 0,
                                 Step_Timer: (actualPayload[`MIX0${plantId}.STEP_TIMER`] ?? actualPayload[`MIX0${plantId}.Step_Timer`] ?? actualPayload.Step_Timer ?? actualPayload.Timer_Act ?? prev.Step_Timer) || 0,
-                                watchdog: actualPayload[`MIX0${plantId}.WATCHDOG`] ?? actualPayload[`MIX0${plantId}.Watch_Doc`] ?? actualPayload['Watch-Dog'] ?? actualPayload.Watch_Doc ?? prev.watchdog,
+                                watchdog: actualPayload[`MIX0${plantId}.WATCHDOG`] ?? actualPayload[`MIX0${plantId}.Watch_Doc`] ?? actualPayload['Watch-Dog'] ?? actualPayload.Watch_Doc ?? actualPayload.watchdog ?? prev.watchdog,
                                 Hopper_Weight: round2(actualPayload[`MIX0${plantId}.HOPPER.SCALE`] ?? actualPayload[`MIX0${plantId}.Hopper_Weight`] ?? actualPayload.Hopper_Weight ?? actualPayload.HopperScale_Act ?? prev.Hopper_Weight),
                                 MixingTank_Agitator_Speed: round2(actualPayload[`MIX0${plantId}.MIXING.AJITATOR SPEED`] ?? actualPayload[`MIX0${plantId}.Agitator_Act`] ?? actualPayload.MixingTank_Agitator_Speed ?? actualPayload.Agitator_Act ?? actualPayload.Agitator_Speed ?? prev.MixingTank_Agitator_Speed),
                                 HighShare_Speed: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.SPEED`] ?? actualPayload[`MIX0${plantId}.HighShear_Act`] ?? actualPayload.HighShare_Speed ?? actualPayload.HighShear_Act ?? actualPayload.HighShare_Speed_Act ?? prev.HighShare_Speed),

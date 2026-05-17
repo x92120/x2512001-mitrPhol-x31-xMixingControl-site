@@ -1,0 +1,106 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// TIA Portal SCL Source — DB1510, DB1512, DB1513
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// HOW TO FIX:
+// 1. In TIA Portal: DELETE DB1510, DB1512, DB1513
+// 2. Right-click "External source files" → "Add new external file"
+// 3. Browse to this file
+// 4. Right-click → "Generate blocks from source"
+// 5. UNCHECK "Optimized block access" on each DB
+// 6. Download to PLC
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─── UDT: Step Command (for DB1510) ─────────────────────────────────────────
+TYPE "type_StepCommand"
+TITLE = 'Step Command from HMI/Backend'
+VERSION : 0.1
+   STRUCT
+      Batch_ID      : String[20];   // รหัส Batch (เช่น P260411-02-01)
+      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
+      Step_No       : Int;          // ลำดับ Step ปัจจุบัน
+      Phase_ID      : String[10];   // รหัส Phase (เช่น A1010)
+      Re_Code       : String[20];   // รหัสผสม/Ingredient
+      Target_Weight : Real;         // น้ำหนักที่ต้องการ (kg)
+      Temp_SP       : Real;         // Setpoint อุณหภูมิ (°C)
+      Temp_Low      : Real;         // Limit ต่ำสุด
+      Temp_High     : Real;         // Limit สูงสุด
+      Agitator_SP   : Real;         // ความเร็วใบกวน (RPM)
+      HighShear_SP  : Real;         // ความเร็ว High Shear (RPM)
+      Step_Time     : Int;          // เวลาทำงาน (วินาที)
+      Cmd_NewStep   : Bool;         // Trigger bit สั่ง Step ใหม่
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: Telemetry (for DB1512) ────────────────────────────────────────────
+TYPE "type_Telemetry"
+TITLE = 'Live Data to HMI/Backend'
+VERSION : 0.1
+   STRUCT
+      Watchdog       : Int;         // สัญญาณชีพ
+      PLC_State      : Int;         // 0=Ready, 1=Run, 2=Hold, 3=Pause, 9=Error
+      Current_Step   : Int;         // Step ที่ PLC กำลังทำงาน
+      Step_Timer     : Int;         // จับเวลาผ่านไปแล้วกี่วินาที
+      MixTank_Temp   : Real;        // อุณหภูมิในถัง (°C)
+      MixTank_Weight : Real;        // น้ำหนักในถัง (kg)
+      Agitator_Act   : Real;        // ความเร็วจริงใบกวน (RPM)
+      HighShear_Act  : Real;        // ความเร็วจริง High Shear (RPM)
+      Hopper_Weight  : Real;        // น้ำหนักใน Hopper ย่อย (kg)
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: Handshake (for DB1513) ────────────────────────────────────────────
+TYPE "type_Handshake"
+TITLE = 'End Step Response'
+VERSION : 0.1
+   STRUCT
+      Step_Complete : Bool;         // Pulse แจ้งว่า Step จบแล้ว
+      Finished_Step : Int;          // ยืนยันจบ Step เบอร์...
+      End_Temp      : Real;         // Snapshot อุณหภูมิตอนจบ (°C)
+      End_Weight    : Real;         // Snapshot น้ำหนักตอนจบ (kg)
+      Error_Flag    : Bool;         // ถ้ามีการหยุดจาก Alarm
+      Error_Code    : Int;          // Error รหัสไหน
+   END_STRUCT;
+END_TYPE
+
+
+// ─── Data Block: DB1510 — Step Command ──────────────────────────────────────
+DATA_BLOCK "DB_STEP_CMD"
+TITLE = 'DB1510 : Step Command From Backend'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.1
+NON_RETAIN
+   "type_StepCommand"
+BEGIN
+END_DATA_BLOCK
+
+
+// ─── Data Block: DB1512 — Telemetry ─────────────────────────────────────────
+DATA_BLOCK "DB_TELEMETRY"
+TITLE = 'DB1512 : Telemetry To Backend'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.1
+NON_RETAIN
+   "type_Telemetry"
+BEGIN
+END_DATA_BLOCK
+
+
+// ─── Data Block: DB1513 — Handshake ─────────────────────────────────────────
+DATA_BLOCK "DB_HANDSHAKE"
+TITLE = 'DB1513 : Step Completion Handshake'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.1
+NON_RETAIN
+   "type_Handshake"
+BEGIN
+END_DATA_BLOCK

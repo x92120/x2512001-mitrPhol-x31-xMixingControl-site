@@ -25,7 +25,7 @@ export function useIntakeReports() {
         try {
             const [lotsRes, batchesRes] = await Promise.all([
                 $fetch<any[]>(`${appConfig.apiBaseUrl}/ingredient-intake/?limit=500`, { headers: headers() }).catch(() => []),
-                $fetch<any[]>(`${appConfig.apiBaseUrl}/production-batches/`, { headers: headers() }).catch(() => []),
+                $fetch<any[]>(`${appConfig.apiBaseUrl}/production-batches/summary`, { headers: headers() }).catch(() => []),
             ])
             const opts: { label: string; value: string; group: string }[] = []
             const seenLots = new Set<string>()

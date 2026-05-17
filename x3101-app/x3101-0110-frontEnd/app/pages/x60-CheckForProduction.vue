@@ -163,6 +163,10 @@ const selectedPlanId = ref<string | null>(null)
 const selectedBatchId = ref<string | null>(null)
 const treeSearch = ref('')
 
+// Lazy expansion tracking — prevents rendering 2000+ batch nodes at once
+const expandedSkus = ref<Record<string, boolean>>({})
+const expandedPlans = ref<Record<string, boolean>>({})
+
 // Feedback overlay
 const feedback = ref<{ show: boolean, type: 'success' | 'error' | 'warning', message: string, title: string }>({
     show: false,
@@ -557,19 +561,48 @@ const goToStartProduction = async () => {
     if (!selectedBatchId.value) return
     loading.value = true
     try {
-        // 1. Call backend to prepare PLC recipe (DB1780)
-        try {
-            await $fetch(`${appConfig.apiBaseUrl}/plc/send-recipe/${selectedBatchId.value}`, {
-                method: 'POST',
-                headers: getAuthHeader() as Record<string, string>
-            })
-            console.log('[StartProd] PLC recipe prepared for:', selectedBatchId.value)
-        } catch (e) {
-            console.warn('[StartProd] PLC recipe endpoint unavailable, continuing anyway:', e)
+        let rawPlant = selectedBatchInfo.value?.plant || ''
+        let extractedPlantId = rawPlant.replace(/\D/g, '')
+        if (!extractedPlantId && selectedBatchInfo.value?.plan_id) {
+            const parts = selectedBatchInfo.value.plan_id.split('-')
+            if (parts.length >= 3) {
+                extractedPlantId = parts[2].replace(/\D/g, '')
+            }
+        }
+        const plantId = extractedPlantId || '1'
+        console.log(`[StartProd] Extracted plantId=${plantId} from rawPlant=${rawPlant}, plan_id=${selectedBatchInfo.value?.plan_id}`)
+
+        // 1. Send all recipe Data to DB1511 and verify readback
+        let recipeSent = false
+        while (!recipeSent) {
+            try {
+                await $fetch(`${appConfig.apiBaseUrl}/plc/send-recipe/${selectedBatchId.value}?plant_id=${Number(plantId)}`, {
+                    method: 'POST',
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                console.log('[StartProd] PLC recipe sent and verified for:', selectedBatchId.value)
+                recipeSent = true
+            } catch (e: any) {
+                console.error('[StartProd] PLC recipe transfer failed:', e)
+                const dbNum = 1500 + (Number(plantId) * 10) + 1
+                const shouldRetry = await new Promise((resolve) => {
+                    $q.dialog({
+                        title: 'Transfer Error',
+                        message: `Failed to verify recipe transfer to PLC (DB${dbNum}). Error: ${e?.data?.detail || e.message}. Do you want to try sending again?`,
+                        color: 'negative',
+                        cancel: 'Cancel Production',
+                        ok: 'Resend Recipe',
+                        persistent: true
+                    }).onOk(() => resolve(true)).onCancel(() => resolve(false))
+                })
+                if (!shouldRetry) {
+                    loading.value = false
+                    return // Abort start production
+                }
+            }
         }
 
         // 2. Publish MQTT start=1 signal to the plant's command topic
-        const plantId = (selectedBatchInfo.value?.plant || '01').replace(/\D/g, '') || '1'
         const topic = `mixing/plant/${Number(plantId)}/cmd`
         publishMessage(topic, {
             command: 'READY_TO_START',
@@ -592,12 +625,12 @@ const goToStartProduction = async () => {
 
         // 3. Navigate to Mixing Control page — operator confirms there
         await useRouter().push(
-            `/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&from_check=1`
+            `/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&plant=${plantId}&from_check=1`
         )
     } catch (e: any) {
         console.error('[StartProd] Error:', e)
         $q.notify({ type: 'warning', message: 'Could not send start signal, navigating anyway.' })
-        useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&from_check=1`)
+        useRouter().push(`/x61-MixingControl?batch_id=${selectedBatchId.value}&sku_id=${selectedBatchInfo.value?.sku_id}&plan_id=${selectedBatchInfo.value?.plan_id}&sku_name=${encodeURIComponent(selectedBatchInfo.value?.sku_name || '')}&batch_size=${selectedBatchInfo.value?.batch_size || 0}&plant=${plantId}&from_check=1`)
     } finally {
         loading.value = false
     }
@@ -2021,7 +2054,7 @@ onUnmounted(() => {
 
                   <!-- SKU Level -->
                   <template v-for="sku in plant.skus" :key="sku.skuId">
-                    <q-expansion-item dense dense-toggle switch-toggle-side header-class="q-py-none bg-grey-1" header-style="padding-left: 24px;" style="font-size: 12px;">
+                    <q-expansion-item v-model="expandedSkus[sku.skuId]" dense dense-toggle switch-toggle-side header-class="q-py-none bg-grey-1" header-style="padding-left: 24px;" style="font-size: 12px;">
                       <template v-slot:header>
                         <q-item-section avatar style="min-width: 20px;"><q-icon name="inventory_2" size="14px" color="indigo-7" /></q-item-section>
                         <q-item-section><q-item-label class="text-weight-bold text-indigo-9 ellipsis">{{ sku.skuId }} · {{ sku.skuName }}</q-item-label></q-item-section>
@@ -2030,15 +2063,15 @@ onUnmounted(() => {
 
                       <!-- Plan Level -->
                       <template v-for="plan in sku.plans" :key="plan.plan_id">
-                        <q-expansion-item dense dense-toggle switch-toggle-side :default-opened="selectedPlanId === plan.plan_id" header-class="q-py-none" header-style="padding-left: 44px;" style="font-size: 12px;">
+                        <q-expansion-item v-model="expandedPlans[plan.plan_id]" expand-separator expand-icon="arrow_drop_down" dense dense-toggle switch-toggle-side :default-opened="selectedPlanId === plan.plan_id" header-class="q-py-none" header-style="padding-left: 44px;" style="font-size: 12px;">
                           <template v-slot:header>
                             <q-item-section avatar style="min-width: 20px;"><q-icon name="assignment" size="14px" color="teal-7" /></q-item-section>
                             <q-item-section><q-item-label class="text-weight-bold text-teal-9">{{ plan.plan_id }}</q-item-label></q-item-section>
                             <q-item-section side><q-badge color="teal-3" text-color="teal-10">{{ (plan.batches || []).length }} Batch</q-badge></q-item-section>
                           </template>
 
-                          <!-- Batch Level -->
-                          <q-list dense>
+                          <!-- Batch Level (lazy: only render when plan is expanded) -->
+                          <q-list v-if="expandedPlans[plan.plan_id]" dense>
                             <q-item
                               v-for="batch in (plan.batches || [])" :key="batch.batch_id"
                               clickable dense

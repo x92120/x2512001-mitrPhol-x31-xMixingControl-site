@@ -1,0 +1,54 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// TIA Portal SCL Source — DB1510 Step Command (UPDATED)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// UPDATED to match all frontend fields (176 bytes)
+// Added: Watch_Doc, Plan_ID, SKU_Name, Material_ID, Temp_Low, Temp_High,
+//        PH_Target, Brix_Target
+//
+// HOW TO APPLY:
+// 1. DELETE old DB1510 and type_StepCommand in TIA Portal
+// 2. Import this file → Generate blocks from source
+// 3. UNCHECK "Optimized block access" on DB1510
+// 4. Download to PLC
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+TYPE "type_StepCommand"
+TITLE = 'Step Command from Backend/HMI (v2)'
+VERSION : 0.2
+   STRUCT
+      Watch_Doc     : Int;          // Watchdog counter
+      Plan_ID       : String[20];   // รหัส Plan (เช่น P260411-02-01)
+      Batch_ID      : String[20];   // รหัส Batch
+      SKU_Name      : String[30];   // ชื่อ SKU
+      Phase_ID      : String[10];   // รหัส Phase (เช่น A1010)
+      Step_No       : Int;          // ลำดับ Step ปัจจุบัน
+      Step_Time     : Int;          // เวลาทำงาน (วินาที)
+      Step_Status   : Int;          // 0=Pending, 1=Active, 2=Complete
+      Material_ID   : String[20];   // รหัสวัตถุดิบ SAP
+      Re_Code       : String[20];   // รหัสผสม/Ingredient
+      Target_Weight : Real;         // น้ำหนักที่ต้องการ (kg)
+      Temp_SP       : Real;         // Setpoint อุณหภูมิ (°C)
+      Temp_Low      : Real;         // Limit ต่ำสุด (°C)
+      Temp_High     : Real;         // Limit สูงสุด (°C)
+      Agitator_SP   : Real;         // ความเร็วใบกวน (RPM)
+      HighShear_SP  : Real;         // ความเร็ว High Shear (RPM)
+      PH_Target     : Real;         // ค่า pH เป้าหมาย
+      Brix_Target   : Real;         // ค่า Brix เป้าหมาย
+      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
+      Cmd_NewStep   : Bool;         // Trigger bit สั่ง Step ใหม่
+   END_STRUCT;
+END_TYPE
+
+
+DATA_BLOCK "DB_STEP_CMD"
+TITLE = 'DB1510 : Step Command From Backend (v2)'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.2
+NON_RETAIN
+   "type_StepCommand"
+BEGIN
+END_DATA_BLOCK

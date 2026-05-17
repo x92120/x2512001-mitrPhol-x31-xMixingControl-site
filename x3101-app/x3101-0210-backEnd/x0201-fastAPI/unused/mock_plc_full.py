@@ -131,6 +131,7 @@ def simulate_full_production():
     # ── Connect MQTT ──
     print("🔌 Connecting to MQTT broker...")
     client = mqtt.Client(client_id="Mock_PLC_FullSim")
+    client.username_pw_set("xMixingNode-1", "x123456")
     client.on_connect = on_connect
 
     try:

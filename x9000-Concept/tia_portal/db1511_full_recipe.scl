@@ -1,0 +1,69 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// TIA Portal SCL Source — DB1511 Full Recipe Array
+// ═══════════════════════════════════════════════════════════════════════════
+// 
+// HOW TO IMPORT INTO TIA PORTAL:
+// 1. Open your TIA Portal project
+// 2. Right-click "External source files" → "Add new external file"
+// 3. Browse to this file (db1511_full_recipe.scl)
+// 4. Right-click the imported file → "Generate blocks from source"
+// 5. The UDTs and DB1511 will appear in your project tree
+// 6. Download to PLC
+//
+// IMPORTANT: After generating, right-click DB1511 → Properties →
+//   UNCHECK "Optimized block access" so snap7 can read/write by offset
+//
+// PLC: CPU 1214C at 192.168.21.210
+// Total DB Size: ~10,036 bytes (fits easily in 100KB work memory)
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─── UDT: Single Recipe Step (78 bytes) ─────────────────────────────────────
+TYPE "type_RecipeStep"
+TITLE = 'Individual Step Definition'
+VERSION : 0.2
+   STRUCT
+      Seq           : Int;          // ลำดับที่ในอาร์เรย์ (1..128)
+      Phase_No      : Int;          // เลข Phase เช่น 10, 20, 30
+      Sub_Step      : Int;          // เลข Step ภายใน Phase เช่น 10, 20
+      Action_Code   : String[10];   // รหัส Action (เช่น x10010)
+      Phase_ID      : String[10];   // รหัส Phase (เช่น p0010)
+      Re_Code       : String[20];   // รหัสผสม/Ingredient
+      Target_Weight : Real;         // น้ำหนักที่ต้องการ (kg)
+      Temp_SP       : Real;         // Setpoint อุณหภูมิ (°C)
+      Temp_Low      : Real;         // Limit ต่ำสุด
+      Temp_High     : Real;         // Limit สูงสุด
+      Agitator_SP   : Real;         // ความเร็วใบกวน (RPM)
+      HighShear_SP  : Real;         // ความเร็ว High Shear (RPM)
+      Step_Time     : Int;          // เวลาทำงาน (วินาที)
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: Full Recipe (Header + 128 Steps) ─────────────────────────────────
+TYPE "type_FullRecipe"
+TITLE = 'Full Recipe Array from HMI/Backend'
+VERSION : 0.2
+   STRUCT
+      Batch_ID      : String[20];   // รหัส Batch
+      SKU_ID        : String[20];   // รหัส SKU
+      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
+      Total_Steps   : Int;          // จำนวน Step ทั้งหมด (1-128)
+      Active_Step   : Int;          // Pointer ชี้ว่าตอนนี้ต้องทำ Seq ไหน (1-128)
+      Cmd_LoadRecipe: Bool;         // Trigger โหลด Recipe ใหม่
+      Steps         : Array[1..128] of "type_RecipeStep";
+   END_STRUCT;
+END_TYPE
+
+
+// ─── Data Block: DB1511 ─────────────────────────────────────────────────────
+DATA_BLOCK "DB_FULL_RECIPE"
+TITLE = 'DB1511 : Full Recipe Array From Backend'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.2
+NON_RETAIN
+   "type_FullRecipe"
+BEGIN
+END_DATA_BLOCK

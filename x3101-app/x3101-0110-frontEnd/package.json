@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "build": "nuxt build",
-    "dev": "nuxt dev --host 0.0.0.0 --port 3030",
+    "dev": "nuxt dev --host 0.0.0.0 --port 3031",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "start": "nuxt dev --host 0.0.0.0 --port 3030",
+    "start": "nuxt dev --host 0.0.0.0 --port 3031",
     "test": "vitest run",
     "test:unit": "vitest run --project unit"
   },
@@ -30,7 +30,7 @@
     "@vitest/browser-playwright": "^4.0.18",
     "@vitest/coverage-v8": "^4.0.18",
     "nuxt-quasar-ui": "^3.0.0",
-    "playwright": "^1.58.2",
+    "playwright": "^1.60.0",
     "sass-embedded": "^1.97.3",
     "vitest": "^4.0.18",
     "vue-tsc": "^3.2.4"

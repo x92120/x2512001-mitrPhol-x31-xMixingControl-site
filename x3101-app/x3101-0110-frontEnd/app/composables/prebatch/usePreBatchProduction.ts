@@ -145,7 +145,7 @@ export function usePreBatchProduction(deps: ProductionDeps) {
 
     const fetchBatchIds = async () => {
         try {
-            const data = await $fetch<any[]>(`${appConfig.apiBaseUrl}/production-batches/`, {
+            const data = await $fetch<any[]>(`${appConfig.apiBaseUrl}/production-batches/summary`, {
                 headers: getAuthHeader() as Record<string, string>
             })
             allBatches.value = data

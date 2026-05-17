@@ -276,6 +276,24 @@ def cancel_production_plan(plan_id: int, cancel_data: schemas.ProductionPlanCanc
 # PRODUCTION BATCH ENDPOINTS
 # =============================================================================
 
+@router.get("/production-batches/summary")
+def get_production_batches_summary(db: Session = Depends(get_db)):
+    """Fast summary of all batches (id, batch_id, status only) — no JOINs.
+    Used by the dashboard for counts and activity feeds."""
+    rows = db.query(
+        models.ProductionBatch.id,
+        models.ProductionBatch.batch_id,
+        models.ProductionBatch.sku_id,
+        models.ProductionBatch.status,
+        models.ProductionBatch.created_at,
+        models.ProductionBatch.updated_at,
+    ).order_by(models.ProductionBatch.created_at.desc()).limit(1000).all()
+    return [
+        {"id": r.id, "batch_id": r.batch_id, "sku_id": r.sku_id,
+         "status": r.status, "created_at": r.created_at, "updated_at": r.updated_at}
+        for r in rows
+    ]
+
 @router.get("/production-batches/", response_model=List[schemas.ProductionBatch])
 def get_production_batches(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     """Get all production batches."""
@@ -446,25 +464,23 @@ def get_ready_to_deliver(show_all: bool = False, db: Session = Depends(get_db)):
 @router.get("/production-batches/awaiting-recheck")
 def get_batches_awaiting_recheck(db: Session = Depends(get_db)):
     """Return batches that are boxed but not yet released to production."""
-    batches = db.query(models.ProductionBatch).filter(
+    rows = db.query(models.ProductionBatch, models.ProductionPlan).join(
+        models.ProductionPlan, models.ProductionBatch.plan_id == models.ProductionPlan.id
+    ).filter(
         (models.ProductionBatch.fh_boxed_at.isnot(None)) | (models.ProductionBatch.spp_boxed_at.isnot(None)),
         models.ProductionBatch.ready_to_product == False
     ).all()
 
-    result = []
-    for b in batches:
-        plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.id == b.plan_id).first()
-        result.append({
-            "batch_id": b.batch_id,
-            "plan_id": plan.plan_id if plan else "-",
-            "sku_id": b.sku_id,
-            "sku_name": plan.sku_name if plan else "-",
-            "plant": b.plant or "-",
-            "batch_size": b.batch_size or 0,
-            "fh_boxed": b.fh_boxed_at is not None,
-            "spp_boxed": b.spp_boxed_at is not None,
-        })
-    return result
+    return [{
+        "batch_id": b.batch_id,
+        "plan_id": p.plan_id if p else "-",
+        "sku_id": b.sku_id,
+        "sku_name": p.sku_name if p else "-",
+        "plant": b.plant or "-",
+        "batch_size": b.batch_size or 0,
+        "fh_boxed": b.fh_boxed_at is not None,
+        "spp_boxed": b.spp_boxed_at is not None,
+    } for b, p in rows]
 
 @router.get("/prebatch-recs/recheck-batch/{batch_id}")
 def get_recheck_batch_details(batch_id: str, db: Session = Depends(get_db)):
@@ -590,22 +606,38 @@ def get_recheck_box_details(box_id: str, db: Session = Depends(get_db)):
     plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.plan_id == plan_id).first()
     sku_id = plan.sku_id if plan else None
 
+    # ── Batch-fetch all related data upfront (avoids N+1 queries) ──
+    # Pre-fetch all requirements for these records
+    req_ids = list(set(r.req_id for r in records if r.req_id))
+    req_map = {}
+    if req_ids:
+        reqs = db.query(models.PreBatchReq).filter(models.PreBatchReq.id.in_(req_ids)).all()
+        req_map = {req.id: req for req in reqs}
+
+    # Pre-fetch all SKU step tolerances for this SKU's re_codes
+    step_map = {}
+    if sku_id:
+        re_codes = list(set(r.re_code for r in records if r.re_code))
+        if re_codes:
+            steps = db.query(models.SkuStep).filter(
+                models.SkuStep.sku_id == sku_id,
+                models.SkuStep.re_code.in_(re_codes)
+            ).all()
+            for step in steps:
+                step_map[step.re_code] = step
+
     result_bags = []
     for r in records:
-        # Get target from requirement
-        req = db.query(models.PreBatchReq).filter(models.PreBatchReq.id == r.req_id).first()
+        # Get target from requirement (O(1) lookup)
+        req = req_map.get(r.req_id)
         target_vol = req.required_volume if req else r.total_volume
         
-        # Get tolerance from SKU steps
+        # Get tolerance from SKU steps (O(1) lookup)
         tolerance = 0.05 # Default 50g if not found
-        if sku_id:
-            step = db.query(models.SkuStep).filter(
-                models.SkuStep.sku_id == sku_id,
-                models.SkuStep.re_code == r.re_code
-            ).first()
-            if step:
-                # Use high_tol if available, else 1% of target
-                tolerance = step.high_tol if step.high_tol > 0 else (target_vol * 0.01)
+        step = step_map.get(r.re_code)
+        if step:
+            # Use high_tol if available, else 1% of target
+            tolerance = step.high_tol if step.high_tol and step.high_tol > 0 else (target_vol * 0.01)
 
         result_bags.append({
             "id": r.id,
@@ -747,13 +779,17 @@ def unhold_batch(batch_id_str: str, data: HoldBatchRequest, db: Session = Depend
         "message": f"Batch '{batch_id_str}' released from Hold → In-Progress."
     }
 
-@router.get("/production-batches/by-batch-id/{batch_id_str}", response_model=schemas.ProductionBatch)
+@router.get("/production-batches/by-batch-id/{batch_id_str}")
 def get_production_batch_by_id_str(batch_id_str: str, db: Session = Depends(get_db)):
-    """Get a specific production batch by its string ID (e.g. 20251112-01001)."""
+    """Get a specific production batch by its string ID, enriched with sku_name from the plan."""
     db_batch = db.query(models.ProductionBatch).filter(models.ProductionBatch.batch_id == batch_id_str).first()
     if not db_batch:
         raise HTTPException(status_code=404, detail="Production batch not found")
-    return db_batch
+    # Enrich with sku_name from the parent plan
+    plan = db.query(models.ProductionPlan).filter(models.ProductionPlan.id == db_batch.plan_id).first()
+    result = schemas.ProductionBatch.model_validate(db_batch).model_dump()
+    result["sku_name"] = plan.sku_name if plan else "-"
+    return result
 
 @router.post("/production-batches/by-batch-id/{batch_id_str}/ensure-reqs")
 def ensure_batch_reqs(batch_id_str: str, db: Session = Depends(get_db)):

@@ -2,14 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Any
+import logging
 
-from database import get_db, get_local_db
-import models
+from database import get_db, get_local_db, _check_local_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/edge",
     tags=["Edge Local Buffer"]
 )
+
 
 @router.post("/start-batch/{batch_id}")
 def sync_batch_to_edge(
@@ -17,6 +20,7 @@ def sync_batch_to_edge(
     remote_db: Session = Depends(get_db), 
     local_db: Session = Depends(get_local_db)
 ):
+    import models
     # Fetch Remote Batch Info
     batch = remote_db.query(models.ProductionBatch).filter(models.ProductionBatch.batch_id == batch_id).first()
     if not batch:
@@ -88,13 +92,44 @@ def sync_batch_to_edge(
 
 
 @router.get("/active-batch")
-def get_active_batch(local_db: Session = Depends(get_local_db)):
-    result = local_db.execute(text("SELECT * FROM local_production_queue WHERE status = 'RUNNING' ORDER BY id DESC LIMIT 1")).fetchone()
-    if not result:
-        return None
-    return dict(result._mapping)
+def get_active_batch():
+    """Get active batch from local edge buffer.
+    Fast-fails with 503 if local DB is not reachable (no 5s timeout).
+    """
+    if not _check_local_db():
+        raise HTTPException(status_code=503, detail="Local edge DB is offline")
+    try:
+        from database import _get_local_session_maker
+        session_maker = _get_local_session_maker()
+        db = session_maker()
+        try:
+            result = db.execute(text("SELECT * FROM local_production_queue WHERE status = 'RUNNING' ORDER BY id DESC LIMIT 1")).fetchone()
+            if not result:
+                return None
+            return dict(result._mapping)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Edge active-batch query failed: %s", e)
+        raise HTTPException(status_code=503, detail="Local edge DB query failed")
 
 @router.get("/sku-steps/{sku_code}")
-def get_local_sku_steps(sku_code: str, local_db: Session = Depends(get_local_db)):
-    rows = local_db.execute(text("SELECT * FROM local_sku_steps WHERE sku_code = :sku ORDER BY phase_no ASC, step_id ASC"), {"sku": sku_code}).fetchall()
-    return [dict(row._mapping) for row in rows]
+def get_local_sku_steps(sku_code: str):
+    """Get SKU steps from local edge buffer.
+    Fast-fails with 503 if local DB is not reachable.
+    """
+    if not _check_local_db():
+        raise HTTPException(status_code=503, detail="Local edge DB is offline")
+    try:
+        from database import _get_local_session_maker
+        session_maker = _get_local_session_maker()
+        db = session_maker()
+        try:
+            rows = db.execute(text("SELECT * FROM local_sku_steps WHERE sku_code = :sku ORDER BY phase_no ASC, step_id ASC"), {"sku": sku_code}).fetchall()
+            return [dict(row._mapping) for row in rows]
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Edge sku-steps query failed: %s", e)
+        raise HTTPException(status_code=503, detail="Local edge DB query failed")
+

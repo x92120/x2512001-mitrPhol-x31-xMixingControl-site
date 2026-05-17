@@ -57,6 +57,10 @@ const printScreen = () => {
   window.print()
 }
 
+const goToPlant = (plant: number) => {
+  window.location.href = `/x61-MixingControl?plant=${plant}`
+}
+
 </script>
 
 <template>
@@ -121,15 +125,32 @@ const printScreen = () => {
           v-if="hasPermission('production_list')"
         />
 
-        <q-route-tab
-          to="/x61-MixingControl"
+        <q-btn-dropdown
+          flat
+          no-caps
+          stretch
           icon="precision_manufacturing"
-          label="Mixing Control"
+          label="MIXING CONTROL"
           v-if="hasPermission('production_list')"
-        />
+          class="q-tab__label"
+        >
+          <q-list dense style="min-width: 180px;">
+            <q-item clickable v-close-popup @click="goToPlant(1)">
+              <q-item-section avatar><q-icon name="looks_one" color="blue-7" /></q-item-section>
+              <q-item-section>Mixing 1</q-item-section>
+            </q-item>
+            <q-item clickable v-close-popup @click="goToPlant(2)">
+              <q-item-section avatar><q-icon name="looks_two" color="teal-7" /></q-item-section>
+              <q-item-section>Mixing 2</q-item-section>
+            </q-item>
+            <q-item clickable v-close-popup @click="goToPlant(3)">
+              <q-item-section avatar><q-icon name="looks_3" color="deep-purple-7" /></q-item-section>
+              <q-item-section>Mixing 3</q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
         <q-route-tab to="/x89-UserConfig" icon="manage_accounts" :label="t('nav.user')" v-if="hasPermission('admin')" />
         <q-route-tab to="/x100-PlantMonitor" icon="monitor" label="Plant Monitor" />
-        <q-route-tab to="/x90-PLCSimulator" icon="precision_manufacturing" label="PLC SIMULATOR" />
         <q-route-tab to="/x70-ProductionReport" icon="assessment" label="PRODUCTION REPORT" />
         <q-route-tab to="/x99-About" icon="info" :label="t('nav.about')" />
       </q-tabs>

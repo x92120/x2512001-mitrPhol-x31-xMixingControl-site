@@ -98,20 +98,77 @@ const actualTankWeight = computed(() => plantData.value.Mixing_Tank_Volume ?? 0)
 const actualHopperWeight = computed(() => plantData.value.Hopper_Weight ?? 0)
 const actualCirculationSpeed = computed(() => plantData.value.Circulation_Speed ?? 0)
 const actualFlowRate = computed(() => plantData.value.Flow_Rate ?? 0)
+
+// ── PLC Error State ──
+const isPlcInError = computed(() => {
+    const state = plantData.value?.PLC_State
+    return state === 6 || state === 9
+})
 const actualCirculationTemp = computed(() => plantData.value.Circulation_Temperature ?? 0)
 const actualTankTemp = computed(() => plantData.value.Mixing_Tank_Temperature ?? 0)
 const watchdog = computed(() => plantData.value.watchdog ?? 0)
 const isPlcConnected = computed(() => plcConnectedGlobal.value && !!plantData.value.last_update)
+
+// ── Refresh Batch from DB1511 ──
+const refreshFromDB1511 = async () => {
+    loading.value = true
+    try {
+        const remoteApiBaseUrl = appConfig.apiBaseUrl
+        const plcStatus = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/recipe-status`, {
+            headers: getAuthHeader() as Record<string, string>
+        })
+        if (plcStatus.status === 'success') {
+            if (plcStatus.batch_id && plcStatus.batch_id !== '-' && plcStatus.batch_id !== '0') {
+                restoreBatchFromPlc(plcStatus.batch_id)
+                return
+            } else {
+                $q.notify({ type: 'warning', message: `No active batch in PLC DB15${activePlantId.value}1.` })
+            }
+        } else {
+            if (route.query.batch_id) {
+                $q.notify({ type: 'warning', message: `Failed to read PLC DB15${activePlantId.value}1 or no data.` })
+            }
+        }
+    } catch (e) {
+        $q.notify({ type: 'negative', message: 'Error connecting to PLC API.' })
+        console.error(e)
+    } finally {
+        loading.value = false
+    }
+}
 
 // ── Fetch Batch Info from Edge Buffer ──
 const fetchBatchInfo = async () => {
     loading.value = true
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
+        
+        // --- 1. Check PLC DB151x First (After Computer Restart Recovery) ---
+        try {
+            const plcStatus = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/recipe-status`, {
+                headers: getAuthHeader() as Record<string, string>
+            })
+            if (plcStatus?.success && plcStatus.target?.batch_id) {
+                const plcBatchId = String(plcStatus.target.batch_id).replace(/\0/g, '').trim()
+                if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
+                    console.log('[Recovery] Found active batch directly from PLC DB1511:', plcBatchId)
+                    await restoreBatchFromPlc(plcBatchId)
+                    return // Stop further fetching, we have restored from PLC
+                }
+            }
+        } catch (plcErr) {
+            console.warn('[Recovery] Could not read active batch from PLC, falling back to edge...', plcErr)
+        }
+
+        // --- 2. Fallback to Edge API ---
         const data = await $fetch<any>(`${remoteApiBaseUrl}/edge/active-batch`, {
              headers: getAuthHeader() as Record<string, string>
         })
         if (data) {
+            if (String(data.plant_id).replace(/\D/g, '') !== activePlantId.value) {
+                console.warn(`Edge active batch is for plant ${data.plant_id}, but we are viewing plant ${activePlantId.value}. Ignoring.`);
+                throw new Error("Edge batch belongs to a different plant");
+            }
             batchInfo.value = { 
                 batch_id: data.batch_id,
                 plan_id: data.plan_id || '-', 
@@ -134,13 +191,14 @@ const fetchBatchInfo = async () => {
         const qPlanId = route.query.plan_id as string
         const qSkuName = route.query.sku_name as string
         const qBatchSize = parseFloat(route.query.batch_size as string) || 0
+        const qPlant = (route.query.plant as string)?.replace(/\D/g, '') || '1'
         if (qBatchId && qSkuId) {
             batchInfo.value = { 
                 batch_id: qBatchId,
                 plan_id: qPlanId || '-', 
                 sku_id: qSkuId, 
                 sku_name: qSkuName || '-', 
-                plant: '01',
+                plant: 'Mixing ' + qPlant,
                 batch_size: qBatchSize
             }
             selectedBatchId.value = qBatchId
@@ -157,30 +215,76 @@ const fetchBatchInfo = async () => {
     }
 }
 
-// ── Fetch SKU steps ──
+// ── Fetch SKU steps from PLC (DB1511) ──
 const fetchSkuSteps = async (skuId: string) => {
     loading.value = true
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
-        // Fallback to central API directly since Edge buffer is failing
-        const endpoint = `${remoteApiBaseUrl}/sku-steps/?sku_id=${skuId}`
-        const data = await $fetch<any[]>(endpoint, {
+        // Read directly from the new Python snap7 DB API!
+        const endpoint = `${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/recipe-status`
+        const data = await $fetch<any>(endpoint, {
             headers: getAuthHeader() as Record<string, string>
         })
-        // Sort steps globally by phase then sub-step so the index matches the visual order
-        const sortedSteps = (data || []).sort((a: any, b: any) => {
-            const phA = String(a.phase_number || '0')
-            const phB = String(b.phase_number || '0')
-            const phCompare = phA.localeCompare(phB, undefined, { numeric: true })
-            if (phCompare !== 0) return phCompare
-            return (a.sub_step || 0) - (b.sub_step || 0)
-        })
-        skuSteps.value = sortedSteps
+        
+        if (data && data.success && data.target && data.target.steps) {
+            // Map the PLC DB1511 step struct to the Vue UI expected fields
+            const mappedSteps = data.target.steps.map((s: any, idx: number) => {
+                const act = data.actual?.steps?.[idx] || {}
+                return {
+                    id: s.seq || (idx + 1), // Prevent undefined === undefined bug
+                    phase_number: 'p' + String(s.phase_no).padStart(3, '0'),
+                    phase_id: s.phase_id,
+                    sub_step: s.sub_step,
+                    action_code: s.action_code,
+                    action_description: dbActionMap.value[s.action_code] || '',
+                    re_code: s.re_code,
+                    require: s.target_weight,
+                    temperature: s.temp_sp,
+                    temp_low: s.temp_low,
+                    temp_high: s.temp_high,
+                    agitator_rpm: s.agitator_sp,
+                    high_shear_rpm: s.highshear_sp,
+                    step_time: s.step_time,
+                    // DB1517 Actuals
+                    actual_volume: act.target_weight != null && act.target_weight > 0 ? act.target_weight : null,
+                    actual_temp: act.temp_sp != null && act.temp_sp > 0 ? act.temp_sp : null,
+                    actual_agitator: act.agitator_sp != null && act.agitator_sp > 0 ? act.agitator_sp : null,
+                    actual_high_shear: act.highshear_sp != null && act.highshear_sp > 0 ? act.highshear_sp : null,
+                    actual_brix: act.temp_low != null && act.temp_low > 0 ? act.temp_low : null,
+                    actual_ph: act.temp_high != null && act.temp_high > 0 ? act.temp_high : null,
+                    duration_sec: act.step_time != null && act.step_time > 0 ? act.step_time : null
+                }
+            })
+            skuSteps.value = mappedSteps
+            console.log('[PLC Sync] Loaded UI from DB1511 and DB1517:', skuSteps.value)
+        } else {
+            skuSteps.value = []
+        }
     } catch { skuSteps.value = [] }
     finally { loading.value = false }
 }
 
 // ── Fetch dynamic phase map from DB ──
+const dbActionMap = ref<Record<string, string>>({})
+
+const fetchActionMap = async () => {
+    try {
+        const remoteApiBaseUrl = appConfig.apiBaseUrl
+        const data = await $fetch<any[]>(`${remoteApiBaseUrl}/sku-actions/`, {
+            headers: getAuthHeader() as Record<string, string>
+        })
+        const map: Record<string, string> = {}
+        for (const act of (data || [])) {
+            if (act.action_code) {
+                map[act.action_code] = act.action_description
+            }
+        }
+        dbActionMap.value = map
+    } catch (e) {
+        console.warn('Failed to fetch action map from DB', e)
+    }
+}
+
 const fetchPhaseMap = async () => {
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
@@ -410,7 +514,7 @@ const handlePlcMessage = (topic: string, payload: any) => {
     // Listen for PLC readback data for handshake verification
     const plantId = activePlantId.value || '1'
     const formattedPlantId = String(plantId).padStart(2, '0')
-    if (topic === `MIX-${formattedPlantId}-READ` || topic === 'MIX-01-READ') {
+    if (topic === `MIX-${formattedPlantId}-READ`) {
         try {
             const data = typeof payload === 'string' ? JSON.parse(payload) : payload
             plcReadback.value = data
@@ -428,7 +532,7 @@ const confirmQcCheck = () => {
         $q.notify({ type: 'warning', message: 'Please input Actual pH' }); return;
     }
 
-    // TODO: POST to Backend here: { batch_id: selectedBatchId.value, step_id: pendingQcStep.value.id, brix: actualBrix.value, ph: actualPh.value }
+    // If an API endpoint for QC data exists, this is where you would sync it.
 
     $q.notify({ type: 'positive', message: 'QC Data Recorded Successfully!', icon: 'check', timeout: 2000 })
     
@@ -531,14 +635,111 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
     }
 }
 
+const killBatch = () => {
+    $q.dialog({
+        title: 'Confirm Kill Batch',
+        message: `Are you sure you want to completely clear the PLC memory for Plant ${activePlantId.value} and force all data to 0? This cannot be undone.`,
+        cancel: true,
+        persistent: true,
+        color: 'negative'
+    }).onOk(async () => {
+        try {
+            $q.loading.show()
+            await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>
+            })
+            
+            // Send ABORT just to be safe
+            publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'ABORT' })
+            batchRunning.value = false
+            
+            // Reset the frontend state
+            batchInfo.value = null
+            selectedBatchId.value = null
+            selectedSkuId.value = null
+            skuSteps.value = []
+            startConfirmed.value = false
+            
+            // Remove query parameters
+            const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+            router.replace({ query: newQuery })
+            
+            $q.notify({ type: 'positive', message: `Batch Killed. PLC memory cleared for Plant ${activePlantId.value}.` })
+        } catch (e: any) {
+            console.error('Failed to kill batch:', e)
+            $q.notify({ type: 'negative', message: 'Failed to clear PLC recipe data.' })
+        } finally {
+            $q.loading.hide()
+        }
+    })
+}
+
 const goBack = () => {
     router.push('/x60-CheckForProduction')
 }
 
-const confirmStepFromRow = (step: any) => {
+const switchPlant = (plantId: number) => {
+    // If the currently loaded batch belongs to a different plant, clear it
+    if (batchInfo.value && String(batchInfo.value.plant).replace(/\D/g, '') !== String(plantId)) {
+        batchInfo.value = null
+        selectedBatchId.value = null
+        selectedSkuId.value = null
+        skuSteps.value = []
+        startConfirmed.value = false
+    }
+    // Remove query params related to the old batch so we don't accidentally load it
+    const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+    newQuery.plant = String(plantId);
+
+    // Update the URL and refresh the page data
+    router.replace({ query: newQuery }).then(() => {
+        fetchBatchInfo()
+    })
+}
+
+const openInNewWindow = (plantId: number) => {
+    // Open the Mixing Control page for the specified plant in a new browser tab/window
+    const url = router.resolve({ path: '/x61-MixingControl', query: { plant: String(plantId) } }).href
+    window.open(url, '_blank')
+}
+
+const isWeightInTolerance = (step: any, actualWeight: number) => {
+    const requiredWeight = productionRequire(step)
+    if (requiredWeight <= 0) return true
+    
+    const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
+    const tolLow = Number(step.low_tol || (requiredWeight * 0.02))
+    const minW = requiredWeight - tolLow
+    const maxW = requiredWeight + tolHigh
+    
+    return actualWeight >= minW && actualWeight <= maxW
+}
+
+const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
         return
+    }
+    
+    // Weight Tolerance Check for Manual Add Steps
+    const aCode = String(step.action_code || '')
+    if (!skipToleranceCheck && (aCode.startsWith('2') || aCode.startsWith('3'))) {
+        const requiredWeight = productionRequire(step)
+        if (requiredWeight > 0) {
+            const actualWeight = actualHopperWeight.value
+            if (!isWeightInTolerance(step, actualWeight)) {
+                $q.notify({ 
+                    type: 'negative', 
+                    message: 'Weight out of tolerance!', 
+                    caption: `Req: ${requiredWeight.toFixed(2)} | Act: ${actualWeight.toFixed(2)}. Adjust weight or use Override.`, 
+                    position: 'center',
+                    icon: 'scale',
+                    timeout: 4000
+                })
+                return // BLOCK ADVANCE!
+            }
+        }
     }
     
     const topic = `mixing/plant/${activePlantId.value}/step_cmd`
@@ -559,6 +760,33 @@ const confirmStepFromRow = (step: any) => {
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
     
     $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}`, position: 'top', timeout: 1500 })
+}
+
+// ── Manual Override ──
+const manualPassDialog = ref(false)
+const manualPassReason = ref('')
+const manualPassStepTarget = ref<any>(null)
+
+const promptManualPass = (step: any) => {
+    manualPassStepTarget.value = step
+    manualPassReason.value = ''
+    manualPassDialog.value = true
+}
+
+const submitManualPass = () => {
+    if (!manualPassReason.value.trim()) {
+        $q.notify({ type: 'warning', message: 'Please provide a reason to override.' })
+        return
+    }
+    
+    console.log(`[Manual Override] Step ${manualPassStepTarget.value?.sub_step} bypassed. Reason: ${manualPassReason.value}`)
+    $q.notify({ type: 'warning', message: `Manual Override applied: ${manualPassReason.value}`, position: 'top' })
+    
+    confirmStepFromRow(manualPassStepTarget.value, true)
+    
+    manualPassDialog.value = false
+    manualPassStepTarget.value = null
+    manualPassReason.value = ''
 }
 
 const printProduction = () => {
@@ -612,6 +840,8 @@ watch(currentStepIndex, (newIdx) => {
 // Prebatch items contain the actual production weights (required_volume)
 // which are already calculated for the specific batch size.
 const prebatchWeightMap = ref<Record<string, number>>({})
+const prebatchIdMap = ref<Record<string, string>>({})
+const prebatchWhMap = ref<Record<string, string>>({})
 
 const fetchPrebatchWeights = async (batchId: string) => {
     try {
@@ -620,18 +850,38 @@ const fetchPrebatchWeights = async (batchId: string) => {
             headers: getAuthHeader() as Record<string, string>
         })
         const map: Record<string, number> = {}
+        const idMap: Record<string, string> = {}
+        const whMap: Record<string, string> = {}
         for (const item of (data || [])) {
             const rc = (item.re_code || '').trim()
             if (rc) {
                 // Sum volumes if same re_code appears multiple times
                 map[rc] = (map[rc] || 0) + (Number(item.required_volume) || 0)
+                if (item.batch_record_id) {
+                    if (idMap[rc] && !idMap[rc].includes(item.batch_record_id)) {
+                        idMap[rc] += `, ${item.batch_record_id}`
+                    } else {
+                        idMap[rc] = item.batch_record_id
+                    }
+                }
+                if (item.wh) {
+                    if (whMap[rc] && !whMap[rc].includes(item.wh)) {
+                        whMap[rc] += `, ${item.wh}`
+                    } else {
+                        whMap[rc] = item.wh
+                    }
+                }
             }
         }
         prebatchWeightMap.value = map
+        prebatchIdMap.value = idMap
+        prebatchWhMap.value = whMap
         console.log('[Production Weights] Loaded from batch data:', map)
     } catch (e) {
         console.warn('[Production Weights] Could not fetch prebatch items, using standard recipe weights', e)
         prebatchWeightMap.value = {}
+        prebatchIdMap.value = {}
+        prebatchWhMap.value = {}
     }
 }
 
@@ -640,9 +890,15 @@ const restoreBatchFromPlc = async (batchId: string) => {
     loading.value = true
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
-        const data = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/by-batch-id/${batchId}`, {
-            headers: getAuthHeader() as Record<string, string>
-        })
+        let data = null
+        try {
+            data = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/by-batch-id/${batchId}`, {
+                headers: getAuthHeader() as Record<string, string>
+            })
+        } catch (dbErr) {
+            console.warn('[Recovery] DB fetch failed, falling back to basic info:', dbErr)
+        }
+
         if (data) {
             const rawSkuName = String(plantData.value.SKU_Name || '').replace(/\0/g, '').trim()
             let skuName = data.sku_name || '-'
@@ -663,33 +919,58 @@ const restoreBatchFromPlc = async (batchId: string) => {
                 plan_id: data.plan_id || '-', 
                 sku_id: data.sku_id || skuId, 
                 sku_name: skuName, 
-                plant: '0' + (data.plant || '1'),
+                plant: '0' + activePlantId.value,
                 batch_size: data.batch_size
             }
             selectedBatchId.value = data.batch_id
             selectedSkuId.value = data.sku_id || skuId
-            
-            await fetchSkuSteps(data.sku_id || skuId)
-            await fetchPrebatchWeights(data.batch_id)
-            
-            startConfirmed.value = true
-            batchRunning.value = true
-            
-            const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
-            const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
-            
-            if (pPhase && pStep && skuSteps.value.length > 0) {
-                const idx = skuSteps.value.findIndex(s => {
-                    const cleanSPhase = String(s.phase_number || s.phase).trim()
-                    return cleanSPhase === pPhase && Number(s.sub_step) === pStep
-                })
-                if (idx !== -1) {
-                    localStepIndex.value = idx
-                    expandedPhases.value[pPhase] = true
+        } else {
+            // Fallback if DB fetch fails
+            const rawSkuName = String(plantData.value.SKU_Name || '').replace(/\0/g, '').trim()
+            let skuName = '-'
+            let skuId = '-'
+            if (rawSkuName && rawSkuName !== '-') {
+                if (rawSkuName.includes('-')) {
+                   const parts = rawSkuName.split('-')
+                   skuId = parts[0]
+                   skuName = parts.slice(1).join('-')
+                } else {
+                   skuName = rawSkuName
                 }
             }
-            $q.notify({ type: 'info', message: `Restored active batch ${batchId} from PLC.`, position: 'top', icon: 'settings_backup_restore' })
+            const rawPlanId = String(plantData.value.Plan_ID || plantData.value.Plan_id || plantData.value.plan_id || '').replace(/\0/g, '').trim()
+            batchInfo.value = {
+                batch_id: batchId,
+                plan_id: rawPlanId && rawPlanId !== '-' && rawPlanId !== '0' ? rawPlanId : '-',
+                sku_id: skuId,
+                sku_name: skuName,
+                plant: '0' + activePlantId.value,
+                batch_size: 0
+            }
+            selectedBatchId.value = batchId
+            selectedSkuId.value = skuId
         }
+            
+        await fetchSkuSteps(selectedSkuId.value)
+        await fetchPrebatchWeights(batchId)
+        
+        startConfirmed.value = true
+        batchRunning.value = true
+        
+        const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
+        const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+        
+        if (pPhase && pStep && skuSteps.value.length > 0) {
+            const idx = skuSteps.value.findIndex(s => {
+                const cleanSPhase = String(s.phase_number || s.phase).trim()
+                return cleanSPhase === pPhase && Number(s.sub_step) === pStep
+            })
+            if (idx !== -1) {
+                localStepIndex.value = idx
+                expandedPhases.value[pPhase] = true
+            }
+        }
+        $q.notify({ type: 'info', message: `Restored active batch ${batchId} from PLC.`, position: 'top', icon: 'settings_backup_restore' })
     } catch (e) {
         console.warn('Failed to restore batch from PLC:', e)
     } finally {
@@ -697,15 +978,14 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
-watch([() => plantData.value, () => loading.value], ([newData, newLoading]) => {
-    if (!selectedBatchId.value && !newLoading && newData) {
-        const plcBatchId = String(newData.Batch_ID || newData.Batch_id || newData.batch_id || '').replace(/\0/g, '').trim()
+watch([plcActiveBatchId, () => loading.value], ([plcBatchId, newLoading]) => {
+    if (!selectedBatchId.value && !newLoading) {
         if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
             console.log('Detected active batch on PLC, restoring:', plcBatchId)
             restoreBatchFromPlc(plcBatchId)
         }
     }
-}, { deep: true, immediate: true })
+}, { immediate: true })
 
 // ── Standard Recipe Weights ──
 const standardRecipeTotal = computed(() => {
@@ -773,18 +1053,106 @@ const weightProgress = computed(() => {
 
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 
+// ── Barcode Scanning Logic ──
+const scanBuffer = ref('')
+let scanTimeout: any = null
+
+const handleScan = (scannedText: string) => {
+    const s = currentStep.value
+    if (!s) return
+
+    const aCode = String(s.action_code || '')
+    // Only apply logic if the current step action code requires scanning
+    if (aCode.startsWith('2') || aCode.startsWith('3')) {
+        const expectedIds = prebatchIdMap.value[s.re_code] || ''
+        
+        // Match the barcode: either exact match or contained inside the string of IDs
+        if (expectedIds.includes(scannedText)) {
+            $q.notify({
+                type: 'positive',
+                message: `Scan Matched: ${scannedText}. Advancing step...`,
+                position: 'top',
+                icon: 'check_circle'
+            })
+            confirmStepFromRow(s, false)
+        } else {
+            $q.notify({
+                type: 'negative',
+                message: `Invalid Barcode Scan: ${scannedText}`,
+                position: 'top',
+                caption: `Expected one of: ${expectedIds || 'None'}`,
+                icon: 'warning'
+            })
+        }
+    } else {
+        $q.notify({
+            type: 'info',
+            message: `Scanned: ${scannedText}`,
+            position: 'top',
+            caption: 'Current step does not require scanning.'
+        })
+    }
+}
+
+const handleGlobalKeydown = (e: KeyboardEvent) => {
+    // Ignore keydown if the user is typing in an input field or textarea
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+    if (e.key === 'Enter') {
+        if (scanBuffer.value.length > 3) { // Ensure it's a barcode, not an accidental Enter
+            handleScan(scanBuffer.value.trim())
+        }
+        scanBuffer.value = ''
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        scanBuffer.value += e.key
+        if (scanTimeout) clearTimeout(scanTimeout)
+        // Scanners act like fast typing. If >150ms between keystrokes, reset the buffer.
+        scanTimeout = setTimeout(() => { scanBuffer.value = '' }, 150)
+    }
+}
+
+// ── Automatic Batch Completion ──
+watch(() => plantData.value.PLC_State, async (newVal, oldVal) => {
+    // If the PLC explicitly enters state 4 (DONE)
+    if (newVal === 4 && oldVal !== 4 && batchRunning.value) {
+        batchRunning.value = false
+        $q.notify({ type: 'positive', message: '🎉 PLC REPORTS BATCH COMPLETE!', position: 'center', timeout: 5000 })
+        
+        // Sync with Backend database
+        if (batchInfo.value && batchInfo.value.id) {
+            try {
+                const remoteApiBaseUrl = appConfig.apiBaseUrl
+                await $fetch(`${remoteApiBaseUrl}/production-batches/${batchInfo.value.id}/status?status=Done`, {
+                    method: 'PATCH',
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                $q.notify({ type: 'info', message: 'Batch marked as Done in MES.', position: 'top-right' })
+                
+                // Refresh local status
+                batchInfo.value.status = 'Done'
+                batchInfo.value.done = true
+            } catch (e) {
+                console.error('[Batch Complete] Failed to sync status to MES:', e)
+            }
+        }
+    }
+})
+
 onMounted(async () => {
-    await fetchPhaseMap()
-    // Always prioritize pulling from the local edge buffer to continue process on reload
-    fetchBatchInfo().then(() => {
-        // After batch is loaded, check if we should show start confirm dialog
+    Promise.all([
+        fetchPhaseMap(),
+        fetchActionMap(),
+        fetchBatchInfo()
+    ]).finally(() => {
         checkShowConfirmDialog()
     })
+
+    window.addEventListener('keydown', handleGlobalKeydown)
 
     connect() // Shared MQTT composable connects here
     onMessage(handlePlcMessage)
     let watchdog_val = 0
-    // Publish Plan_ID, Batch_ID, SKU Name, and Phase_ID every 1 second (1000ms)
+    // Publish Plan_ID, Batch_ID, SKU Name, and Phase_ID every 2 seconds (2000ms)
     heartbeatInterval = setInterval(() => {
         // Only publish if production has started and a batch is loaded
         if (selectedBatchId.value && batchInfo.value) {
@@ -839,10 +1207,11 @@ onMounted(async () => {
             
             watchdog_val = (watchdog_val >= 100) ? 0 : watchdog_val + 1
         }
-    }, 1000)
+    }, 2000)
 })
 
 onUnmounted(() => {
+    window.removeEventListener('keydown', handleGlobalKeydown)
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     offMessage(handlePlcMessage)
     disconnect()
@@ -853,96 +1222,117 @@ onUnmounted(() => {
   <q-page class="q-pa-sm" style="height: calc(100vh - 56px); overflow: hidden;">
 
     <!-- ═══ PAGE HEADER ═══ -->
-    <div class="bg-deep-purple-9 text-white q-pa-sm rounded-borders q-mb-sm shadow-2">
-      <div class="row justify-between items-center">
-        <div class="row items-center q-gutter-sm">
+    <div class="bg-deep-purple-10 text-white q-pa-sm rounded-borders q-mb-sm shadow-2 row items-center justify-between no-wrap">
+       <!-- LEFT: Branding & Plant Selection -->
+       <div class="row items-center q-gutter-x-sm" style="flex-shrink: 0;">
           <q-btn flat round dense icon="arrow_back" color="white" @click="goBack" class="no-print" />
-          <q-icon name="precision_manufacturing" size="sm" />
-          <div class="column q-mr-md">
-            <div class="text-h6 text-weight-bolder" style="line-height: 1.2;">Mixing-Control 01</div>
-            <q-badge :color="isPlcConnected ? 'positive' : 'negative'" text-color="white" class="q-pa-xs q-px-sm text-weight-bold shadow-1 q-mt-xs" style="font-size: 11px; align-self: flex-start;">
-               <q-icon :name="isPlcConnected ? 'wifi' : 'wifi_off'" size="12px" class="q-mr-xs" />
-               PLC {{ isPlcConnected ? 'Connected' : 'Offline' }}
-               <q-linear-progress v-if="isPlcConnected" :value="watchdog / 100" color="white" style="width: 30px; margin-left: 6px; border-radius: 4px;" />
-            </q-badge>
+          <q-icon name="precision_manufacturing" size="28px" color="amber-3" />
+          <div class="text-h6 text-weight-bolder q-mr-sm" style="letter-spacing: 0.5px; line-height: 1.2;">Mixing-Control</div>
+          
+          <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
+          
+          <div class="row items-center q-gutter-x-xs">
+               <q-btn v-for="p in [1, 2, 3]" :key="p"
+                      :color="String(activePlantId) === String(p) ? 'white' : 'transparent'"
+                      :text-color="String(activePlantId) === String(p) ? 'deep-purple-10' : 'white'"
+                      :outline="String(activePlantId) !== String(p)"
+                      dense
+                      :icon-right="String(activePlantId) === String(p) ? 'check_circle' : 'open_in_new'"
+                      :label="`Plant ${p}`"
+                      class="text-weight-bold"
+                      style="height: 28px; font-size: 12px; margin: 2px; border-radius: 6px;"
+                      @click="String(activePlantId) !== String(p) ? openInNewWindow(p) : null">
+                  <q-tooltip v-if="String(activePlantId) !== String(p)">Open Plant {{ p }} in a New Window</q-tooltip>
+                  <q-tooltip v-else>Active Window</q-tooltip>
+               </q-btn>
           </div>
+       </div>
 
-          <!-- COMMAND CENTER -->
-          <div class="row q-gutter-sm items-center bg-white q-pa-xs rounded-borders shadow-1 q-mr-md">
-             <q-btn flat dense icon="play_arrow" :color="batchRunning ? 'grey' : 'positive'" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
-             <q-btn flat dense icon="pause" :color="!batchRunning ? 'grey' : 'warning'" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
+       <!-- CENTER: Controls & PLC Status -->
+       <div class="row items-center q-gutter-x-md" style="flex-shrink: 0;">
+          
+          <!-- Command Center -->
+          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-1" style="height: 36px;">
+             <q-btn flat dense icon="play_arrow" :color="batchRunning ? 'grey-4' : 'positive'" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
+             <q-btn flat dense icon="pause" :color="!batchRunning ? 'grey-4' : 'warning'" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
              <q-btn flat dense icon="skip_next" color="primary" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="stop" color="negative" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <!-- PLC Data Block Inspect button -->
              <q-btn flat dense icon="developer_board" color="indigo-7" @click="openPlcDataBlock">
                <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 9px;">{{ plcCmdLog.length }}</q-badge>
                <q-tooltip>View PLC Data Block (DB100)</q-tooltip>
              </q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <!-- Print Button -->
-             <q-btn flat dense icon="print" color="grey-8" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print">
-               <q-tooltip>Print Production PDF</q-tooltip>
-             </q-btn>
-          </div>
-
-          <!-- PLC Current Step Info -->
-          <div class="column col-2 q-gutter-y-xs">
-            <q-badge color="cyan-3" text-color="deep-purple-10" class="q-pa-xs q-px-sm text-weight-bold shadow-1" style="font-size: 14px;">
-              <q-icon name="memory" size="16px" class="q-mr-xs" />PLC State: {{ plantData?.PLC_State || 0 }}
-            </q-badge>
-            <q-badge color="green-3" text-color="green-10" class="q-pa-xs q-px-sm text-weight-bold shadow-1" style="font-size: 14px;">
-              <q-icon name="play_arrow" size="16px" class="q-mr-xs" />Step: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
-            </q-badge>
-          </div>
-        </div>
-        <div class="column q-gutter-y-xs q-mt-xs">
-          <!-- Row 1: Context -->
-          <div class="row items-center q-gutter-sm">
-            <template v-if="batchInfo">
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 90px; justify-content: center;">
-                <q-icon name="factory" size="16px" class="q-mr-xs" />{{ batchInfo.plant || '-' }}
-              </q-badge>
-              <q-badge color="white" text-color="deep-purple-9" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 220px; justify-content: flex-start;">
-                <q-icon name="assignment" size="16px" class="q-mr-xs" />Plan: {{ batchInfo.plan_id }}
-              </q-badge>
-            </template>
-            <template v-else>
-              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="plcActivePlanId && plcActivePlanId !== '-'">
-                <q-icon name="assignment" size="16px" class="q-mr-xs" />Plan: {{ plcActivePlanId }}
-              </q-badge>
-              <q-badge color="deep-purple-7" text-color="white" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px;" v-if="hasPlcActiveBatch">
-                <q-icon name="science" size="16px" class="q-mr-xs" />Batch: {{ plcActiveBatchId }}
-              </q-badge>
-              <div class="text-caption text-deep-purple-2 q-ml-sm" v-if="!hasPlcActiveBatch">No Batch Selected</div>
-            </template>
+             <q-btn flat dense icon="print" color="grey-8" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
+             <q-separator vertical class="q-mx-xs" v-if="skuStepsByPhase.length > 0" />
+             <q-btn flat dense icon="refresh" color="teal-8" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
+             <q-separator vertical class="q-mx-xs" />
+             <q-btn flat dense icon="delete_forever" color="red-9" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
           </div>
           
-          <!-- Row 2: Status -->
-          <div class="row items-center q-gutter-sm">
-            <template v-if="batchInfo">
-              <q-badge color="amber-4" text-color="grey-10" class="q-pa-xs q-px-sm text-weight-bold" style="font-size: 14px; width: 90px; justify-content: center;">
-                {{ (batchInfo.batch_size || 0).toFixed(1) }} kg
-              </q-badge>
+          <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
 
-              <q-badge
-                :color="handshakeStatus.noData ? 'grey-6' : (handshakeStatus.ok ? 'green-8' : 'red-8')"
-                text-color="white"
-                class="q-pa-xs q-px-sm text-weight-bold cursor-pointer"
-                style="font-size: 14px; width: 220px; justify-content: flex-start;"
-                @click="handshakeDialog = true"
-              >
-                <q-icon :name="handshakeStatus.noData ? 'sync_disabled' : (handshakeStatus.ok ? 'verified' : 'error')" size="16px" class="q-mr-xs" />
-                {{ handshakeStatus.noData ? 'No Readback' : (handshakeStatus.ok ? 'PLC Verified' : 'PLC Mismatch!') }}
-                <q-tooltip>Click to see PLC Handshake Details</q-tooltip>
-              </q-badge>
-            </template>
-            <template v-else>
-            </template>
+          <!-- PLC Status Tags -->
+          <div class="column justify-center q-gutter-y-xs" style="min-width: 140px;">
+             <div class="row items-center q-gutter-x-xs">
+                 <q-badge :color="isPlcConnected ? 'green-5' : 'red-5'" text-color="dark" class="text-weight-bold shadow-1" style="padding: 4px 6px; font-size: 11px;">
+                    <q-icon :name="isPlcConnected ? 'wifi' : 'wifi_off'" size="12px" class="q-mr-xs" />
+                    {{ isPlcConnected ? 'ONLINE' : 'OFFLINE' }}
+                 </q-badge>
+                 <q-badge color="cyan-3" text-color="deep-purple-10" class="text-weight-bold shadow-1" style="padding: 4px 6px; font-size: 11px;">
+                    State: {{ plantData?.PLC_State || 0 }}
+                 </q-badge>
+             </div>
+             <q-badge color="green-3" text-color="green-10" class="text-weight-bold shadow-1 ellipsis" style="padding: 4px 6px; font-size: 11px; max-width: 220px;">
+                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />Step: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
+             </q-badge>
           </div>
-        </div>
-      </div>
+       </div>
+
+       <!-- RIGHT: Batch Info -->
+       <div class="row items-center q-gutter-x-sm" style="flex-shrink: 1; justify-content: flex-end; min-width: 280px;">
+          <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
+          <template v-if="batchInfo">
+             <div class="column q-gutter-y-xs text-right">
+                <div class="row justify-end q-gutter-x-xs">
+                   <q-badge color="white" text-color="deep-purple-9" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;">
+                      <q-icon name="factory" size="12px" class="q-mr-xs" />{{ batchInfo.plant || '-' }}
+                   </q-badge>
+                   <q-badge color="white" text-color="deep-purple-9" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px; max-width: 180px;">
+                      <q-icon name="assignment" size="12px" class="q-mr-xs" />Plan: {{ batchInfo.plan_id }}
+                   </q-badge>
+                </div>
+                <div class="row justify-end q-gutter-x-xs">
+                   <q-badge color="amber-4" text-color="grey-10" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;">
+                      {{ (batchInfo.batch_size || 0).toFixed(1) }} kg
+                   </q-badge>
+                   <q-badge
+                     :color="handshakeStatus.noData ? 'grey-6' : (handshakeStatus.ok ? 'green-8' : 'red-8')"
+                     text-color="white"
+                     class="text-weight-bold cursor-pointer"
+                     style="padding: 4px 6px; font-size: 12px;"
+                     @click="handshakeDialog = true"
+                   >
+                     <q-icon :name="handshakeStatus.noData ? 'sync_disabled' : (handshakeStatus.ok ? 'verified' : 'error')" size="12px" class="q-mr-xs" />
+                     {{ handshakeStatus.noData ? 'No Readback' : (handshakeStatus.ok ? 'PLC Verified' : 'PLC Mismatch!') }}
+                     <q-tooltip>Click to see PLC Handshake Details</q-tooltip>
+                   </q-badge>
+                </div>
+             </div>
+          </template>
+          <template v-else>
+             <div class="column q-gutter-y-xs text-right">
+                <q-badge color="deep-purple-7" text-color="white" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;" v-if="plcActivePlanId && plcActivePlanId !== '-'">
+                  <q-icon name="assignment" size="12px" class="q-mr-xs" />Plan: {{ plcActivePlanId }}
+                </q-badge>
+                <q-badge color="deep-purple-7" text-color="white" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;" v-if="hasPlcActiveBatch">
+                  <q-icon name="science" size="12px" class="q-mr-xs" />Batch: {{ plcActiveBatchId }}
+                </q-badge>
+                <div class="text-caption text-deep-purple-2 q-ml-sm" v-if="!hasPlcActiveBatch" style="font-size: 13px;">No Batch Selected</div>
+             </div>
+          </template>
+       </div>
     </div>
 
     <!-- ═══ PAGE LAYOUT ROW ═══ -->
@@ -1079,6 +1469,8 @@ onUnmounted(() => {
                   <th class="text-left text-weight-bold" style="width: 80px;">Action</th>
                   <th class="text-left text-weight-bold">Description</th>
                   <th class="text-left text-weight-bold">RE Code</th>
+                  <th class="text-left text-weight-bold" style="width: 140px;">Prebatch ID</th>
+                  <th class="text-center text-weight-bold">WH</th>
                   <th class="text-left text-weight-bold">Dest</th>
                   <th class="text-right text-weight-bold">Require<br><span style="font-size:14px;color:#999;">act/req</span></th>
                   <th class="text-right text-weight-bold">Temp<br><span style="font-size:14px;color:#999;">act/req</span></th>
@@ -1094,7 +1486,7 @@ onUnmounted(() => {
               <tbody>
                 <template v-for="phaseGroup in skuStepsByPhase" :key="phaseGroup.phase">
                   <tr class="bg-teal-1 cursor-pointer" @click="togglePhase(phaseGroup.phase)">
-                    <td colspan="15" class="text-weight-bold text-teal-10" style="padding: 6px 12px; font-size: 14px; user-select: none;">
+                    <td colspan="17" class="text-weight-bold text-teal-10" style="padding: 6px 12px; font-size: 14px; user-select: none;">
                       <q-icon :name="isPhaseExpanded(phaseGroup.phase) ? 'expand_more' : 'chevron_right'" size="18px" class="q-mr-xs" />
                       Process Phase {{ phaseGroup.phase }}
                       <span v-if="phaseGroup.phase_id" class="text-grey-7 q-ml-sm" style="font-size: 14px;">({{ phaseGroup.phase_id }})</span>
@@ -1106,15 +1498,30 @@ onUnmounted(() => {
                       :class="['step-row', { 'active-step': currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) }]">
                       <td class="text-center" :class="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) ? 'text-weight-bolder' : 'text-grey-6'">{{ phaseGroup.phase }}</td>
                       <td class="text-center text-weight-bold" style="color: #424242;">{{ step.sub_step }}</td>
-                      <td class="text-weight-bold">{{ step.action_code || '-' }}</td>
-                      <td>{{ step.action_description || step.action || '-' }}</td>
+                      <td class="text-weight-bold">
+                        <div class="row items-center no-wrap">
+                          <q-icon v-if="String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3')" 
+                                  name="qr_code_scanner" 
+                                  size="16px" 
+                                  color="deep-purple-8" 
+                                  class="q-mr-xs" 
+                                  title="Scan Required" />
+                          {{ step.action_code || '-' }}
+                        </div>
+                      </td>
+                      <td>{{ dbActionMap[step.action_code] || step.action_description || step.action || '-' }}</td>
                       <td class="text-weight-bold text-indigo">{{ step.re_code || '-' }}</td>
+                      <td class="text-caption text-grey-8" style="font-family: monospace;">{{ prebatchIdMap[step.re_code] || '-' }}</td>
+                      <td class="text-center">
+                        <q-badge v-if="prebatchWhMap[step.re_code]" :color="prebatchWhMap[step.re_code] === 'FH' ? 'amber-9' : prebatchWhMap[step.re_code] === 'SPP' ? 'blue-8' : 'green-8'">{{ prebatchWhMap[step.re_code] }}</q-badge>
+                        <span v-else>-</span>
+                      </td>
                       <td>{{ step.destination || '-' }}</td>
                       <!-- Require / Volume -->
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
                           <!-- LIVE: Hopper actual vs required -->
-                          <span class="act-num" :class="productionRequire(step) && Math.abs(actualHopperWeight - productionRequire(step)) <= (productionRequire(step) * 0.02) ? 'text-green-8' : 'text-deep-orange-9'">{{ actualHopperWeight !== 0 ? Number(actualHopperWeight).toFixed(2) : '-' }}</span>
+                          <span class="act-num" :class="productionRequire(step) && isWeightInTolerance(step, actualHopperWeight) ? 'text-green-8' : 'text-deep-orange-9'">{{ actualHopperWeight !== 0 ? Number(actualHopperWeight).toFixed(2) : '-' }}</span>
                           <span class="slash">/</span>
                           <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
                         </template>
@@ -1201,6 +1608,12 @@ onUnmounted(() => {
                                @click.stop="confirmStepFromRow(step)"
                                >
                                <q-tooltip>Confirm & Next Step (or Start Timer)</q-tooltip>
+                        </q-btn>
+                        <q-btn v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) && (String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3'))"
+                               dense flat color="orange-9" icon="warning"
+                               @click.stop="promptManualPass(step)"
+                               >
+                               <q-tooltip>Manual Override (Provide Reason)</q-tooltip>
                         </q-btn>
                       </td>
                     </tr>
@@ -1547,6 +1960,59 @@ onUnmounted(() => {
         <q-card-actions align="right" class="q-pa-md">
           <q-btn flat label="Close" color="grey-7" v-close-popup />
         </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ═══ MANUAL PASS DIALOG ═══ -->
+    <q-dialog v-model="manualPassDialog" persistent>
+      <q-card style="min-width: 400px">
+        <q-card-section class="bg-orange-8 text-white row items-center">
+          <q-icon name="warning" size="24px" class="q-mr-sm" />
+          <div class="text-h6">Manual Step Override</div>
+        </q-card-section>
+
+        <q-card-section class="q-pt-md">
+          <div class="text-body1 q-mb-md">
+            You are bypassing the barcode verification for Step <strong>{{ manualPassStepTarget?.sub_step }}</strong>.
+          </div>
+          <q-input
+            v-model="manualPassReason"
+            filled
+            type="textarea"
+            label="Reason for Override *"
+            hint="e.g. Barcode label missing, scanner broken"
+            :rules="[val => !!val || 'Reason is required']"
+            autofocus
+          />
+        </q-card-section>
+
+        <q-card-actions align="right" class="text-primary">
+          <q-btn flat label="Cancel" v-close-popup color="grey-8" />
+          <q-btn flat label="Confirm Override" color="orange-9" text-color="white" class="bg-orange-1 q-px-sm" @click="submitManualPass" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <!-- ═══ PLC ALARM OVERLAY ═══ -->
+    <q-dialog v-model="isPlcInError" maximized persistent transition-show="fade" transition-hide="fade">
+      <q-card class="bg-red-10 text-white flex flex-center column">
+        <q-icon name="report" size="120px" class="q-mb-md" />
+        <div class="text-h2 text-weight-bolder q-mb-sm text-center" style="letter-spacing: 2px;">CRITICAL PLC ALARM</div>
+        <div class="text-h5 text-center q-mb-xl text-red-2" style="max-width: 800px; line-height: 1.4;">
+          The PLC has encountered a severe fault or emergency stop.<br>
+          All software operations are halted until the physical fault is cleared on the shop floor.
+        </div>
+        
+        <div class="bg-red-9 q-pa-xl rounded-borders text-center shadow-10" style="border: 2px solid #ff5252; min-width: 500px;">
+          <div class="text-overline text-red-2" style="font-size: 16px;">Error State Code</div>
+          <div class="text-h3 text-weight-bold q-mb-md">{{ plantData?.PLC_State }}</div>
+          
+          <div v-if="plantData?.Error_Code">
+             <q-separator dark class="q-my-md" style="opacity: 0.3;" />
+             <div class="text-overline text-red-2" style="font-size: 16px;">Fault Code</div>
+             <div class="text-h3 text-weight-bold">{{ plantData?.Error_Code }}</div>
+          </div>
+        </div>
       </q-card>
     </q-dialog>
 

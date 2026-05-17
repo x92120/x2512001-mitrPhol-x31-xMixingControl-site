@@ -111,13 +111,14 @@ const fetchBatchInfo = async () => {
         const qPlanId = route.query.plan_id as string
         const qSkuName = route.query.sku_name as string
         const qBatchSize = parseFloat(route.query.batch_size as string) || 0
+        const qPlant = (route.query.plant as string)?.replace(/\D/g, '') || '1'
         if (qBatchId && qSkuId) {
             batchInfo.value = { 
                 batch_id: qBatchId,
                 plan_id: qPlanId || '-', 
                 sku_id: qSkuId, 
                 sku_name: qSkuName || '-', 
-                plant: '01',
+                plant: 'Mixing ' + qPlant,
                 batch_size: qBatchSize
             }
             selectedBatchId.value = qBatchId
@@ -497,7 +498,8 @@ const downloadRecipeToPlc = async (batchId: string) => {
         downloadProgress.value = 10
         
         // Stage 2: TRANSFER + Stage 3: VERIFY
-        const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/send-recipe/${batchId}`, {
+        const plantId = activePlantId.value || '1'
+        const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/send-recipe/${batchId}?plant_id=${Number(plantId)}`, {
             method: 'POST',
             headers: getAuthHeader() as Record<string, string>
         })
@@ -848,15 +850,18 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
-watch(() => plantData.value, (newData) => {
+const plcActiveBatchId = computed(() => {
+    return String(plantData.value.Batch_ID || plantData.value.Batch_id || plantData.value.batch_id || '').replace(/\0/g, '').trim()
+})
+
+watch(plcActiveBatchId, (newBatchId) => {
     if (!selectedBatchId.value && !loading.value) {
-        const plcBatchId = String(newData.Batch_ID || newData.Batch_id || newData.batch_id || '').replace(/\0/g, '').trim()
-        if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
-            console.log('Detected active batch on PLC, restoring:', plcBatchId)
-            restoreBatchFromPlc(plcBatchId)
+        if (newBatchId && newBatchId !== '-' && newBatchId !== '0') {
+            console.log('Detected active batch on PLC, restoring:', newBatchId)
+            restoreBatchFromPlc(newBatchId)
         }
     }
-}, { deep: true })
+})
 
 // ── Standard Recipe Weights ──
 const standardRecipeTotal = computed(() => {
@@ -925,17 +930,19 @@ const weightProgress = computed(() => {
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
-    await fetchPhaseMap()
-    // Always prioritize pulling from the local edge buffer to continue process on reload
-    fetchBatchInfo().then(() => {
-        // After batch is loaded, check if we should show start confirm dialog
-        checkShowConfirmDialog()
-    })
+    // Fetch phase map and batch info in parallel (not sequential!)
+    const [_, __] = await Promise.all([
+        fetchPhaseMap(),
+        fetchBatchInfo().then(() => {
+            // After batch is loaded, check if we should show start confirm dialog
+            checkShowConfirmDialog()
+        })
+    ])
 
     connect() // Shared MQTT composable connects here
     onMessage(handlePlcMessage)
     let watchdog_val = 0
-    // Publish Plan_ID, Batch_ID, SKU Name, and Phase_ID every 1 second (1000ms)
+    // Publish Plan_ID, Batch_ID, SKU Name, and Phase_ID every 2 seconds (2000ms)
     heartbeatInterval = setInterval(() => {
         // Only publish if production has started and a batch is loaded
         if (selectedBatchId.value && batchInfo.value) {
@@ -990,7 +997,7 @@ onMounted(async () => {
             
             watchdog_val = (watchdog_val >= 100) ? 0 : watchdog_val + 1
         }
-    }, 1000)
+    }, 2000)
 })
 
 onUnmounted(() => {

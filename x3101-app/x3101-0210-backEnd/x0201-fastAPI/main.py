@@ -78,19 +78,10 @@ app = FastAPI(
 )
 
 # CORS Configuration
-allowed_origins = [
-    "http://localhost:3023",
-    "http://127.0.0.1:3023",
-    "http://0.0.0.0:3023",
-    "http://localhost:3000",
-    "http://localhost:3030",
-    "http://127.0.0.1:3030",
-    "http://192.168.121.23:3030",
-]
-
+# Allow any HTTP/HTTPS origin (required for supporting custom dev ports like 3031 with allow_credentials=True)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origin_regex="https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

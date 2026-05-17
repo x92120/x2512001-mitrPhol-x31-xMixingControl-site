@@ -4,7 +4,7 @@ PLC Router — Recipe Data for S7-1200
 Endpoints to build and serve PLC recipe payloads for DB 1780.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 from database import get_db
 import models
@@ -106,95 +106,103 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/send-recipe/{batch_id}")
-def send_recipe_to_plc(batch_id: str, db: Session = Depends(get_db)):
+def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(get_db)):
     """
-    Send recipe to PLC via the 4-stage transfer protocol:
-    1. PREPARE — Lock recipe slot (RecipeReady=FALSE)
-    2. TRANSFER — Chunk data via Node-RED S7 writes
-    3. VERIFY — CRC checksum comparison
-    4. ACTIVATE — Set RecipeReady=TRUE only after CRC match
-
-    Currently returns the payload + verification data for the frontend
-    to display progress and confirm integrity.
+    Send recipe to the real Siemens S7-1200 PLC directly via DB1511.
     """
-    payload = get_recipe_for_plc(batch_id, db)
+    import re
+    # 1. Fetch the batch and plan in a single query
+    result = db.query(models.ProductionBatch, models.ProductionPlan).join(
+        models.ProductionPlan, models.ProductionBatch.plan_id == models.ProductionPlan.id
+    ).filter(
+        models.ProductionBatch.batch_id == batch_id
+    ).first()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' or associated Plan not found")
+        
+    batch, plan = result
 
-    # Build phase-by-phase transfer progress for frontend
-    phases_summary = []
-    for proc in payload["Processes"]:
-        if proc["ProcessActive"]:
-            active_steps = [s for s in proc["Steps"] if s.get("StepActive")]
-            phases_summary.append({
-                "processNo": proc["ProcessNo"],
-                "stepCount": proc["StepCount"],
-                "steps": [{
-                    "stepNo": s["StepNo"],
-                    "actionCode": s["ActionCode"],
-                    "reCode": s["ReCode"],
-                    "require": s["Require"],
-                    "temperature": s["Temperature"],
-                } for s in active_steps]
-            })
+    # 2. Fetch SKU steps
+    sku_steps = db.query(models.SkuStep).filter(
+        models.SkuStep.sku_id == plan.sku_id
+    ).all()
 
-    # Spot-check values for quick verification
-    first_step = None
-    last_step = None
-    for proc in payload["Processes"]:
-        if proc["ProcessActive"]:
-            for s in proc["Steps"]:
-                if s.get("StepActive"):
-                    if first_step is None:
-                        first_step = {
-                            "processNo": proc["ProcessNo"],
-                            "stepNo": s["StepNo"],
-                            "actionCode": s["ActionCode"],
-                        }
-                    last_step = {
-                        "processNo": proc["ProcessNo"],
-                        "stepNo": s["StepNo"],
-                        "actionCode": s["ActionCode"],
-                        "stepTime": s["StepTime"],
-                    }
+    if not sku_steps:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No SKU steps found for SKU '{plan.sku_id}'"
+        )
 
-    crc = payload["Header"]["CRC"]
-    process_count = payload["Header"]["ProcessCount"]
-    total_steps = payload["Header"]["TotalSteps"]
+    # 3. Sort steps by phase number then sub_step to align with array seq
+    sorted_steps = sorted(sku_steps, key=lambda s: (
+        int(re.sub(r'^[a-zA-Z]+', '', str(s.phase_number or '0').strip()) or 0),
+        s.sub_step or 0
+    ))
 
-    # Estimated transfer: ~15ms per S7 write, ~10 writes per step + header
-    estimated_writes = (total_steps * 10) + 20  # steps + header fields
-    estimated_time_ms = estimated_writes * 15
+    # Convert to UDT layout steps
+    step_dicts = []
+    for idx, s in enumerate(sorted_steps):
+        phase_no_val = int(re.sub(r'^[a-zA-Z]+', '', str(s.phase_number or '0').strip()) or 0)
+        step_dicts.append({
+            "seq": idx + 1,
+            "phase_no": phase_no_val,
+            "sub_step": s.sub_step or 0,
+            "action_code": str(s.action_code or s.action or "")[:10],
+            "phase_id": str(s.phase_id or "")[:10],
+            "re_code": str(s.re_code or "")[:20],
+            "target_weight": float(s.require or 0.0),
+            "temp_sp": float(s.temperature or 0.0),
+            "temp_low": float(s.temp_low or 0.0),
+            "temp_high": float(s.temp_high or 0.0),
+            "agitator_sp": float(s.agitator_rpm or 0.0),
+            "highshear_sp": float(s.high_shear_rpm or 0.0),
+            "step_time": int(s.step_time or 0)
+        })
 
-    logger.info(
-        f"Recipe prepared for PLC: batch={batch_id}, "
-        f"processes={process_count}, steps={total_steps}, "
-        f"CRC=0x{crc:08X}, est_writes={estimated_writes}"
-    )
-
-    # When Node-RED is connected, POST to Node-RED HTTP endpoint here
-    # import httpx
-    # import os
-    # nodered_url = os.environ.get("NODERED_URL", "http://localhost:1880")
-    # response = httpx.post(f"{nodered_url}/api/plc/write-recipe", json=payload)
+    # 4. Write to the real hardware PLC using snap7 direct write
+    try:
+        from plc_service import write_full_recipe_to_plc, read_recipe_from_plc, get_db_number
+        
+        db_full_recipe = get_db_number('full_recipe', plant_id)
+        logger.info(f"Writing recipe to real PLC (DB{db_full_recipe}) for batch {batch_id} (plant {plant_id})...")
+        success = write_full_recipe_to_plc(
+            batch_id=batch.batch_id,
+            sku_id=plan.sku_id,
+            steps=step_dicts,
+            plant_id=plant_id
+        )
+        if not success:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Real hardware communication failed: snap7 write to DB{db_full_recipe} returned False (check PLC connection)"
+            )
+            
+        # 5. Read back for verification
+        verify_data = read_recipe_from_plc(db_full_recipe)
+        if not verify_data:
+            raise HTTPException(status_code=502, detail=f"Failed to read back from DB{db_full_recipe} for verification.")
+            
+        if verify_data["batch_id"] != batch.batch_id or verify_data["total_steps"] != len(step_dicts):
+            raise HTTPException(status_code=502, detail=f"Verification mismatch! Expected {len(step_dicts)} steps for {batch.batch_id}, got {verify_data['total_steps']} steps for {verify_data['batch_id']}.")
+            
+        logger.info(f"Successfully wrote and verified recipe to real PLC for batch {batch_id}!")
+    except Exception as e:
+        logger.error(f"Failed to write recipe to real PLC: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Real hardware communication failed: snap7 error: {str(e)}"
+        )
 
     return {
-        "status": "prepared",
-        "message": f"Recipe ready for batch {batch_id}",
-        "transfer": {
-            "processCount": process_count,
-            "totalSteps": total_steps,
-            "estimatedWrites": estimated_writes,
-            "estimatedTimeMs": estimated_time_ms,
-            "phases": phases_summary,
-        },
+        "status": "success",
+        "message": f"Recipe successfully written and verified on real PLC for batch {batch_id}",
         "verification": {
-            "crc": crc,
-            "crcHex": f"0x{crc:08X}",
-            "firstStep": first_step,
-            "lastStep": last_step,
-            "processCount": process_count,
-            "totalSteps": total_steps,
-        },
-        "recipe": payload,
+            "batch_id": batch.batch_id,
+            "sku_id": plan.sku_id,
+            "total_steps": len(step_dicts),
+            "verified": True
+        }
     }
 
 
@@ -202,12 +210,12 @@ def send_recipe_to_plc(batch_id: str, db: Session = Depends(get_db)):
 # DB100: STEP COMMAND (App ➔ PLC)
 # =============================================================================
 
-from plc_interface import DB100StepCommand, DB200Telemetry
+from plc_interface import DB1510StepCommand, DB1512Telemetry
 
 @router.post("/step-command")
-def send_step_command(command: DB100StepCommand, db: Session = Depends(get_db)):
+def send_step_command(command: DB1510StepCommand, db: Session = Depends(get_db)):
     """
-    Push a new step command/setpoint to the PLC (DB100).
+    Push a new step command/setpoint to the PLC (DB1510).
     In modern architecture, this often publishes to MQTT or writes via S7.
     """
     # 1. (Optional) Log to database for traceability
@@ -229,12 +237,12 @@ def send_step_command(command: DB100StepCommand, db: Session = Depends(get_db)):
 # =============================================================================
 
 # Global storage for last known telemetry (simulating live state)
-_last_telemetry = DB200Telemetry()
+_last_telemetry = DB1512Telemetry()
 
-@router.get("/telemetry", response_model=DB200Telemetry)
+@router.get("/telemetry", response_model=DB1512Telemetry)
 def get_plc_telemetry():
     """
-    Get the latest telemetry data from the PLC (DB200).
+    Get the latest telemetry data from the PLC (DB1512).
     Values come from MQTT bridge or background S7 polling.
     """
     global _last_telemetry
@@ -243,11 +251,53 @@ def get_plc_telemetry():
     return _last_telemetry
 
 @router.post("/telemetry/update")
-def update_plc_telemetry(data: DB200Telemetry):
+def update_plc_telemetry(data: DB1512Telemetry):
     """
-    Endpoint for MQTT-bridge or worker to push latest PLC state (DB200).
+    Endpoint for MQTT-bridge or worker to push latest PLC state (DB1512).
     """
     global _last_telemetry
     _last_telemetry = data
     _last_telemetry.Last_Update = datetime.now()
     return {"status": "updated"}
+
+from plc_service import read_recipe_from_plc
+
+@router.get("/plant/{plant_id}/recipe-status")
+def get_plant_recipe_status(plant_id: str):
+    """
+    Read the Recipe (Target) and Actual Results directly from the PLC via snap7 based on plant_id.
+    """
+    try:
+        from plc_service import get_db_number
+        recipe_db = get_db_number('full_recipe', int(plant_id))
+        actual_db = get_db_number('actual', int(plant_id))
+        
+        target = read_recipe_from_plc(recipe_db)
+        actual = read_recipe_from_plc(actual_db)
+        
+        return {
+            "success": True,
+            "target": target,
+            "actual": actual
+        }
+    except Exception as e:
+        logger.error(f"Failed to read recipe status from PLC: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/plant/{plant_id}/clear-recipe")
+def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")):
+    """
+    Clear the recipe in the PLC by writing an empty array (zeros), and reset Batch ID.
+    """
+    from plc_service import write_full_recipe_to_plc
+    success = write_full_recipe_to_plc(
+        batch_id="-",
+        sku_id="-",
+        steps=[],
+        plant_id=plant_id
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to clear recipe in PLC DB15{plant_id}1")
+
+    return {"status": "success", "message": f"Recipe memory cleared for Plant {plant_id}"}

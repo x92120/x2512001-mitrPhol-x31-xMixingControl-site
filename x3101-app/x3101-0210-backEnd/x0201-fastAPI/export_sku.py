@@ -29,7 +29,7 @@ def main():
             setup_step as "Setup Step",
             status as "Status"
         FROM v_sku_complete
-        ORDER BY sku_id, CAST(phase_number AS INTEGER), sub_step
+        ORDER BY sku_id, CAST(phase_number AS UNSIGNED), sub_step
         ;
     """)
     
@@ -38,7 +38,7 @@ def main():
         engine = db.get_bind()
         df = pd.read_sql_query(query, engine)
         
-        output_file = r"e:\x01-git\x2512001-MitrPhol\x23\All_SKU_Export.xlsx"
+        output_file = "sku_recipes.xlsx"
         
         # Write to excel
         df.to_excel(output_file, index=False)
@@ -46,7 +46,7 @@ def main():
     except Exception as e:
         print(f"Error executing pandas export: {e}")
         # fallback to CSV if openpyxl fails, just in case
-        output_csv = r"e:\x01-git\x2512001-MitrPhol\x23\All_SKU_Export.csv"
+        output_csv = "sku_recipes.csv"
         try:
             df.to_csv(output_csv, index=False)
             print(f"Fallback SUCCESS: Exported to CSV instead at {output_csv}")

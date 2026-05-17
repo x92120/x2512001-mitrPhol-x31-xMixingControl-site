@@ -36,7 +36,7 @@ const fetchDashboard = async () => {
   const [skus, intakes, batches, plansResp] = await Promise.all([
     apiFetch('/skus/'),
     apiFetch('/ingredient-intake-lists/'),
-    apiFetch('/production-batches/'),
+    apiFetch('/production-batches/summary'),
     apiFetch('/production-plans/?status=all')
   ])
   const plans = plansResp?.plans || plansResp || []

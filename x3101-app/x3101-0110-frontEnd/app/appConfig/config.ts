@@ -4,12 +4,12 @@
  */
 
 export const appConfig = {
-  // Base URL for API calls - always port 8023 on the same host the browser is using
+  // Base URL for API calls - port 8031 on the same host the browser is using
   get apiBaseUrl(): string {
     if (typeof window !== 'undefined') {
-        return `${window.location.protocol}//${window.location.hostname}:8023`
+        return `${window.location.protocol}//${window.location.hostname}:8031`
     }
-    return 'http://localhost:8023'
+    return 'http://localhost:8031'
   }
 }
 

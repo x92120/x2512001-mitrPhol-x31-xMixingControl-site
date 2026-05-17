@@ -9,13 +9,41 @@
 
 ```pascal
 TYPE "type_StepCommand"
-TITLE = Step Command from Node-RED/HMI
-VERSION : 0.1
+TITLE = Step Command from Backend/HMI (v2)
+VERSION : 0.2
    STRUCT
-      Batch_ID      : String[20];   // รหัส Batch (เช่น P260411-02-01)
-      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
-      Step_No       : Int;          // ลำดับ Step ปัจจุบัน
+      Watch_Doc     : Int;          // Watchdog counter
+      Plan_ID       : String[20];   // รหัส Plan (เช่น P260411-02-01)
+      Batch_ID      : String[20];   // รหัส Batch
+      SKU_Name      : String[30];   // ชื่อ SKU
       Phase_ID      : String[10];   // รหัส Phase (เช่น A1010)
+      Step_No       : Int;          // ลำดับ Step ปัจจุบัน
+      Step_Time     : Int;          // เวลาทำงาน (วินาที)
+      Step_Status   : Int;          // 0=Pending, 1=Active, 2=Complete
+      Material_ID   : String[20];   // รหัสวัตถุดิบ SAP
+      Re_Code       : String[20];   // รหัสผสม/Ingredient
+      Target_Weight : Real;         // น้ำหนักที่ต้องการ (kg)
+      Temp_SP       : Real;         // Setpoint อุณหภูมิ (°C)
+      Temp_Low      : Real;         // Limit ต่ำสุด (°C)
+      Temp_High     : Real;         // Limit สูงสุด (°C)
+      Agitator_SP   : Real;         // ความเร็วใบกวน (RPM)
+      HighShear_SP  : Real;         // ความเร็ว High Shear (RPM)
+      PH_Target     : Real;         // ค่า pH เป้าหมาย
+      Brix_Target   : Real;         // ค่า Brix เป้าหมาย
+      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
+      Cmd_NewStep   : Bool;         // Trigger bit จากระบบสั่งงานข้างนอก
+   END_STRUCT;
+END_TYPE
+
+TYPE "type_RecipeStep"
+TITLE = Individual Step Definition (For Array)
+VERSION : 0.2
+   STRUCT
+      Seq           : Int;          // ลำดับที่ในอาร์เรย์ (1, 2, 3, ... 128)
+      Phase_No      : Int;          // เลข Phase เช่น 10, 20, 30
+      Sub_Step      : Int;          // เลข Step ภายใน Phase เช่น 10, 20, 30
+      Action_Code   : String[10];   // รหัส Action (เช่น x10010, x20010)
+      Phase_ID      : String[10];   // รหัส Phase (เช่น p0010, p0020)
       Re_Code       : String[20];   // รหัสผสม/Ingredient
       Target_Weight : Real;         // น้ำหนักที่ต้องการ (kg)
       Temp_SP       : Real;         // Setpoint อุณหภูมิ (°C)
@@ -24,7 +52,28 @@ VERSION : 0.1
       Agitator_SP   : Real;         // ความเร็วใบกวน (RPM)
       HighShear_SP  : Real;         // ความเร็ว High Shear (RPM)
       Step_Time     : Int;          // เวลาทำงาน (วินาที)
-      Cmd_NewStep   : Bool;         // Trigger bit จากระบบสั่งงานข้างนอก
+   END_STRUCT;
+END_TYPE
+
+// ตัวอย่าง Flat Sequence:
+// Seq=1  Phase_No=10 Sub_Step=10  Action_Code="x10010"  (P10 Step 10)
+// Seq=2  Phase_No=10 Sub_Step=20  Action_Code="x10020"  (P10 Step 20)
+// Seq=3  Phase_No=20 Sub_Step=10  Action_Code="x20010"  (P20 Step 10)
+// Seq=4  Phase_No=20 Sub_Step=20  Action_Code="x20020"  (P20 Step 20)
+// Seq=5  Phase_No=20 Sub_Step=30  Action_Code="x20030"  (P20 Step 30)
+// Seq=6  Phase_No=20 Sub_Step=40  Action_Code="x20040"  (P20 Step 40)
+
+TYPE "type_FullRecipe"
+TITLE = Full Recipe Command (All Steps) from Node-RED/HMI
+VERSION : 0.2
+   STRUCT
+      Batch_ID      : String[20];   // รหัส Batch
+      SKU_ID        : String[20];   // รหัส SKU
+      HMI_Command   : Int;          // 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
+      Total_Steps   : Int;          // จำนวน Step ทั้งหมดใน Recipe นี้ (1-128)
+      Active_Step   : Int;          // Pointer ชี้ว่าตอนนี้ต้องทำ Seq ไหน (1-128)
+      Cmd_LoadRecipe: Bool;         // Trigger โหลด Recipe ใหม่
+      Steps         : Array[1..128] of "type_RecipeStep"; // รองรับสูงสุด 128 Steps
    END_STRUCT;
 END_TYPE
 
@@ -65,7 +114,7 @@ END_TYPE
 
 ```pascal
 DATA_BLOCK "DB_STEP_CMD"
-TITLE = DB100 : Command From HMI
+TITLE = DB1510 : Command From HMI
 { S7_Optimized_Access := 'FALSE' } // ตั้งเป็น Standard access (เผื่อ Node-RED ต่อแบบ Absolute Address)
 AUTHOR : 'AW'
 FAMILY : 'MIX'
@@ -75,8 +124,19 @@ NON_RETAIN
 BEGIN
 END_DATA_BLOCK
 
+DATA_BLOCK "DB_FULL_RECIPE"
+TITLE = DB1511 : Full Recipe Array From HMI
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.1
+NON_RETAIN
+   "type_FullRecipe"
+BEGIN
+END_DATA_BLOCK
+
 DATA_BLOCK "DB_TELEMETRY"
-TITLE = DB200 : Telemetry To HMI
+TITLE = DB1512 : Telemetry To HMI
 { S7_Optimized_Access := 'FALSE' }
 AUTHOR : 'AW'
 FAMILY : 'MIX'
@@ -87,7 +147,7 @@ BEGIN
 END_DATA_BLOCK
 
 DATA_BLOCK "DB_HANDSHAKE"
-TITLE = DB300 : Step Confirmation To HMI
+TITLE = DB1513 : Step Confirmation To HMI
 { S7_Optimized_Access := 'FALSE' }
 AUTHOR : 'AW'
 FAMILY : 'MIX'
@@ -190,6 +250,6 @@ END_FUNCTION_BLOCK
 
 ## สรุปการตั้งค่าบน TIA Portal:
 1. สร้าง UDT 3 ตัวก่อน
-2. สร้าง Data Block (`DB100`, `DB200`, `DB300`) และคลุม UDT
-3. **ข้อควรระวังสำคัญ:** ถ้าใช้ Node-RED อ่านผ่าน `s7-comm` หรือโปรโตคอล S7 ควรกดคลิกขวาที่ Data block -> `Properties` -> เอาสัญลักษณ์ติกถูกหน้า `Optimized block access` ออก เพื่อให้ Address มีค่าพิกัดแน่นอน (เช่น `DB100.DBW0`) Node-RED จะเห็นค่าถูกต้อง
+2. สร้าง Data Block (`DB1510`, `DB1512`, `DB1513`) และคลุม UDT
+3. **ข้อควรระวังสำคัญ:** ถ้าใช้ Node-RED อ่านผ่าน `s7-comm` หรือโปรโตคอล S7 ควรกดคลิกขวาที่ Data block -> `Properties` -> เอาสัญลักษณ์ติกถูกหน้า `Optimized block access` ออก เพื่อให้ Address มีค่าพิกัดแน่นอน (เช่น `DB1510.DBW0`) Node-RED จะเห็นค่าถูกต้อง
 4. ให้ฝังตัวแปรเพิ่มใน `OB1` หรือ Time Interrupt OB (ทุก 1 วิ) ไว้คอยบวก `DB_TELEMETRY.Watchdog` และ `DB_TELEMETRY.Step_Timer`
