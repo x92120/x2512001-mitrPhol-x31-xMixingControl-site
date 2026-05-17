@@ -932,7 +932,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
             if (rawSkuName && rawSkuName !== '-') {
                 if (rawSkuName.includes('-')) {
                    const parts = rawSkuName.split('-')
-                   skuId = parts[0]
+                   skuId = parts[0] || '-'
                    skuName = parts.slice(1).join('-')
                 } else {
                    skuName = rawSkuName
@@ -951,7 +951,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
             selectedSkuId.value = skuId
         }
             
-        await fetchSkuSteps(selectedSkuId.value)
+        await fetchSkuSteps(selectedSkuId.value || '-')
         await fetchPrebatchWeights(batchId)
         
         startConfirmed.value = true

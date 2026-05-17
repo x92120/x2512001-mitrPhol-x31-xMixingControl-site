@@ -745,7 +745,8 @@ const handleScannerInput = (e: KeyboardEvent) => {
 onMounted(() => {
     window.addEventListener('keypress', handleScannerInput)
     if (process.client) {
-        setInterval(checkMqttConnection, 10000)
+        // Reconnect MQTT if disconnected
+        setInterval(() => { if (!plcConnectedGlobal.value) connect() }, 10000)
         // Auto-connect if plantsData not present
         if (!plcConnectedGlobal.value) {
             console.log('[App] Auto-connecting MQTT on mount...')

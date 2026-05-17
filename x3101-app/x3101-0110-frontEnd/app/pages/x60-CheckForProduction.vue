@@ -2282,10 +2282,10 @@ onUnmounted(() => {
                           :class="{ 'bg-green-1': pb.recheck_status === 1, 'bg-red-1': pb.recheck_status === 2 }"
                           style="border-bottom: 1px solid #f0f0f0;">
                           <span class="text-weight-medium text-grey-8 ellipsis" style="flex: 1; min-width: 60px; padding-left: 48px; font-size: 10px;" 
-                            :title="`${selectedBatchInfo.batch_id}-${pb.re_code}-${pb.package_no || (index + 1)}/${pb.total_packages || ing.items.length}`">
-                            {{ selectedBatchInfo.batch_id }}-{{ pb.re_code }}-{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}
+                            :title="`${selectedBatchInfo.batch_id}-${pb.re_code}-${pb.package_no || (index + 1)}/${pb.total_packages || ing.items?.length}`">
+                            {{ selectedBatchInfo.batch_id }}-{{ pb.re_code }}-{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items?.length }}
                           </span>
-                          <span class="text-grey-7" style="width: 60px;">{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items.length }}</span>
+                          <span class="text-grey-7" style="width: 60px;">{{ pb.package_no || (index + 1) }}/{{ pb.total_packages || ing.items?.length }}</span>
                           <span class="text-right text-weight-medium text-grey-8" style="width: 60px;">{{ (pb.required_volume || 0).toFixed(3) }}</span>
                           <div class="row justify-end items-center" style="width: 100px;">
                             <template v-if="group.warehouse !== 'MIX'">

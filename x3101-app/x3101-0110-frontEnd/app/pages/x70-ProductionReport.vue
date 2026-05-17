@@ -17,12 +17,12 @@ const filterStatus = ref('All')
 
 // Table columns
 const columns = [
-  { name: 'batch_id', label: 'Batch ID', align: 'left', field: 'batch_id', sortable: true },
-  { name: 'sku_name', label: 'Product Name', align: 'left', field: 'sku_name', sortable: true },
-  { name: 'plan_id', label: 'Plan ID', align: 'left', field: 'plan_id' },
-  { name: 'batch_size', label: 'Target Weight (kg)', align: 'right', field: 'batch_size' },
-  { name: 'status', label: 'Status', align: 'center', field: 'status' },
-  { name: 'actions', label: 'View Record', align: 'center' }
+  { name: 'batch_id', label: 'Batch ID', align: 'left' as const, field: 'batch_id', sortable: true },
+  { name: 'sku_name', label: 'Product Name', align: 'left' as const, field: 'sku_name', sortable: true },
+  { name: 'plan_id', label: 'Plan ID', align: 'left' as const, field: 'plan_id' },
+  { name: 'batch_size', label: 'Target Weight (kg)', align: 'right' as const, field: 'batch_size' },
+  { name: 'status', label: 'Status', align: 'center' as const, field: 'status' },
+  { name: 'actions', label: 'View Record', align: 'center' as const }
 ]
 
 const loadBatches = async () => {
@@ -164,7 +164,7 @@ onMounted(() => {
           <div class="text-caption text-indigo-2">{{ selectedBatch.sku_name }} • Plan: {{ selectedBatch.plan_id }}</div>
         </div>
         <q-space />
-        <q-btn outline color="white" icon="print" label="Print Report" class="q-mr-sm" @click="() => window.print()" />
+        <q-btn outline color="white" icon="print" label="Print Report" class="q-mr-sm" @click="() => { window.print() }" />
         <q-btn color="green-13" text-color="black" icon="download" label="Export PDF" unelevated />
       </div>
 

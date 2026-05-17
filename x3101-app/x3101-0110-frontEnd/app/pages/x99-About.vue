@@ -247,11 +247,11 @@ const saveNewTranslation = async () => {
 }
 
 // Stats
-const translationStats = computed(() => {
+const translationStats = computed((): { total: number; missingTh: number; missingEn: number; sections: number } => {
   const total = translationRows.value.length
   const missingTh = translationRows.value.filter(r => !r.th).length
   const missingEn = translationRows.value.filter(r => !r.en).length
-  return { ...translationStats, total, missingTh, missingEn, sections: backendStats.value.sections_count }
+  return { total, missingTh, missingEn, sections: backendStats.value.sections_count }
 })
 
 // Table columns
