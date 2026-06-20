@@ -999,6 +999,20 @@ const softResetBatch = () => {
                 selectedSkuId.value = null
                 skuSteps.value = []
                 startConfirmed.value = false
+
+                // ── Clear stale MQTT telemetry immediately ──────────────────────────────
+                // Node-RED polls PLC every ~500ms-1s; don't wait — clear now so
+                // currentStepIndex doesn't restore wrong step from old Phase_ID/Step_ID
+                const pid = activePlantId.value
+                if (plantsData.value[pid]) {
+                    plantsData.value[pid] = {
+                        ...plantsData.value[pid],
+                        Phase_ID: '', Phase_id: '', phase_id: '',
+                        Step_ID: 0,  Step_id: 0,  step_id: 0,
+                        Batch_ID: '-', batch_id: '-',
+                        Current_Step: 0, current_step: 0,
+                    }
+                }
                 
                 const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
                 router.replace({ query: newQuery })
