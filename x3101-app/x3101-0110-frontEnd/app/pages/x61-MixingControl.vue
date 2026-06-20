@@ -1527,18 +1527,25 @@ const restoreBatchFromPlc = async (batchId: string) => {
             console.warn('[Restore] Could not fetch recipe-status from REST API:', apiErr)
         }
 
-        // TERTIARY: MQTT Phase_ID/Step_ID (only if REST API failed)
+        // TERTIARY: MQTT Phase_ID/Step_ID (only if REST API failed AND PLC batch_id matches)
+        // Guard: if PLC was reset, Batch_ID in MQTT becomes '-' → don't trust Phase_ID/Step_ID
         if (restoredIdx === -1) {
-            const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
-            const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
-            if (pPhase && pStep && skuSteps.value.length > 0) {
-                restoredIdx = skuSteps.value.findIndex(s => {
-                    const cleanSPhase = String(s.phase_number || s.phase).trim()
-                    return cleanSPhase === pPhase && Number(s.sub_step) === pStep
-                })
-                if (restoredIdx !== -1) {
-                    console.log(`[Restore] ✅ TERTIARY: Restored via MQTT (${pPhase}/${pStep}) → index ${restoredIdx}`)
+            const plcBatchId = String(plantData.value.Batch_ID || plantData.value.batch_id || '').replace(/\0/g, '').trim()
+            const batchIdMatches = plcBatchId && plcBatchId !== '-' && plcBatchId !== '0' && plcBatchId === batchId
+            if (batchIdMatches) {
+                const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
+                const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+                if (pPhase && pStep && skuSteps.value.length > 0) {
+                    restoredIdx = skuSteps.value.findIndex(s => {
+                        const cleanSPhase = String(s.phase_number || s.phase).trim()
+                        return cleanSPhase === pPhase && Number(s.sub_step) === pStep
+                    })
+                    if (restoredIdx !== -1) {
+                        console.log(`[Restore] ✅ TERTIARY: Restored via MQTT (${pPhase}/${pStep}) → index ${restoredIdx}`)
+                    }
                 }
+            } else {
+                console.log(`[Restore] ⚠️ TERTIARY skipped — PLC batch_id '${plcBatchId}' ≠ '${batchId}' (PLC was reset or different batch)`)
             }
         }
 
