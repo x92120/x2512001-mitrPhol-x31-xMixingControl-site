@@ -115,8 +115,19 @@ const goToPlant = (plant: number) => {
       <q-tabs align="left" dense>
         <q-route-tab to="/" icon="home" :label="t('nav.home')" />
 
+        <q-route-tab
+          to="/x55-ProductionPlan"
+          icon="calendar_month"
+          label="PRODUCTION PLAN"
+          v-if="hasPermission('production_list')"
+        />
 
-
+        <q-route-tab
+          to="/x56-SkuView"
+          icon="science"
+          label="SKU"
+          v-if="hasPermission('production_list')"
+        />
 
         <q-route-tab
           to="/x60-CheckForProduction"
@@ -152,16 +163,20 @@ const goToPlant = (plant: number) => {
         <q-route-tab to="/x89-UserConfig" icon="manage_accounts" :label="t('nav.user')" v-if="hasPermission('admin')" />
         <q-route-tab to="/x100-PlantMonitor" icon="monitor" label="Plant Monitor" />
         <q-route-tab to="/x70-ProductionReport" icon="assessment" label="PRODUCTION REPORT" />
+        <q-route-tab to="/x71-MixingReport" icon="description" label="MIXING REPORT" />
         <q-route-tab to="/x99-About" icon="info" :label="t('nav.about')" />
       </q-tabs>
     </q-header>
 
-    <q-page-container>
+    <q-page-container style="padding-top: 105px !important;">
       <NuxtPage />
     </q-page-container>
   </q-layout>
 </template>
 
 <style>
+body {
+  overflow: hidden !important;
+}
 /* Global styles if needed */
 </style>

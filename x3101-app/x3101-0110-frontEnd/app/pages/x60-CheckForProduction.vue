@@ -372,6 +372,7 @@ const actuallySelectBatch = (batch: any) => {
     selectedBatchId.value = batch.batch_id
     selectedPlanId.value = batch.plan_id || ''
     fetchBatchPreBatchData(batch.batch_id)
+    fetchSubBatches(batch.batch_id)  // REQ-1: load sub-batch runs
     // Auto-fetch SKU steps for detail table
     const plan = allPlans.value.find((p: any) => 
         (p.batches || []).some((b: any) => b.batch_id === batch.batch_id)
@@ -425,6 +426,58 @@ const fetchBatchPreBatchData = async (batchId: string) => {
     } finally {
         prebatchLoading.value = false
     }
+}
+
+// ── REQ-1: Sub-batch runs (A, B, C) ──────────────────────────────────────────
+const subBatches = ref<any[]>([])
+const subBatchSaving = ref(false)
+const subBatchRunOptions = ['A', 'B', 'C', 'D', 'E']
+
+const fetchSubBatches = async (batchId: string) => {
+    try {
+        const data = await $fetch<any[]>(`${appConfig.apiBaseUrl}/production-batches/${batchId}/sub-batches`, {
+            headers: getAuthHeader() as Record<string, string>
+        }).catch(() => [])
+        subBatches.value = data || []
+    } catch { subBatches.value = [] }
+}
+
+const saveSubBatch = async (sub: any) => {
+    if (!selectedBatchId.value) return
+    subBatchSaving.value = true
+    try {
+        await $fetch(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/sub-batches`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>,
+            body: { ...sub, operator: sub.operator || user.value?.username || '' }
+        })
+        $q.notify({ type: 'positive', message: `Sub-batch ${sub.sub_run} saved`, position: 'top', timeout: 1000 })
+    } catch(e: any) {
+        $q.notify({ type: 'negative', message: e?.data?.detail || 'Save failed', position: 'top' })
+    } finally {
+        subBatchSaving.value = false
+    }
+}
+
+const addSubBatch = () => {
+    const usedRuns = new Set(subBatches.value.map((s: any) => s.sub_run))
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+    const next = letters.find(r => !usedRuns.has(r)) || `Run-${subBatches.value.length + 1}`
+    subBatches.value.push({ sub_run: next, actual_volume: null, start_time: null, stop_time: null, remarks: '', operator: user.value?.username || '' })
+}
+
+const removeSubBatch = async (idx: number) => {
+    const sub = subBatches.value[idx]
+    if (!sub || !selectedBatchId.value) return
+    if (sub.id) {
+        try {
+            await $fetch(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/sub-batches/${sub.sub_run}`, {
+                method: 'DELETE',
+                headers: getAuthHeader() as Record<string, string>
+            })
+        } catch { /* ignore */ }
+    }
+    subBatches.value.splice(idx, 1)
 }
 
 
@@ -530,6 +583,56 @@ const quickCheckIngredient = async (ing: any) => {
     }
 }
 
+// ── Mark All FH / SPP ingredients at once ──
+const markAllWarehouseLoading = ref<Record<string, boolean>>({})
+const markAllWarehouse = async (group: any) => {
+    const wh = group.warehouse
+    if (wh === 'MIX') return
+    markAllWarehouseLoading.value[wh] = true
+    const unverified = group.ingredients.filter((ing: any) => ing.recheck_status !== 1)
+    let successCount = 0
+    for (const ing of unverified) {
+        try {
+            await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/force-verify-ingredient`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>,
+                body: {
+                    batch_id: selectedBatchId.value,
+                    bag_barcode: ing.re_code,
+                    operator: user.value?.username || 'Operator'
+                }
+            })
+            // Update local state instantly
+            ing.recheck_status = 1
+            for (const item of (ing.items || [])) {
+                item.recheck_status = 1
+                item.status = 2
+            }
+            batchPreBatchItems.value.forEach((i: any) => { if (i.re_code === ing.re_code) i.recheck_status = 1 })
+            batchPackedRecs.value.forEach((r: any) => { if (r.re_code === ing.re_code) r.recheck_status = 1 })
+            successCount++
+        } catch (e) {
+            console.error(`[MarkAll] Failed to verify ${ing.re_code}:`, e)
+        }
+    }
+    // Refresh batchRecheck so Start Production button may unlock
+    if (recheckBatchId.value) {
+        try {
+            const data = await $fetch<any>(`${appConfig.apiBaseUrl}/prebatch-recs/recheck-batch/${recheckBatchId.value}`, {
+                headers: getAuthHeader() as Record<string, string>
+            })
+            batchRecheck.value = data
+        } catch (e) { /* silent */ }
+    }
+    markAllWarehouseLoading.value[wh] = false
+    if (successCount > 0) {
+        playSound('success')
+        $q.notify({ type: 'positive', icon: 'check_circle', message: `✅ ${wh}: ${successCount} ingredient(s) approved`, position: 'top', timeout: 2000 })
+    } else {
+        $q.notify({ type: 'info', message: `${wh}: All already verified`, position: 'top', timeout: 1500 })
+    }
+}
+
 // ── Production Process View (Right Pane) ──
 const skuSteps = ref<any[]>([])
 const skuStepsLoading = ref(false)
@@ -561,12 +664,33 @@ const goToStartProduction = async () => {
     if (!selectedBatchId.value) return
     loading.value = true
     // Extract plant ID before try so it's available in catch
+    // NOTE: plan.plant from DB is descriptive string like "Mixing 01000" or "01000"
+    // We must extract only a single-digit plant number (1,2,3) from it
     let rawPlant = selectedBatchInfo.value?.plant || ''
-    let extractedPlantId = rawPlant.replace(/\D/g, '')
+    let extractedPlantId = ''
+
+    // Strategy 1: Try to find a single digit 1-9 at the END of the plant string (e.g. "Mixing 01" → "1")
+    const trailingDigit = rawPlant.trim().match(/([1-9])$/)
+    if (trailingDigit) {
+        extractedPlantId = trailingDigit[1]
+    }
+
+    // Strategy 2: If plant string has only digits and is 1-3, use it directly (e.g. "1", "2", "3")
+    if (!extractedPlantId) {
+        const allDigits = rawPlant.replace(/\D/g, '')
+        if (allDigits && Number(allDigits) >= 1 && Number(allDigits) <= 9) {
+            extractedPlantId = String(Number(allDigits))
+        }
+    }
+
+    // Strategy 3: Fallback to plan_id segment (e.g. P260514-01-01-001 → parts[2]="01" → "1")
     if (!extractedPlantId && selectedBatchInfo.value?.plan_id) {
         const parts = selectedBatchInfo.value.plan_id.split('-')
         if (parts.length >= 3) {
-            extractedPlantId = parts[2].replace(/\D/g, '')
+            const seg = parts[2].replace(/\D/g, '')
+            if (seg && Number(seg) >= 1 && Number(seg) <= 9) {
+                extractedPlantId = String(Number(seg))
+            }
         }
     }
     const plantId = extractedPlantId || '1'
@@ -2219,6 +2343,33 @@ onUnmounted(() => {
                 <q-badge :color="selectedBatchInfo.status === 'Done' ? 'green' : (selectedBatchInfo.status === 'Cancelled' ? 'red' : 'blue')" class="q-ml-sm" style="font-size: 12px;">{{ selectedBatchInfo.status || '-' }}</q-badge>
               </div>
 
+              <!-- ── REQ-1: SUB-BATCH RUNS PANEL (A, B, C) ── -->
+              <div class="q-px-sm q-pt-sm">
+                <q-card flat bordered style="border-color: #9c27b0;">
+                  <div class="row items-center q-px-sm q-py-xs bg-purple-1">
+                    <q-icon name="splitscreen" color="purple-7" size="16px" class="q-mr-xs"/>
+                    <span class="text-caption text-weight-bold text-purple-8">{{ t('rpt.subBatch') || 'Sub-Batch Runs' }}</span>
+                    <q-space/>
+                    <q-btn dense flat size="xs" icon="add_circle" color="purple-7" label="Add Run" @click="addSubBatch" />
+                  </div>
+                  <q-separator/>
+                  <div v-if="subBatches.length === 0" class="text-center q-py-sm text-grey-5 text-caption">No sub-batch runs yet — click Add Run</div>
+                  <q-list dense separator>
+                    <q-item v-for="(sub, idx) in subBatches" :key="sub.sub_run" style="padding: 4px 8px;">
+                      <q-item-section>
+                        <div class="row q-gutter-xs items-center">
+                          <q-input v-model="sub.sub_run" dense outlined placeholder="Run ID" style="width:70px" maxlength="10" class="text-caption text-weight-bold text-purple-9 text-uppercase" />
+                          <q-input v-model="sub.operator" dense outlined placeholder="Operator" style="width:100px" class="text-caption"/>
+                          <q-btn dense flat icon="save" color="purple-7" size="xs" :loading="subBatchSaving" @click="saveSubBatch(sub)"/>
+                          <q-btn dense flat icon="delete" color="red-4" size="xs" @click="removeSubBatch(idx)"/>
+                        </div>
+                        <q-input v-model="sub.remarks" dense borderless placeholder="Remarks..." class="q-ml-xs text-caption text-grey-7" style="font-size:11px"/>
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                </q-card>
+              </div>
+
               <!-- ── BATCH VERIFICATION PLATE ── -->
               <div class="q-px-sm q-pt-sm">
                 <div class="row q-col-gutter-sm">
@@ -2249,6 +2400,29 @@ onUnmounted(() => {
                   header-class="q-pa-xs bg-blue-1 text-blue-9 text-weight-bold"
                   style="border: 1px solid #bbdefb; border-radius: 4px; font-size: 12px;"
                 >
+                  <template v-slot:header>
+                    <q-item-section avatar>
+                      <q-icon :name="group.warehouse === 'FH' || group.warehouse === 'FLAVOUR HOUSE' ? 'science' : 'blender'" />
+                    </q-item-section>
+                    <q-item-section>
+                      <span class="text-weight-bold">🧪 {{ group.warehouse }} ({{ group.ingredients.length }})</span>
+                    </q-item-section>
+                    <q-item-section side v-if="group.warehouse !== 'MIX'">
+                      <q-btn
+                        dense unelevated
+                        :color="getWhStatus(group.warehouse) === 1 ? 'green-7' : 'orange-8'"
+                        :icon="getWhStatus(group.warehouse) === 1 ? 'check_circle' : 'done_all'"
+                        :label="getWhStatus(group.warehouse) === 1 ? 'All OK ✅' : 'Mark All ✅'"
+                        size="xs"
+                        :loading="markAllWarehouseLoading[group.warehouse]"
+                        :disable="getWhStatus(group.warehouse) === 1"
+                        @click.stop="markAllWarehouse(group)"
+                        style="font-size: 10px; padding: 2px 8px; border-radius: 4px;"
+                      >
+                        <q-tooltip>Approve all {{ group.warehouse }} ingredients as delivered</q-tooltip>
+                      </q-btn>
+                    </q-item-section>
+                  </template>
                   <q-list dense class="bg-white">
                     <q-expansion-item
                       v-for="ing in group.ingredients" :key="ing.re_code"

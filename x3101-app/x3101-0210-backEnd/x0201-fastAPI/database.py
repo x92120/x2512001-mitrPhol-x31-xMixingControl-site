@@ -38,11 +38,11 @@ DB_NAME = os.getenv("DB_NAME", "xMixingControl")
 DB_HOST = os.getenv("DB_HOST", os.getenv("CLOUD_DB", "192.168.121.11"))
 
 
-def _build_url(host: str, timeout: int = 3) -> str:
-    return f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{host}:{DB_PORT}/{DB_NAME}?connect_timeout={timeout}"
+def _build_url(host: str, timeout: int = 15) -> str:
+    return f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{host}:{DB_PORT}/{DB_NAME}?connect_timeout={timeout}&ssl_disabled=true"
 
 
-def _create_engine_for(host: str, timeout: int = 3):
+def _create_engine_for(host: str, timeout: int = 15):
     url = _build_url(host, timeout)
     return create_engine(
         url,
@@ -50,7 +50,9 @@ def _create_engine_for(host: str, timeout: int = 3):
         pool_recycle=1800,         # Recycle connections every 30 min (MySQL default wait_timeout=28800s)
         pool_size=10,              # Maintain 10 persistent connections
         max_overflow=20,           # Allow up to 30 total under load
-        pool_timeout=10,           # Wait max 10s for a connection from the pool
+        pool_timeout=30,           # Wait max 30s for a connection from the pool
+        # Force session timezone = ICT (UTC+7) so NOW() / CURRENT_TIMESTAMP return Thai local time
+        connect_args={"init_command": "SET time_zone='+07:00'"},
     )
 
 

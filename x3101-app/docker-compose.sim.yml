@@ -1,0 +1,61 @@
+version: "3.8"
+
+# ============================================================
+#  xMixing SIM Environment — PLCSIM Advanced V16
+#
+#  PLCSIM Instance 1: 192.168.21.220  (แทน xMixing PLC 192.168.21.210)
+#  PLCSIM Instance 2: 192.168.21.221  (แทน WinCC PLC   192.168.21.51)
+#  PLC PROD:          192.168.21.210  (Real — Production ยังทำงาน)
+#  PLC WINCC PROD:    192.168.21.51   (Real — WinCC production ยังทำงาน)
+#
+#  SIM Ports (ไม่ชน Production):
+#    Node-RED SIM    : 1882  (Production: 1880)
+#    Backend SIM     : 8032  (Production: 8031)
+#    Frontend SIM    : 3032  (Production: 3031)
+#    Edge-Worker SIM : internal only
+#
+#  รัน: docker compose -f docker-compose.sim.yml up -d
+#  หยุด: docker compose -f docker-compose.sim.yml down
+#  สถานะ: ./sim.sh status
+# ============================================================
+
+services:
+
+  # ── Node-RED SIM (xMixing PLC SIM @ 192.168.21.220) ─────
+  node-red-sim:
+    image: nodered/node-red:latest
+    container_name: node-red-sim
+    network_mode: host
+    environment:
+      - TZ=Asia/Bangkok
+    volumes:
+      - node-red-sim-data:/data
+      - /home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/x3101-app/flows_sim.json:/data/flows.json
+    restart: unless-stopped
+    command: node-red --port 1882 --flowFile /data/flows.json
+
+  # ── Edge-Worker SIM (WinCC PLC SIM @ 192.168.21.221) ────
+  # จำลอง edge-worker ที่เชื่อมกับ WinCC PLC
+  # ชี้ไป PLCSIM Instance 2 แทน Real PLC 192.168.21.51
+  edge-worker-sim:
+    image: xmixing/edge-worker:latest
+    container_name: xmixing-edge-worker-sim
+    restart: unless-stopped
+    environment:
+      - PLC_TARGET_IP=192.168.21.221       # PLCSIM Instance 2 (แทน .51)
+      - PLC_RACK=0
+      - PLC_SLOT=1
+      - CENTRAL_API_URL=http://192.168.121.11:8032  # SIM Backend
+      - SIM_MODE=true
+    networks:
+      - sim-net
+    # ถ้า image ยังไม่มี ให้ comment out แล้วใช้แค่ node-red-sim ก่อน
+    profiles:
+      - wincc-sim
+
+networks:
+  sim-net:
+    driver: bridge
+
+volumes:
+  node-red-sim-data:

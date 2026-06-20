@@ -1,163 +1,1006 @@
 [
-  {"id":"2202b21f.3f4d7e","type":"tab","label":"Split and switch string","disabled":false,"info":""},
-  {"id":"1dd6bbb793ba2176","type":"mqtt-broker","name":"xLoc","broker":"192.168.21.212","port":1883,"clientid":"","autoConnect":true,"usetls":false,"protocolVersion":4,"keepalive":60,"cleansession":true,"autoUnsubscribe":true,"birthTopic":"","birthQos":"0","birthRetain":"false","birthPayload":"","birthMsg":{},"closeTopic":"","closeQos":"0","closeRetain":"false","closePayload":"","closeMsg":{},"willTopic":"","willQos":"0","willRetain":"false","willPayload":"","willMsg":{},"userProps":"","sessionExpiry":""},
-  {"id":"9cc2e6ba6a40a4cc","type":"mqtt-broker","name":"REMOTE","broker":"152.42.166.150","port":1883,"clientid":"","autoConnect":true,"usetls":false,"protocolVersion":4,"keepalive":60,"cleansession":true,"autoUnsubscribe":true,"birthTopic":"","birthQos":"0","birthRetain":"false","birthPayload":"","birthMsg":{},"closeTopic":"","closeQos":"0","closeRetain":"false","closePayload":"","closeMsg":{},"willTopic":"","willQos":"0","willRetain":"false","willPayload":"","willMsg":{},"userProps":"","sessionExpiry":""},
-  {"id":"30c8203f5891b927","type":"mqtt-broker","name":"LOCAL","broker":"192.168.21.212","port":1883,"clientid":"","autoConnect":true,"usetls":false,"protocolVersion":4,"keepalive":60,"cleansession":true,"autoUnsubscribe":true,"birthTopic":"","birthQos":"0","birthRetain":"false","birthPayload":"","birthMsg":{},"closeTopic":"","closeQos":"0","closeRetain":"false","closePayload":"","closeMsg":{},"willTopic":"","willQos":"0","willRetain":"false","willPayload":"","willMsg":{},"userProps":"","sessionExpiry":""},
-  {"id":"92e26cbf.d1005","type":"split","z":"2202b21f.3f4d7e","name":"","splt":"1","spltType":"len","arraySplt":1,"arraySpltType":"len","stream":false,"addname":"","x":270,"y":140,"wires":[["7e0b01e6.4fe07"]]},
-  {"id":"b156d544.144f08","type":"inject","z":"2202b21f.3f4d7e","name":"","props":[{"p":"payload","v":"1001","vt":"str"},{"p":"topic","v":"","vt":"str"}],"repeat":"","crontab":"","once":false,"onceDelay":0.1,"topic":"","payload":"1001","payloadType":"str","x":110,"y":140,"wires":[["92e26cbf.d1005"]]},
-  {"id":"6a2fed9e.1ad054","type":"debug","z":"2202b21f.3f4d7e","name":"","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"parts.index","statusVal":"","statusType":"auto","x":600,"y":100,"wires":[]},
-  {"id":"7e0b01e6.4fe07","type":"switch","z":"2202b21f.3f4d7e","name":"","property":"parts.index","propertyType":"msg","rules":[{"t":"eq","v":"0","vt":"str"},{"t":"eq","v":"1","vt":"str"},{"t":"eq","v":"2","vt":"str"},{"t":"eq","v":"3","vt":"str"}],"checkall":"true","repair":false,"outputs":4,"x":410,"y":140,"wires":[["6a2fed9e.1ad054"],["105055c9.5a19ea"],["26c7ab09.eb4054"],["b1e6810f.30e29"]]},
-  {"id":"feba729e.fcdd8","type":"comment","z":"2202b21f.3f4d7e","name":"Split and switch string","info":"Source: https://discourse.nodered.org/t/split-to-different-outputs/5773/2\n","x":140,"y":60,"wires":[]},
-  {"id":"105055c9.5a19ea","type":"debug","z":"2202b21f.3f4d7e","name":"","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"parts.index","x":600,"y":140,"wires":[]},
-  {"id":"26c7ab09.eb4054","type":"debug","z":"2202b21f.3f4d7e","name":"","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"parts.index","x":600,"y":180,"wires":[]},
-  {"id":"b1e6810f.30e29","type":"debug","z":"2202b21f.3f4d7e","name":"","active":true,"tosidebar":true,"console":false,"tostatus":false,"complete":"parts.index","x":600,"y":220,"wires":[]},
-  {"id":"1f23e237bfe5b610","type":"mqtt in","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-01","qos":"0","datatype":"auto-detect","broker":"30c8203f5891b927","nl":false,"rap":true,"rh":0,"inputs":0,"x":530,"y":440,"wires":[["11e349957c90d757"]]},
-  {"id":"11e349957c90d757","type":"mqtt out","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-01","qos":"0","retain":"","respTopic":"","contentType":"","userProps":"","correl":"","expiry":"","broker":"9cc2e6ba6a40a4cc","x":800,"y":440,"wires":[]},
-  {"id":"56739c2bba1ac07b","type":"mqtt in","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-02","qos":"0","datatype":"auto-detect","broker":"30c8203f5891b927","nl":false,"rap":true,"rh":0,"inputs":0,"x":530,"y":500,"wires":[["745f4f568c6f04c2"]]},
-  {"id":"745f4f568c6f04c2","type":"mqtt out","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-02","qos":"0","retain":"","respTopic":"","contentType":"","userProps":"","correl":"","expiry":"","broker":"9cc2e6ba6a40a4cc","x":800,"y":500,"wires":[]},
-  {"id":"b573a1dd45b92c84","type":"mqtt in","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-03","qos":"0","datatype":"auto-detect","broker":"30c8203f5891b927","nl":false,"rap":true,"rh":0,"inputs":0,"x":530,"y":560,"wires":[["7d74bec1bd5f5ef6"]]},
-  {"id":"7d74bec1bd5f5ef6","type":"mqtt out","z":"2202b21f.3f4d7e","name":"","topic":"/MIX-03","qos":"0","retain":"","respTopic":"","contentType":"","userProps":"","correl":"","expiry":"","broker":"9cc2e6ba6a40a4cc","x":800,"y":560,"wires":[]},
-
-  {"id":"plant_monitor_tab","type":"tab","label":"Plant Production Monitor","disabled":false,"info":""},
-  {
-    "id": "s7_plc_endpoint",
-    "type": "s7 endpoint",
-    "transport": "iso-on-tcp",
-    "address": "192.168.21.210",
-    "port": "102",
-    "rack": "0",
-    "slot": "1",
-    "localtsaphi": "01",
-    "localtsaplo": "00",
-    "remotetsaphi": "01",
-    "remotetsaplo": "00",
-    "connmode": "rack-slot",
-    "adapter": "",
-    "busaddr": "2",
-    "cycletime": "1000",
-    "timeout": "2000",
-    "name": "Siemens_S7-1200",
-    "vartable": [
-      {"addr": "DB1512,INT0", "name": "watchdog"},
-      {"addr": "DB1512,INT2", "name": "plc_state"},
-      {"addr": "DB1512,INT4", "name": "current_step"},
-      {"addr": "DB1512,INT6", "name": "step_timer"},
-      {"addr": "DB1512,REAL8", "name": "mix_temp"},
-      {"addr": "DB1512,REAL12", "name": "mix_weight"},
-      {"addr": "DB1512,REAL16", "name": "agitator_act"},
-      {"addr": "DB1512,REAL20", "name": "highshear_act"},
-      {"addr": "DB1512,REAL24", "name": "hopper_weight"}
-    ]
-  },
-  {
-    "id": "s7_in_telemetry",
-    "type": "s7 in",
-    "z": "plant_monitor_tab",
-    "endpoint": "s7_plc_endpoint",
-    "mode": "all",
-    "name": "Read PLC DB1512",
-    "x": 160,
-    "y": 140,
-    "wires": [["format_plant1_json"]]
-  },
-  {
-    "id": "format_plant1_json",
-    "type": "function",
-    "z": "plant_monitor_tab",
-    "name": "Format Plant 1 Status",
-    "func": "const plc = msg.payload;\nmsg.payload = {\n    \"Step_no\": Number(plc.current_step || 0),\n    \"Step_Timer\": Number(plc.step_timer || 0),\n    \"Mixing_Tank_Volume\": Number(Number(plc.mix_weight || 0).toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(Number(plc.mix_temp || 0).toFixed(2)),\n    \"MixingTank_Agitator_Speed\": Number(Number(plc.agitator_act || 0).toFixed(2)),\n    \"HighShare_Speed\": Number(Number(plc.highshear_act || 0).toFixed(2)),\n    \"watchdog\": Number(plc.watchdog || 0),\n    \"PLC_State\": Number(plc.plc_state || 0),\n    \"Hopper_Weight\": Number(Number(plc.hopper_weight || 0).toFixed(2))\n};\nreturn msg;",
-    "outputs": 1,
-    "x": 380,
-    "y": 140,
-    "wires": [["mqtt_out_plant1"]]
-  },
-  {
-    "id": "mqtt_out_plant1",
-    "type": "mqtt out",
-    "z": "plant_monitor_tab",
-    "name": "Publish Plant 1",
-    "topic": "/MIX-01",
-    "qos": "0",
-    "retain": "",
-    "broker": "30c8203f5891b927",
-    "x": 620,
-    "y": 140,
-    "wires": []
-  },
-  {
-    "id": "inject_plant2",
-    "type": "inject",
-    "z": "plant_monitor_tab",
-    "name": "Tick 2s",
-    "props": [{"p":"payload"}],
-    "repeat": "2",
-    "crontab": "",
-    "once": true,
-    "onceDelay": "0.5",
-    "x": 130,
-    "y": 240,
-    "wires": [["sim_plant2"]]
-  },
-  {
-    "id": "sim_plant2",
-    "type": "function",
-    "z": "plant_monitor_tab",
-    "name": "Simulate Plant 2",
-    "func": "const step = context.get('step') || 1;\nlet timer = context.get('timer') || 0;\ntimer += 2;\nif (timer >= 60) {\n    timer = 0;\n}\ncontext.set('timer', timer);\n\n// realistic curves\nconst vol = 120 + Math.sin(Date.now() / 60000) * 15;\nconst temp = 62 + Math.cos(Date.now() / 120000) * 2;\nconst agit = 1500;\n\nmsg.payload = {\n    \"Step_no\": step,\n    \"Step_Timer\": timer,\n    \"Mixing_Tank_Volume\": Number(vol.toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(temp.toFixed(2)),\n    \"MixingTank_Agitator_Speed\": agit,\n    \"HighShare_Speed\": 0,\n    \"watchdog\": Math.floor(Math.random() * 100),\n    \"PLC_State\": 1\n};\nreturn msg;",
-    "outputs": 1,
-    "x": 380,
-    "y": 240,
-    "wires": [["mqtt_out_plant2"]]
-  },
-  {
-    "id": "mqtt_out_plant2",
-    "type": "mqtt out",
-    "z": "plant_monitor_tab",
-    "name": "Publish Plant 2",
-    "topic": "/MIX-02",
-    "qos": "0",
-    "retain": "",
-    "broker": "30c8203f5891b927",
-    "x": 620,
-    "y": 240,
-    "wires": []
-  },
-  {
-    "id": "inject_plant3",
-    "type": "inject",
-    "z": "plant_monitor_tab",
-    "name": "Tick 2.5s",
-    "props": [{"p":"payload"}],
-    "repeat": "2.5",
-    "crontab": "",
-    "once": true,
-    "onceDelay": "1.0",
-    "x": 130,
-    "y": 320,
-    "wires": [["sim_plant3"]]
-  },
-  {
-    "id": "sim_plant3",
-    "type": "function",
-    "z": "plant_monitor_tab",
-    "name": "Simulate Plant 3",
-    "func": "const step = context.get('step') || 3;\nlet timer = context.get('timer') || 0;\ntimer += 3;\nif (timer >= 120) {\n    timer = 0;\n}\ncontext.set('timer', timer);\n\n// realistic curves\nconst vol = 135 + Math.sin(Date.now() / 45000) * 10;\nconst temp = 45 + Math.sin(Date.now() / 90000) * 3;\nconst agit = 1200;\nconst shear = 2800;\n\nmsg.payload = {\n    \"Step_no\": step,\n    \"Step_Timer\": timer,\n    \"Mixing_Tank_Volume\": Number(vol.toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(temp.toFixed(2)),\n    \"MixingTank_Agitator_Speed\": agit,\n    \"HighShare_Speed\": shear,\n    \"watchdog\": Math.floor(Math.random() * 100),\n    \"PLC_State\": 1\n};\nreturn msg;",
-    "outputs": 1,
-    "x": 380,
-    "y": 320,
-    "wires": [["mqtt_out_plant3"]]
-  },
-  {
-    "id": "mqtt_out_plant3",
-    "type": "mqtt out",
-    "z": "plant_monitor_tab",
-    "name": "Publish Plant 3",
-    "topic": "/MIX-03",
-    "qos": "0",
-    "retain": "",
-    "broker": "30c8203f5891b927",
-    "x": 620,
-    "y": 320,
-    "wires": []
-  }
+    {
+        "id": "2202b21f.3f4d7e",
+        "type": "tab",
+        "label": "Split and switch string",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "1dd6bbb793ba2176",
+        "type": "mqtt-broker",
+        "name": "xLoc",
+        "broker": "192.168.21.198",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "9cc2e6ba6a40a4cc",
+        "type": "mqtt-broker",
+        "name": "REMOTE",
+        "broker": "152.42.166.150",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "30c8203f5891b927",
+        "type": "mqtt-broker",
+        "name": "LOCAL",
+        "broker": "192.168.21.198",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "92e26cbf.d1005",
+        "type": "split",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "splt": "1",
+        "spltType": "len",
+        "arraySplt": 1,
+        "arraySpltType": "len",
+        "stream": false,
+        "addname": "",
+        "x": 270,
+        "y": 140,
+        "wires": [
+            [
+                "7e0b01e6.4fe07"
+            ]
+        ]
+    },
+    {
+        "id": "b156d544.144f08",
+        "type": "inject",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "props": [
+            {
+                "p": "payload",
+                "v": "1001",
+                "vt": "str"
+            },
+            {
+                "p": "topic",
+                "v": "",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "1001",
+        "payloadType": "str",
+        "x": 110,
+        "y": 140,
+        "wires": [
+            [
+                "92e26cbf.d1005"
+            ]
+        ]
+    },
+    {
+        "id": "6a2fed9e.1ad054",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "7e0b01e6.4fe07",
+        "type": "switch",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "property": "parts.index",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "0",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "1",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "2",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "3",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 4,
+        "x": 410,
+        "y": 140,
+        "wires": [
+            [
+                "6a2fed9e.1ad054"
+            ],
+            [
+                "105055c9.5a19ea"
+            ],
+            [
+                "26c7ab09.eb4054"
+            ],
+            [
+                "b1e6810f.30e29"
+            ]
+        ]
+    },
+    {
+        "id": "feba729e.fcdd8",
+        "type": "comment",
+        "z": "2202b21f.3f4d7e",
+        "name": "Split and switch string",
+        "info": "Source: https://discourse.nodered.org/t/split-to-different-outputs/5773/2\n",
+        "x": 140,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "105055c9.5a19ea",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "26c7ab09.eb4054",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "b1e6810f.30e29",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "1f23e237bfe5b610",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 440,
+        "d": true,
+        "wires": [
+            [
+                "11e349957c90d757"
+            ]
+        ]
+    },
+    {
+        "id": "11e349957c90d757",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 440,
+        "d": true,
+        "wires": []
+    },
+    {
+        "id": "56739c2bba1ac07b",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 500,
+        "d": true,
+        "wires": [
+            [
+                "745f4f568c6f04c2"
+            ]
+        ]
+    },
+    {
+        "id": "745f4f568c6f04c2",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 500,
+        "d": true,
+        "wires": []
+    },
+    {
+        "id": "b573a1dd45b92c84",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 560,
+        "d": true,
+        "wires": [
+            [
+                "7d74bec1bd5f5ef6"
+            ]
+        ]
+    },
+    {
+        "id": "7d74bec1bd5f5ef6",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "BRIDGE_DISABLED",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 560,
+        "d": true,
+        "wires": []
+    },
+    {
+        "id": "plant_monitor_tab",
+        "type": "tab",
+        "label": "Plant Production Monitor",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "s7_plc_endpoint",
+        "type": "s7 endpoint",
+        "transport": "iso-on-tcp",
+        "address": "192.168.21.210",
+        "port": "102",
+        "rack": "0",
+        "slot": "1",
+        "localtsaphi": "01",
+        "localtsaplo": "00",
+        "remotetsaphi": "01",
+        "remotetsaplo": "00",
+        "connmode": "rack-slot",
+        "adapter": "",
+        "busaddr": "2",
+        "cycletime": "1000",
+        "timeout": "2000",
+        "name": "Siemens_S7-1200",
+        "vartable": [
+            {
+                "addr": "DB1512,INT0",
+                "name": "p1_watchdog"
+            },
+            {
+                "addr": "DB1512,INT2",
+                "name": "p1_plc_state"
+            },
+            {
+                "addr": "DB1512,INT4",
+                "name": "p1_current_step"
+            },
+            {
+                "addr": "DB1512,INT6",
+                "name": "p1_step_timer"
+            },
+            {
+                "addr": "DB1512,REAL8",
+                "name": "p1_mix_temp"
+            },
+            {
+                "addr": "DB1512,REAL12",
+                "name": "p1_mix_weight"
+            },
+            {
+                "addr": "DB1512,REAL16",
+                "name": "p1_agitator_act"
+            },
+            {
+                "addr": "DB1512,REAL20",
+                "name": "p1_highshear_act"
+            },
+            {
+                "addr": "DB1512,REAL24",
+                "name": "p1_hopper_weight"
+            },
+            {
+                "addr": "DB1510,STRING0.20",
+                "name": "p1_Batch_ID"
+            },
+            {
+                "addr": "DB1510,INT22",
+                "name": "p1_HMI_Command"
+            },
+            {
+                "addr": "DB1510,INT24",
+                "name": "p1_Step_ID"
+            },
+            {
+                "addr": "DB1510,STRING26.10",
+                "name": "p1_Phase_ID"
+            },
+            {
+                "addr": "DB1510,STRING38.20",
+                "name": "p1_Re_Code"
+            },
+            {
+                "addr": "DB1510,REAL60",
+                "name": "p1_Target_Weight"
+            },
+            {
+                "addr": "DB1510,REAL64",
+                "name": "p1_TT_SP"
+            },
+            {
+                "addr": "DB1510,REAL76",
+                "name": "p1_Agitator_Speed"
+            },
+            {
+                "addr": "DB1510,REAL80",
+                "name": "p1_High_Shear_SP"
+            },
+            {
+                "addr": "DB1510,INT84",
+                "name": "p1_Step_Time_SP"
+            },
+            {
+                "addr": "DB1510,X86.0",
+                "name": "p1_Cmd_NewStep"
+            },
+            {
+                "addr": "DB1522,INT0",
+                "name": "p2_watchdog"
+            },
+            {
+                "addr": "DB1522,INT2",
+                "name": "p2_plc_state"
+            },
+            {
+                "addr": "DB1522,INT4",
+                "name": "p2_current_step"
+            },
+            {
+                "addr": "DB1522,INT6",
+                "name": "p2_step_timer"
+            },
+            {
+                "addr": "DB1522,REAL8",
+                "name": "p2_mix_temp"
+            },
+            {
+                "addr": "DB1522,REAL12",
+                "name": "p2_mix_weight"
+            },
+            {
+                "addr": "DB1522,REAL16",
+                "name": "p2_agitator_act"
+            },
+            {
+                "addr": "DB1522,REAL20",
+                "name": "p2_highshear_act"
+            },
+            {
+                "addr": "DB1522,REAL24",
+                "name": "p2_hopper_weight"
+            },
+            {
+                "addr": "DB1520,STRING0.20",
+                "name": "p2_Batch_ID"
+            },
+            {
+                "addr": "DB1520,INT22",
+                "name": "p2_HMI_Command"
+            },
+            {
+                "addr": "DB1520,INT24",
+                "name": "p2_Step_ID"
+            },
+            {
+                "addr": "DB1520,STRING26.10",
+                "name": "p2_Phase_ID"
+            },
+            {
+                "addr": "DB1520,STRING38.20",
+                "name": "p2_Re_Code"
+            },
+            {
+                "addr": "DB1520,REAL60",
+                "name": "p2_Target_Weight"
+            },
+            {
+                "addr": "DB1520,REAL64",
+                "name": "p2_TT_SP"
+            },
+            {
+                "addr": "DB1520,REAL76",
+                "name": "p2_Agitator_Speed"
+            },
+            {
+                "addr": "DB1520,REAL80",
+                "name": "p2_High_Shear_SP"
+            },
+            {
+                "addr": "DB1520,INT84",
+                "name": "p2_Step_Time_SP"
+            },
+            {
+                "addr": "DB1520,X86.0",
+                "name": "p2_Cmd_NewStep"
+            },
+            {
+                "addr": "DB1532,INT0",
+                "name": "p3_watchdog"
+            },
+            {
+                "addr": "DB1532,INT2",
+                "name": "p3_plc_state"
+            },
+            {
+                "addr": "DB1532,INT4",
+                "name": "p3_current_step"
+            },
+            {
+                "addr": "DB1532,INT6",
+                "name": "p3_step_timer"
+            },
+            {
+                "addr": "DB1532,REAL8",
+                "name": "p3_mix_temp"
+            },
+            {
+                "addr": "DB1532,REAL12",
+                "name": "p3_mix_weight"
+            },
+            {
+                "addr": "DB1532,REAL16",
+                "name": "p3_agitator_act"
+            },
+            {
+                "addr": "DB1532,REAL20",
+                "name": "p3_highshear_act"
+            },
+            {
+                "addr": "DB1532,REAL24",
+                "name": "p3_hopper_weight"
+            },
+            {
+                "addr": "DB1530,STRING0.20",
+                "name": "p3_Batch_ID"
+            },
+            {
+                "addr": "DB1530,INT22",
+                "name": "p3_HMI_Command"
+            },
+            {
+                "addr": "DB1530,INT24",
+                "name": "p3_Step_ID"
+            },
+            {
+                "addr": "DB1530,STRING26.10",
+                "name": "p3_Phase_ID"
+            },
+            {
+                "addr": "DB1530,STRING38.20",
+                "name": "p3_Re_Code"
+            },
+            {
+                "addr": "DB1530,REAL60",
+                "name": "p3_Target_Weight"
+            },
+            {
+                "addr": "DB1530,REAL64",
+                "name": "p3_TT_SP"
+            },
+            {
+                "addr": "DB1530,REAL76",
+                "name": "p3_Agitator_Speed"
+            },
+            {
+                "addr": "DB1530,REAL80",
+                "name": "p3_High_Shear_SP"
+            },
+            {
+                "addr": "DB1530,INT84",
+                "name": "p3_Step_Time_SP"
+            },
+            {
+                "addr": "DB1530,X86.0",
+                "name": "p3_Cmd_NewStep"
+            }
+        ]
+    },
+    {
+        "id": "08a2727ce66941c0",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 3 (Local)",
+        "topic": "mixing/plant/3/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 400,
+        "wires": [
+            [
+                "e315db4265d34445"
+            ]
+        ]
+    },
+    {
+        "id": "e315db4265d34445",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse CMD -> DB1530",
+        "func": "const cmd = msg.payload;\nconst pfx = 'p3_';\nconst pairs = [];\n\n// String fields\nif (cmd.Batch_ID  !== undefined) pairs.push([pfx+'Batch_ID',      String(cmd.Batch_ID)]);\nif (cmd.Phase_ID  !== undefined) pairs.push([pfx+'Phase_ID',      String(cmd.Phase_ID)]);\nif (cmd.Re_Code_ID!== undefined) pairs.push([pfx+'Re_Code',       String(cmd.Re_Code_ID)]);\n\n// Numeric fields\nconst reqQty = cmd.Req_Qty ?? cmd.Target_Weight ?? cmd.require;\nif (reqQty  !== undefined && reqQty !== null) pairs.push([pfx+'Target_Weight', Number(reqQty)]);\nif (cmd.HMI_Command    !== undefined) pairs.push([pfx+'HMI_Command',   Number(cmd.HMI_Command)]);\nif (cmd.Step_ID        !== undefined) pairs.push([pfx+'Step_ID',        Number(cmd.Step_ID)]);\nif (cmd.TT_SP          !== undefined) pairs.push([pfx+'TT_SP',          Number(Array.isArray(cmd.TT_SP) ? cmd.TT_SP[0] : cmd.TT_SP)]);\nif (cmd.Agitator_Speed !== undefined) pairs.push([pfx+'Agitator_Speed', Number(cmd.Agitator_Speed)]);\nif (cmd.High_Shear_SP  !== undefined) pairs.push([pfx+'High_Shear_SP',  Number(cmd.High_Shear_SP)]);\nif (cmd.Step_Time_SP   !== undefined) pairs.push([pfx+'Step_Time_SP',   Number(cmd.Step_Time_SP)]);\n\n// Bool/bit field — write last so PLC sees new step trigger after all setpoints are set\nif (cmd.Cmd_NewStep !== undefined) pairs.push([pfx+'Cmd_NewStep', Boolean(cmd.Cmd_NewStep)]);\n\n// s7 out requires ONE message per variable\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 380,
+        "y": 400,
+        "wires": [
+            [
+                "47c3299871cf42a3"
+            ]
+        ]
+    },
+    {
+        "id": "47c3299871cf42a3",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1530",
+        "x": 620,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "e6c33a8ea5d9451a",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 3 (Remote)",
+        "topic": "mixing/plant/3/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "9cc2e6ba6a40a4cc",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 440,
+        "wires": [
+            [
+                "e315db4265d34445"
+            ]
+        ]
+    },
+    {
+        "id": "08fd9e06b9de42a7",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 1 (Local)",
+        "topic": "mixing/plant/1/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 500,
+        "wires": [
+            [
+                "9c3d95f39508435b"
+            ]
+        ]
+    },
+    {
+        "id": "967c34b0f56d4ed3",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 1 (Remote)",
+        "topic": "mixing/plant/1/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "9cc2e6ba6a40a4cc",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 540,
+        "wires": [
+            [
+                "9c3d95f39508435b"
+            ]
+        ]
+    },
+    {
+        "id": "9c3d95f39508435b",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse CMD -> DB1510",
+        "func": "const cmd = msg.payload;\nconst pfx = 'p1_';\nconst pairs = [];\n\n// String fields\nif (cmd.Batch_ID  !== undefined) pairs.push([pfx+'Batch_ID',      String(cmd.Batch_ID)]);\nif (cmd.Phase_ID  !== undefined) pairs.push([pfx+'Phase_ID',      String(cmd.Phase_ID)]);\nif (cmd.Re_Code_ID!== undefined) pairs.push([pfx+'Re_Code',       String(cmd.Re_Code_ID)]);\n\n// Numeric fields\nconst reqQty = cmd.Req_Qty ?? cmd.Target_Weight ?? cmd.require;\nif (reqQty  !== undefined && reqQty !== null) pairs.push([pfx+'Target_Weight', Number(reqQty)]);\nif (cmd.HMI_Command    !== undefined) pairs.push([pfx+'HMI_Command',   Number(cmd.HMI_Command)]);\nif (cmd.Step_ID        !== undefined) pairs.push([pfx+'Step_ID',        Number(cmd.Step_ID)]);\nif (cmd.TT_SP          !== undefined) pairs.push([pfx+'TT_SP',          Number(Array.isArray(cmd.TT_SP) ? cmd.TT_SP[0] : cmd.TT_SP)]);\nif (cmd.Agitator_Speed !== undefined) pairs.push([pfx+'Agitator_Speed', Number(cmd.Agitator_Speed)]);\nif (cmd.High_Shear_SP  !== undefined) pairs.push([pfx+'High_Shear_SP',  Number(cmd.High_Shear_SP)]);\nif (cmd.Step_Time_SP   !== undefined) pairs.push([pfx+'Step_Time_SP',   Number(cmd.Step_Time_SP)]);\n\n// Bool/bit field — write last so PLC sees new step trigger after all setpoints are set\nif (cmd.Cmd_NewStep !== undefined) pairs.push([pfx+'Cmd_NewStep', Boolean(cmd.Cmd_NewStep)]);\n\n// s7 out requires ONE message per variable\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 380,
+        "y": 500,
+        "wires": [
+            [
+                "db4bbeb5894a4e41"
+            ]
+        ]
+    },
+    {
+        "id": "db4bbeb5894a4e41",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1510",
+        "x": 620,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "29bc6888ac994806",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 2 (Local)",
+        "topic": "mixing/plant/2/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 600,
+        "wires": [
+            [
+                "f99c6b403bf5463c"
+            ]
+        ]
+    },
+    {
+        "id": "a0beae0b9cbe4a0b",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub CMD Plant 2 (Remote)",
+        "topic": "mixing/plant/2/step_cmd",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "9cc2e6ba6a40a4cc",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 640,
+        "wires": [
+            [
+                "f99c6b403bf5463c"
+            ]
+        ]
+    },
+    {
+        "id": "f99c6b403bf5463c",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse CMD -> DB1520",
+        "func": "const cmd = msg.payload;\nconst pfx = 'p2_';\nconst pairs = [];\n\n// String fields\nif (cmd.Batch_ID  !== undefined) pairs.push([pfx+'Batch_ID',      String(cmd.Batch_ID)]);\nif (cmd.Phase_ID  !== undefined) pairs.push([pfx+'Phase_ID',      String(cmd.Phase_ID)]);\nif (cmd.Re_Code_ID!== undefined) pairs.push([pfx+'Re_Code',       String(cmd.Re_Code_ID)]);\n\n// Numeric fields\nconst reqQty = cmd.Req_Qty ?? cmd.Target_Weight ?? cmd.require;\nif (reqQty  !== undefined && reqQty !== null) pairs.push([pfx+'Target_Weight', Number(reqQty)]);\nif (cmd.HMI_Command    !== undefined) pairs.push([pfx+'HMI_Command',   Number(cmd.HMI_Command)]);\nif (cmd.Step_ID        !== undefined) pairs.push([pfx+'Step_ID',        Number(cmd.Step_ID)]);\nif (cmd.TT_SP          !== undefined) pairs.push([pfx+'TT_SP',          Number(Array.isArray(cmd.TT_SP) ? cmd.TT_SP[0] : cmd.TT_SP)]);\nif (cmd.Agitator_Speed !== undefined) pairs.push([pfx+'Agitator_Speed', Number(cmd.Agitator_Speed)]);\nif (cmd.High_Shear_SP  !== undefined) pairs.push([pfx+'High_Shear_SP',  Number(cmd.High_Shear_SP)]);\nif (cmd.Step_Time_SP   !== undefined) pairs.push([pfx+'Step_Time_SP',   Number(cmd.Step_Time_SP)]);\n\n// Bool/bit field — write last so PLC sees new step trigger after all setpoints are set\nif (cmd.Cmd_NewStep !== undefined) pairs.push([pfx+'Cmd_NewStep', Boolean(cmd.Cmd_NewStep)]);\n\n// s7 out requires ONE message per variable\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 380,
+        "y": 600,
+        "wires": [
+            [
+                "ca723372f8db48b4"
+            ]
+        ]
+    },
+    {
+        "id": "ca723372f8db48b4",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1520",
+        "x": 620,
+        "y": 600,
+        "wires": []
+    },
+    {
+        "id": "bd8a79b6ac40430d",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub Telemetry Plant 1",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 800,
+        "wires": [
+            [
+                "a526d6117f114f03"
+            ]
+        ]
+    },
+    {
+        "id": "a526d6117f114f03",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse Telemetry -> DB1512",
+        "func": "const raw = msg.payload;\n// Normalize: support both prefixed keys (e.g. MIX03.PLC_State) and flat keys\nconst act = {};\nfor (const [k, v] of Object.entries(raw)) {\n    const clean = k.replace(/^MIX0*1\\./, '');\n    act[clean] = v;\n}\n\nconst pairs = [];\nconst pfx = 'p1_';\n\nif (act.Watch_Doc !== undefined || act.watchdog !== undefined)\n    pairs.push([pfx+'watchdog',       Number(act.Watch_Doc ?? act.watchdog ?? 0)]);\nif (act.PLC_State !== undefined)\n    pairs.push([pfx+'plc_state',      Number(act.PLC_State)]);\nif (act.Current_Step !== undefined || act.Step_no !== undefined)\n    pairs.push([pfx+'current_step',   Number(act.Current_Step ?? act.Step_no ?? 0)]);\nif (act.Step_Timer !== undefined)\n    pairs.push([pfx+'step_timer',     Number(act.Step_Timer)]);\nif (act.MixTank_Temp !== undefined || act.Mixing_Tank_Temperature !== undefined)\n    pairs.push([pfx+'mix_temp',       Number(act.MixTank_Temp ?? act.Mixing_Tank_Temperature ?? 0)]);\nif (act.MixTank_Weight !== undefined || act.Mixing_Tank_Volume !== undefined)\n    pairs.push([pfx+'mix_weight',     Number(act.MixTank_Weight ?? act.Mixing_Tank_Volume ?? 0)]);\nif (act.Agitator_Act !== undefined || act.MixingTank_Agitator_Speed !== undefined)\n    pairs.push([pfx+'agitator_act',   Number(act.Agitator_Act ?? act.MixingTank_Agitator_Speed ?? 0)]);\nif (act.HighShear_Act !== undefined || act.HighShare_Speed !== undefined)\n    pairs.push([pfx+'highshear_act',  Number(act.HighShear_Act ?? act.HighShare_Speed ?? 0)]);\nif (act.Hopper_Weight !== undefined)\n    pairs.push([pfx+'hopper_weight',  Number(act.Hopper_Weight)]);\n\n// s7 out node requires ONE message per variable — send each individually\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 400,
+        "y": 800,
+        "wires": [
+            [
+                "4e48b15caa144ac6"
+            ]
+        ]
+    },
+    {
+        "id": "4e48b15caa144ac6",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1512",
+        "x": 640,
+        "y": 800,
+        "wires": []
+    },
+    {
+        "id": "efb27d3604124f8b",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub Telemetry Plant 2",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 850,
+        "wires": [
+            [
+                "245c16a63f6e40d9"
+            ]
+        ]
+    },
+    {
+        "id": "245c16a63f6e40d9",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse Telemetry -> DB1522",
+        "func": "const raw = msg.payload;\n// Normalize: support both prefixed keys (e.g. MIX03.PLC_State) and flat keys\nconst act = {};\nfor (const [k, v] of Object.entries(raw)) {\n    const clean = k.replace(/^MIX0*2\\./, '');\n    act[clean] = v;\n}\n\nconst pairs = [];\nconst pfx = 'p2_';\n\nif (act.Watch_Doc !== undefined || act.watchdog !== undefined)\n    pairs.push([pfx+'watchdog',       Number(act.Watch_Doc ?? act.watchdog ?? 0)]);\nif (act.PLC_State !== undefined)\n    pairs.push([pfx+'plc_state',      Number(act.PLC_State)]);\nif (act.Current_Step !== undefined || act.Step_no !== undefined)\n    pairs.push([pfx+'current_step',   Number(act.Current_Step ?? act.Step_no ?? 0)]);\nif (act.Step_Timer !== undefined)\n    pairs.push([pfx+'step_timer',     Number(act.Step_Timer)]);\nif (act.MixTank_Temp !== undefined || act.Mixing_Tank_Temperature !== undefined)\n    pairs.push([pfx+'mix_temp',       Number(act.MixTank_Temp ?? act.Mixing_Tank_Temperature ?? 0)]);\nif (act.MixTank_Weight !== undefined || act.Mixing_Tank_Volume !== undefined)\n    pairs.push([pfx+'mix_weight',     Number(act.MixTank_Weight ?? act.Mixing_Tank_Volume ?? 0)]);\nif (act.Agitator_Act !== undefined || act.MixingTank_Agitator_Speed !== undefined)\n    pairs.push([pfx+'agitator_act',   Number(act.Agitator_Act ?? act.MixingTank_Agitator_Speed ?? 0)]);\nif (act.HighShear_Act !== undefined || act.HighShare_Speed !== undefined)\n    pairs.push([pfx+'highshear_act',  Number(act.HighShear_Act ?? act.HighShare_Speed ?? 0)]);\nif (act.Hopper_Weight !== undefined)\n    pairs.push([pfx+'hopper_weight',  Number(act.Hopper_Weight)]);\n\n// s7 out node requires ONE message per variable — send each individually\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 400,
+        "y": 850,
+        "wires": [
+            [
+                "f3f91202f18b44c7"
+            ]
+        ]
+    },
+    {
+        "id": "f3f91202f18b44c7",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1522",
+        "x": 640,
+        "y": 850,
+        "wires": []
+    },
+    {
+        "id": "36f4954cef814e7d",
+        "type": "mqtt in",
+        "z": "plant_monitor_tab",
+        "name": "Sub Telemetry Plant 3",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 900,
+        "wires": [
+            [
+                "25b2b194fe404b34"
+            ]
+        ]
+    },
+    {
+        "id": "25b2b194fe404b34",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Parse Telemetry -> DB1532",
+        "func": "const raw = msg.payload;\n// Normalize: support both prefixed keys (e.g. MIX03.PLC_State) and flat keys\nconst act = {};\nfor (const [k, v] of Object.entries(raw)) {\n    const clean = k.replace(/^MIX0*3\\./, '');\n    act[clean] = v;\n}\n\nconst pairs = [];\nconst pfx = 'p3_';\n\nif (act.Watch_Doc !== undefined || act.watchdog !== undefined)\n    pairs.push([pfx+'watchdog',       Number(act.Watch_Doc ?? act.watchdog ?? 0)]);\nif (act.PLC_State !== undefined)\n    pairs.push([pfx+'plc_state',      Number(act.PLC_State)]);\nif (act.Current_Step !== undefined || act.Step_no !== undefined)\n    pairs.push([pfx+'current_step',   Number(act.Current_Step ?? act.Step_no ?? 0)]);\nif (act.Step_Timer !== undefined)\n    pairs.push([pfx+'step_timer',     Number(act.Step_Timer)]);\nif (act.MixTank_Temp !== undefined || act.Mixing_Tank_Temperature !== undefined)\n    pairs.push([pfx+'mix_temp',       Number(act.MixTank_Temp ?? act.Mixing_Tank_Temperature ?? 0)]);\nif (act.MixTank_Weight !== undefined || act.Mixing_Tank_Volume !== undefined)\n    pairs.push([pfx+'mix_weight',     Number(act.MixTank_Weight ?? act.Mixing_Tank_Volume ?? 0)]);\nif (act.Agitator_Act !== undefined || act.MixingTank_Agitator_Speed !== undefined)\n    pairs.push([pfx+'agitator_act',   Number(act.Agitator_Act ?? act.MixingTank_Agitator_Speed ?? 0)]);\nif (act.HighShear_Act !== undefined || act.HighShare_Speed !== undefined)\n    pairs.push([pfx+'highshear_act',  Number(act.HighShear_Act ?? act.HighShare_Speed ?? 0)]);\nif (act.Hopper_Weight !== undefined)\n    pairs.push([pfx+'hopper_weight',  Number(act.Hopper_Weight)]);\n\n// s7 out node requires ONE message per variable — send each individually\npairs.forEach(([variable, payload]) => node.send({ variable, payload }));\nreturn null;",
+        "outputs": 1,
+        "x": 400,
+        "y": 900,
+        "wires": [
+            [
+                "a6dd08619b6a4f46"
+            ]
+        ]
+    },
+    {
+        "id": "a6dd08619b6a4f46",
+        "type": "s7 out",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "variable": "",
+        "name": "Write DB1532",
+        "x": 640,
+        "y": 900,
+        "wires": []
+    }
 ]

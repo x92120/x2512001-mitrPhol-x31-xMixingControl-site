@@ -185,14 +185,19 @@ def create_production_plan(db: Session, plan_data: schemas.ProductionPlanCreate)
         raise RuntimeError(f"Database error: {str(e)}")
 
 def get_production_batches(db: Session, skip: int = 0, limit: int = 1000) -> List[models.ProductionBatch]:
-   return db.query(models.ProductionBatch).options(
-       joinedload(models.ProductionBatch.reqs)
-   ).order_by(models.ProductionBatch.created_at.desc()).offset(skip).limit(limit).all()
+    """Lean list query — no eager-loading of reqs/items (avoids N+1 on large sets)."""
+    return db.query(models.ProductionBatch).order_by(
+        models.ProductionBatch.created_at.desc()
+    ).offset(skip).limit(limit).all()
 
 def update_production_batch_status(db: Session, batch_id: int, status: str) -> Optional[models.ProductionBatch]:
     batch = db.query(models.ProductionBatch).filter(models.ProductionBatch.id == batch_id).first()
     if batch:
         batch.status = status
+        if status == 'Done':
+            from datetime import datetime
+            batch.done = True
+            batch.completed_at = datetime.now()
         db.commit()
         db.refresh(batch)
     return batch

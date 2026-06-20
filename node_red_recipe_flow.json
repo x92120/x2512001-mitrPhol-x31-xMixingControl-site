@@ -1,0 +1,63 @@
+[
+    {
+        "id": "mqtt_in_recipe_sync",
+        "type": "mqtt in",
+        "name": "Sub Recipe Sync",
+        "topic": "MPL/PLC/Plant+/Recipe_Sync",
+        "qos": "0",
+        "datatype": "json",
+        "broker": "",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 200,
+        "wires": [
+            [
+                "func_parse_recipe",
+                "debug_recipe"
+            ]
+        ]
+    },
+    {
+        "id": "debug_recipe",
+        "type": "debug",
+        "name": "Debug JSON Recipe",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 420,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "func_parse_recipe",
+        "type": "function",
+        "name": "Parse JSON to DB15x1 S7 Buffer",
+        "func": "let buf = Buffer.alloc(10036);\nbuf.fill(0);\n\nfunction writeS7String(buffer, offset, str, maxLen) {\n    buffer.writeUInt8(maxLen, offset);\n    if (!str) str = \"\";\n    let strBuf = Buffer.from(str, 'utf8');\n    let actualLen = Math.min(strBuf.length, maxLen);\n    buffer.writeUInt8(actualLen, offset + 1);\n    strBuf.copy(buffer, offset + 2, 0, actualLen);\n}\n\nlet data = msg.payload;\nif (!data || !data.steps) return null;\n\n// 1. Header (52 bytes)\nwriteS7String(buf, 0, data.batch_id, 20);\nwriteS7String(buf, 22, data.sku_id, 20);\nbuf.writeInt16BE(1, 44);                     // HMI_Command = 1 (START)\nbuf.writeInt16BE(data.total_steps || 0, 46); // Total_Steps\nbuf.writeInt16BE(1, 48);                     // Active_Step\nbuf.writeUInt8(1, 50);                       // Cmd_LoadRecipe = True (1=True)\n\n// 2. Steps (Max 128)\nlet steps = data.steps || [];\nfor(let i=0; i<Math.min(steps.length, 128); i++) {\n    let step = steps[i];\n    let offset = 52 + (i * 78);\n    \n    buf.writeInt16BE(step.seq || 0, offset + 0);\n    buf.writeInt16BE(step.phase_no || 0, offset + 2);\n    buf.writeInt16BE(step.sub_step || 0, offset + 4);\n    \n    writeS7String(buf, offset + 6, step.action_code || \"\", 10);\n    writeS7String(buf, offset + 18, step.phase_id || \"\", 10);\n    writeS7String(buf, offset + 30, step.re_code || \"\", 20);\n    \n    buf.writeFloatBE(step.target_weight || 0.0, offset + 52);\n    buf.writeFloatBE(step.temp_sp || 0.0, offset + 56);\n    buf.writeFloatBE(step.temp_low || 0.0, offset + 60);\n    buf.writeFloatBE(step.temp_high || 0.0, offset + 64);\n    buf.writeFloatBE(step.agitator_sp || 0.0, offset + 68);\n    buf.writeFloatBE(step.highshear_sp || 0.0, offset + 72);\n    buf.writeInt16BE(step.step_time || 0, offset + 76);\n}\n\nmsg.payload = buf;\n\n// กำหนดตัวแปรปลายทางให้ตรงกับ Plant\n// ตัวอย่าง: สมมติว่า Topic คือ MPL/PLC/Plant1/Recipe_Sync\nlet plant_id = 1;\nlet match = msg.topic.match(/Plant(\\d+)/);\nif (match) {\n    plant_id = match[1];\n}\n\n// ให้ตั้งชื่อ S7 Variable เป็น DB15x1,B0 (x = 1, 2, 3 ตาม Plant)\nmsg.variable = `DB15${plant_id}1,B0`; \nreturn msg;",
+        "outputs": 1,
+        "x": 420,
+        "y": 200,
+        "wires": [
+            [
+                "s7_out_recipe"
+            ]
+        ]
+    },
+    {
+        "id": "s7_out_recipe",
+        "type": "s7 out",
+        "endpoint": "",
+        "variable": "",
+        "name": "Write S7 Buffer",
+        "x": 700,
+        "y": 200,
+        "wires": []
+    }
+]

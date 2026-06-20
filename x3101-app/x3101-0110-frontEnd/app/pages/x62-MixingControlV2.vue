@@ -7,19 +7,33 @@ import { useMQTT } from '~/composables/useMQTT'
 // ── PLC Step Descriptions ──
 const plcStepDescriptions: Record<number, string> = {
   0: "Stand By",
+  1: "Starting Program",
   2: "Start Program",
+  3: "Filling Major Ingredient",
   4: "Fill Major Ingredient",
+  5: "Filling Major Done",
   6: "Fill Major Done",
+  7: "Preblending",
   8: "Preblending",
+  9: "Waiting First Confirm",
   10: "First Confirm",
+  11: "Pre Heating",
   12: "Pre Heats",
+  13: "Filling Minor Ingredient",
   14: "Fill Minor Ingredient",
+  15: "Second Heating",
   16: "Second Heat",
+  17: "Filling Third Ingredient",
   18: "Fill Third Ingredient",
+  19: "Pasteurizing",
   20: "Pasteurizer",
+  21: "Waiting QC Confirm",
   22: "QC Confirm",
+  23: "Preparing Transfer",
   24: "Ready To Transfer",
+  25: "Transferring",
   26: "Transferring",
+  27: "Ending STEP",
   28: "End STEP"
 }
 
@@ -194,20 +208,36 @@ const skuStepsByPhase = computed(() => {
 
 const totalSteps = computed(() => skuSteps.value.length)
 
+const normalizePhase = (phase: string): string => {
+    if (!phase) return ''
+    const match = phase.match(/[pP]\d+/)
+    if (!match) return phase.toLowerCase().replace(/\s/g, '')
+    const digits = match[0].slice(1)
+    return 'p' + digits.padStart(4, '0')
+}
+
 // ── Current Operation (simulated) ──
 // Helper: find step index exactly matching PLC Phase_ID and Step_ID (fallback to local tracker)
 const currentStepIndex = computed(() => {
     const pPhase = plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id
     const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+    const currentSeq = Number(plantData.value.Current_Step || plantData.value.current_step || 0)
 
     if (pPhase && pStep && skuSteps.value.length > 0) {
-        const cleanPPhase = String(pPhase).replace(/\0/g, '').trim()
+        const cleanPPhase = normalizePhase(String(pPhase).replace(/\0/g, '').trim())
         const idx = skuSteps.value.findIndex(s => {
-            const cleanSPhase = String(s.phase_number || s.phase).trim()
+            const cleanSPhase = normalizePhase(String(s.phase_number || s.phase).trim())
             return cleanSPhase === cleanPPhase && Number(s.sub_step) === pStep
         })
         if (idx !== -1) return idx
     }
+
+    // Fallback to Current_Step (1-based index from PLC telemetry DB1512)
+    if (currentSeq > 0 && skuSteps.value.length > 0) {
+        const idx = currentSeq - 1
+        if (idx < skuSteps.value.length) return idx
+    }
+
     return localStepIndex.value
 })
 let stepInterval: ReturnType<typeof setInterval> | null = null
@@ -397,11 +427,44 @@ const handlePlcMessage = (topic: string, payload: any) => {
             return;
         }
 
+        // ── Software Interlock: validate weight BEFORE auto-advancing ────────────
+        // Even if the PLC (or simulator) fires STEP_COMPLETE, the app must verify
+        // that weight-based steps are within tolerance. If not → block & alert.
+        const aCode = String(currentCompletedStep?.action_code || '')
+        const isWeightStep = aCode.startsWith('2') || aCode.startsWith('3')
+        if (isWeightStep && currentCompletedStep) {
+            const requiredWeight = productionRequire(currentCompletedStep)
+            if (requiredWeight > 0) {
+                // In V2 we use the Hopper Weight for manual/dry ingredients
+                const actualWeight = getStepLiveWeight(currentCompletedStep)
+
+                if (actualWeight > 0 && !isWeightInTolerance(currentCompletedStep, actualWeight)) {
+                    // ⛔ INTERLOCK: weight out of tolerance — block advance
+                    batchRunning.value = false
+                    const tolHigh = Number(currentCompletedStep.high_tol || (requiredWeight * 0.02))
+                    const tolLow  = Number(currentCompletedStep.low_tol  || (requiredWeight * 0.02))
+                    $q.notify({
+                        type: 'negative',
+                        icon: 'lock',
+                        message: `⛔ INTERLOCK — Step ${payload.step_no} blocked!`,
+                        caption: `Weight out of tolerance. Req: ${requiredWeight.toFixed(3)} kg | Act: ${actualWeight.toFixed(3)} kg | Range: ${(requiredWeight - tolLow).toFixed(3)}–${(requiredWeight + tolHigh).toFixed(3)} kg. Correct weight then confirm manually.`,
+                        position: 'center',
+                        timeout: 0,  // stays until dismissed
+                        actions: [{ label: 'OK', color: 'white' }]
+                    })
+                    console.warn(`[INTERLOCK] Step ${payload.step_no} blocked — weight ${actualWeight} out of tolerance [${requiredWeight - tolLow}, ${requiredWeight + tolHigh}]`)
+                    return // ⛔ DO NOT advance
+                }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         // Normal Auto-Advance
         localStepIndex.value = completedIndex + 1 // Advance to next
         if (localStepIndex.value < skuSteps.value.length) {
-            // PLC is master, wait for it to advance and broadcast state
+            // PLC needs the command to move to the next step
             $q.notify({ type: 'info', message: `Step ${completedIndex + 1} Done. PLC proceeding.`, position: 'top', timeout: 1000 })
+            setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
         } else {
             batchRunning.value = false
             $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
@@ -547,7 +610,7 @@ const closeDownloadDialog = () => {
 // ── PLC State Tracking for Step Confirmation ──
 const plcState = computed(() => Number(plantData.value.PLC_State || 0))
 const stepDone = computed(() => Boolean(plantData.value.Step_Done || plantData.value.step_done))
-const isWaitingConfirm = computed(() => plcState.value === 2 || stepDone.value)
+const isWaitingConfirm = computed(() => plcState.value === 2 || stepDone.value || plcState.value === 1 || plcState.value === 5)
 
 // ── Step Confirmation (Operator confirms current step is done) ──
 const confirmStepDone = () => {
@@ -593,32 +656,83 @@ const confirmStepDone = () => {
 const confirmStepFromRow = (step: any) => {
     if (stepConfirmLoading.value) return
     
-    stepConfirmLoading.value = true
-    
-    const topic = `mixing/plant/${activePlantId.value}/step_confirm`
-    const payload = {
-        Confirm_Step: true,
-        Confirm_Phase_ID: String(step.phase_number || ''),
-        Confirm_Step_ID: Number(step.sub_step || 0),
-        Batch_ID: selectedBatchId.value || '-',
-        operator: user?.value?.username || 'unknown',
-        timestamp: new Date().toISOString()
+    // Double check tolerance before confirming
+    const aCode = String(step.action_code || '')
+    const isWeightStep = aCode.startsWith('2') || aCode.startsWith('3')
+    if (isWeightStep) {
+        const requiredWeight = productionRequire(step)
+        if (requiredWeight > 0) {
+            const actualWeight = getStepLiveWeight(step)
+            if (actualWeight > 0 && !isWeightInTolerance(step, actualWeight)) {
+                $q.notify({ 
+                    type: 'negative', 
+                    message: '⚠️ Weight still out of tolerance!', 
+                    caption: `Req: ${requiredWeight.toFixed(2)} | Act: ${actualWeight.toFixed(2)}. Please adjust weight first.`, 
+                    position: 'center',
+                    icon: 'scale',
+                    timeout: 4000
+                })
+                return // BLOCK ADVANCE
+            }
+        }
     }
     
-    publishMessage(topic, payload)
+    stepConfirmLoading.value = true
     
-    plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
-    if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
+    $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}. Proceeding to next step...`, position: 'top', timeout: 1500 })
     
-    $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}`, position: 'top', timeout: 1500 })
+    // ── Resume the batch and advance to next step ──
+    batchRunning.value = true
+    const currentIdx = skuSteps.value.findIndex(s => s.id === step.id)
+    if (currentIdx !== -1) {
+        localStepIndex.value = currentIdx + 1
+        if (localStepIndex.value < skuSteps.value.length) {
+            sendStepToPLC(localStepIndex.value)
+        } else {
+            batchRunning.value = false
+            $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+        }
+    }
     
     // Smart double-click guard: wait 3 seconds, then check if PLC actually moved.
     setTimeout(() => { 
         stepConfirmLoading.value = false 
         if (Number(plantData.value.PLC_State) === 2) {
-            $q.notify({ type: 'warning', message: '⚠️ No response from PLC. Please click Confirm again.', position: 'top', timeout: 3000 })
+            $q.notify({ type: 'warning', message: '⚠️ No response from PLC. Please check connection.', position: 'top', timeout: 3000 })
         }
     }, 3000)
+}
+
+const isWeightInTolerance = (step: any, actualWeight: number) => {
+    const requiredWeight = productionRequire(step)
+    if (requiredWeight <= 0) return true
+    
+    const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
+    const tolLow = Number(step.low_tol || (requiredWeight * 0.02))
+    const minW = requiredWeight - tolLow
+    const maxW = requiredWeight + tolHigh
+    
+    return actualWeight >= minW && actualWeight <= maxW
+}
+
+const scannedVolumeMap = ref<Record<string, number>>({})
+
+const getStepLiveWeight = (step: any) => {
+    if (!step) return 0
+    const rc = String(step.re_code || '').trim()
+    
+    // If we have a scanned volume for this RE Code from the QR label, use it!
+    if (scannedVolumeMap.value[rc] != null) {
+        return scannedVolumeMap.value[rc]
+    }
+    
+    // Fallback to live PLC scales
+    const aCode = String(step.action_code || '')
+    if (aCode.startsWith('2') || aCode.startsWith('3')) {
+        return actualHopperWeight.value
+    } else {
+        return actualTankWeight.value
+    }
 }
 
 // ── PLC Commands ──
@@ -688,6 +802,9 @@ const formatDuration = (sec: number) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
+// ── Manual Add Barcode Scanner (Action 21010) ──
+const manualAddScanned = ref(false)
+
 // Ensure active step expands
 watch(currentStepIndex, (newIdx) => {
     manualAddScanned.value = false // Reset scan lock for new step
@@ -703,27 +820,31 @@ watch(currentStepIndex, (newIdx) => {
         })
     }
 }, { immediate: true })
-
-// ── Manual Add Barcode Scanner (Action 21010) ──
-const manualAddScanned = ref(false)
 let barcodeBuffer = ''
 let barcodeTimeout: any = null
 
 const handleScannerInput = (e: KeyboardEvent) => {
     // Only listen when we are waiting for confirmation on a manual add step
-    if (!batchRunning.value || !currentStep.value || currentStep.value.action_code !== '21010' || !isWaitingConfirm.value) return
+    if (!batchRunning.value || !currentStep.value || !isWaitingConfirm.value) return
 
     if (e.key === 'Enter') {
         const scannedCode = barcodeBuffer.trim().toUpperCase()
         barcodeBuffer = ''
         
         let scannedReCode = scannedCode
+        let scannedVol: number | null = null
         
-        // Handle JSON payloads from new scanners
+        // Handle JSON payloads from new scanners (e.g. SPP/FH labels)
         if (scannedCode.startsWith('{') && scannedCode.endsWith('}')) {
             try {
                 const parsed = JSON.parse(scannedCode)
                 scannedReCode = String(parsed.r || parsed.R || parsed.RE_Code || parsed.re_code || scannedCode).toUpperCase()
+                
+                // Extract volume: support v, V, net_volume, n
+                const volRaw = parsed.v || parsed.V || parsed.net_volume || parsed.n
+                if (volRaw != null && !isNaN(Number(volRaw))) {
+                    scannedVol = Number(volRaw)
+                }
             } catch (err) {}
         }
 
@@ -731,7 +852,13 @@ const handleScannerInput = (e: KeyboardEvent) => {
         
         if (scannedReCode === requiredReCode) {
             manualAddScanned.value = true
-            $q.notify({ type: 'positive', icon: 'qr_code_scanner', message: 'Bag verified! You may now dump the ingredient and click Confirm.', timeout: 3000, position: 'top' })
+            
+            if (scannedVol !== null) {
+                scannedVolumeMap.value[requiredReCode] = scannedVol
+                $q.notify({ type: 'positive', icon: 'qr_code_scanner', message: 'Bag verified!', caption: `Volume: ${scannedVol} kg. You may now dump and click Confirm.`, timeout: 3000, position: 'top' })
+            } else {
+                $q.notify({ type: 'positive', icon: 'qr_code_scanner', message: 'Bag verified! You may now dump the ingredient and click Confirm.', timeout: 3000, position: 'top' })
+            }
         } else {
             $q.notify({ type: 'negative', icon: 'error', message: `Wrong Bag! Scanned: ${scannedReCode}, Expected: ${requiredReCode}`, timeout: 3000, position: 'top' })
         }
@@ -833,13 +960,14 @@ const restoreBatchFromPlc = async (batchId: string) => {
             const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
             
             if (pPhase && pStep && skuSteps.value.length > 0) {
+                const cleanPPhase = normalizePhase(pPhase)
                 const idx = skuSteps.value.findIndex(s => {
-                    const cleanSPhase = String(s.phase_number || s.phase).trim()
-                    return cleanSPhase === pPhase && Number(s.sub_step) === pStep
+                    const cleanSPhase = normalizePhase(String(s.phase_number || s.phase).trim())
+                    return cleanSPhase === cleanPPhase && Number(s.sub_step) === pStep
                 })
                 if (idx !== -1) {
                     localStepIndex.value = idx
-                    expandedPhases.value[pPhase] = true
+                    expandedPhases.value[cleanPPhase] = true
                 }
             }
             $q.notify({ type: 'info', message: `Restored active batch ${batchId} from PLC.`, position: 'top', icon: 'settings_backup_restore' })

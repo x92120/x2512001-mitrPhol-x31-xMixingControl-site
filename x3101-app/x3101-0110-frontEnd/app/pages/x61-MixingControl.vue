@@ -7,19 +7,33 @@ import { useMQTT } from '~/composables/useMQTT'
 // ── PLC Step Descriptions ──
 const plcStepDescriptions: Record<number, string> = {
   0: "Stand By",
+  1: "Starting Program",
   2: "Start Program",
+  3: "Filling Major Ingredient",
   4: "Fill Major Ingredient",
+  5: "Filling Major Done",
   6: "Fill Major Done",
+  7: "Preblending",
   8: "Preblending",
+  9: "Waiting First Confirm",
   10: "First Confirm",
+  11: "Pre Heating",
   12: "Pre Heats",
+  13: "Filling Minor Ingredient",
   14: "Fill Minor Ingredient",
+  15: "Second Heating",
   16: "Second Heat",
+  17: "Filling Third Ingredient",
   18: "Fill Third Ingredient",
+  19: "Pasteurizing",
   20: "Pasteurizer",
+  21: "Waiting QC Confirm",
   22: "QC Confirm",
+  23: "Preparing Transfer",
   24: "Ready To Transfer",
+  25: "Transferring",
   26: "Transferring",
+  27: "Ending STEP",
   28: "End STEP"
 }
 
@@ -28,6 +42,28 @@ const router = useRouter()
 
 // ── PLC Connection via Shared MQTT Composable ──
 const { connect, disconnect, publishMessage, isConnected: plcConnectedGlobal, plantsData, onMessage, offMessage } = useMQTT()
+
+// ── SIM-Aware MQTT Topic Helper ─────────────────────────────────────────────
+// In SIM mode (VITE_SIM_MODE=true), use VITE_PLANT{N}_CMD / sim/plant/{N}/...
+// In Production mode, use the standard mixing/plant/{N}/... topics
+// This prevents SIM frontend from writing to the real Production PLC.
+const isSimMode = import.meta.env.VITE_SIM_MODE === 'true'
+
+// Returns the correct MQTT topic prefix for a given plant ID
+// e.g. simCmdTopic(1, 'step_cmd') → 'sim/plant/1/step_cmd'  (SIM)
+//                                  → 'mixing/plant/1/step_cmd' (Prod)
+const simCmdTopic = (plantId: string | number, suffix: string): string => {
+    if (isSimMode) {
+        // Use VITE_PLANT{N}_CMD if available, else fall back to sim/plant/{N}/...
+        const envKey = `VITE_PLANT${plantId}_CMD` as keyof ImportMeta['env']
+        const base = import.meta.env[envKey] || `sim/plant/${plantId}/step_cmd`
+        // base = 'sim/plant/1/step_cmd' — replace last segment with suffix
+        const baseParts = base.split('/')
+        baseParts[baseParts.length - 1] = suffix
+        return baseParts.join('/')
+    }
+    return `mixing/plant/${plantId}/${suffix}`
+}
 const { getAuthHeader, user } = useAuth()
 const $q = useQuasar()
 
@@ -38,6 +74,7 @@ const batchInfo = ref<any>(null)
 const skuSteps = ref<any[]>([])
 const loading = ref(false)
 const batchRunning = ref(false)
+const pendingWeightApproval = ref(false)   // set when PLC step-done fires but weight is still out of tolerance
 const dbPhaseMap = ref<Record<string, string>>({})
 
 // ── PLC Handshake Verification ──
@@ -179,7 +216,7 @@ const fetchBatchInfo = async () => {
             }
             selectedBatchId.value = data.batch_id
             selectedSkuId.value = data.sku_code
-            fetchSkuSteps(data.sku_code)
+            fetchSkuSteps(data.sku_code, data.batch_id)
             fetchPrebatchWeights(data.batch_id)
         } else {
             throw new Error("No edge batch data")
@@ -203,7 +240,7 @@ const fetchBatchInfo = async () => {
             }
             selectedBatchId.value = qBatchId
             selectedSkuId.value = qSkuId
-            fetchSkuSteps(qSkuId)
+            fetchSkuSteps(qSkuId, qBatchId)
             fetchPrebatchWeights(qBatchId)
         } else {
             batchInfo.value = null
@@ -216,7 +253,7 @@ const fetchBatchInfo = async () => {
 }
 
 // ── Fetch SKU steps from PLC (DB1511) ──
-const fetchSkuSteps = async (skuId: string) => {
+const fetchSkuSteps = async (skuId: string, batchId?: string) => {
     loading.value = true
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
@@ -246,13 +283,13 @@ const fetchSkuSteps = async (skuId: string) => {
                     high_shear_rpm: s.highshear_sp,
                     step_time: s.step_time,
                     // DB1517 Actuals
-                    actual_volume: act.target_weight != null && act.target_weight > 0 ? act.target_weight : null,
-                    actual_temp: act.temp_sp != null && act.temp_sp > 0 ? act.temp_sp : null,
-                    actual_agitator: act.agitator_sp != null && act.agitator_sp > 0 ? act.agitator_sp : null,
-                    actual_high_shear: act.highshear_sp != null && act.highshear_sp > 0 ? act.highshear_sp : null,
-                    actual_brix: act.temp_low != null && act.temp_low > 0 ? act.temp_low : null,
-                    actual_ph: act.temp_high != null && act.temp_high > 0 ? act.temp_high : null,
-                    duration_sec: act.step_time != null && act.step_time > 0 ? act.step_time : null
+                    actual_volume: act.actual_weight != null && act.actual_weight > 0 ? act.actual_weight : null,
+                    actual_temp: act.actual_temp != null && act.actual_temp > 0 ? act.actual_temp : null,
+                    actual_agitator: act.actual_agitator != null && act.actual_agitator > 0 ? act.actual_agitator : null,
+                    actual_high_shear: act.actual_highshear != null && act.actual_highshear > 0 ? act.actual_highshear : null,
+                    actual_brix: act.actual_brix != null && act.actual_brix > 0 ? act.actual_brix : null,
+                    actual_ph: act.actual_ph != null && act.actual_ph > 0 ? act.actual_ph : null,
+                    duration_sec: act.duration_sec != null && act.duration_sec > 0 ? act.duration_sec : null
                 }
             })
             skuSteps.value = mappedSteps
@@ -261,7 +298,92 @@ const fetchSkuSteps = async (skuId: string) => {
             skuSteps.value = []
         }
     } catch { skuSteps.value = [] }
-    finally { loading.value = false }
+    finally {
+        loading.value = false
+        // Merge stamp times from DB after steps are loaded
+        const targetBatch = batchId || selectedBatchId.value
+        if (targetBatch) {
+            fetchStampTimes(targetBatch)
+        }
+    }
+}
+
+// ── Fetch stamp times from production_step_logs and merge into skuSteps ──
+const fetchStampTimes = async (batchId: string) => {
+    if (!batchId) return
+    try {
+        const res = await $fetch<any>(`${appConfig.apiBaseUrl}/production-batches/${batchId}/logs`, {
+            headers: getAuthHeader() as Record<string, string>
+        })
+        const logs: any[] = res?.logs || []
+        if (!logs.length) return
+
+        // Build lookup: MUST match by phase_id + step_id to avoid
+        // cross-phase contamination (many phases share the same sub_step number)
+        const stampByKey: Record<string, string> = {}    // `${phase_id}__${step_id}` → latest ts
+        const actualByKey: Record<string, number | null> = {}  // same key → actual_value (weight)
+
+        for (const log of logs) {
+            const ts = log.completed_at
+            if (!ts) continue
+            const sid = Number(log.step_id)
+            // Index by both the stored phase_id AND the phase_number format (p010-style)
+            const keys = [
+                `${log.phase_id || ''}__${sid}`,          // e.g. A1010__10
+                `${log.phase_number || ''}__${sid}`        // e.g. p010__10 (legacy)
+            ]
+            for (const k of keys) {
+                if (!k || k.startsWith('__') || k.startsWith('undefined__')) continue
+                // Keep the latest entry (most recent completed_at)
+                if (!stampByKey[k] || new Date(ts) > new Date(stampByKey[k])) {
+                    stampByKey[k] = ts
+                    // actual_value = weight recorded by worker_handshake at step completion
+                    actualByKey[k] = log.actual_value != null ? Number(log.actual_value) : null
+                }
+            }
+        }
+
+        // Merge into skuSteps — match by phase_id (from PLC) or phase_number
+        // Never fall back to step_id-only: multiple phases share the same sub_step numbers
+        skuSteps.value = skuSteps.value.map(step => {
+            const sid = step.sub_step
+            const key1 = `${step.phase_id || ''}__${sid}`      // e.g. A1010__10
+            const key2 = `${step.phase_number || ''}__${sid}`  // e.g. p010__10
+            const ts = stampByKey[key1] || stampByKey[key2]
+            if (ts) {
+                const d = new Date(ts)
+                const matchKey = stampByKey[key1] ? key1 : key2
+                const logActual = actualByKey[matchKey]
+                return {
+                    ...step,
+                    stamp_time: d.toLocaleString('th-TH', {
+                        day: '2-digit', month: '2-digit', year: '2-digit',
+                        hour: '2-digit', minute: '2-digit', second: '2-digit',
+                        hour12: false
+                    }),
+                    // Merge actual_value from DB logs — this is the persistent source of truth.
+                    // PLC DB15x7 is cleared on reset; DB logs survive reset.
+                    actual_volume: (logActual != null && logActual > 0) ? logActual : step.actual_volume,
+                }
+            }
+            return step
+        })
+        console.log('[StampTime] Keys in DB:', Object.keys(stampByKey), '| Actuals:', actualByKey)
+    } catch (e) {
+        console.warn('[StampTime] Failed to fetch step logs:', e)
+    }
+}
+
+// Auto-refresh stamp times every 30s while batch is active
+let _stampRefreshTimer: ReturnType<typeof setInterval> | null = null
+const startStampRefresh = () => {
+    if (_stampRefreshTimer) clearInterval(_stampRefreshTimer)
+    _stampRefreshTimer = setInterval(() => {
+        if (selectedBatchId.value) fetchStampTimes(selectedBatchId.value)
+    }, 30_000)
+}
+const stopStampRefresh = () => {
+    if (_stampRefreshTimer) { clearInterval(_stampRefreshTimer); _stampRefreshTimer = null }
 }
 
 // ── Fetch dynamic phase map from DB ──
@@ -325,17 +447,28 @@ const totalSteps = computed(() => skuSteps.value.length)
 const currentStepIndex = computed(() => {
     const pPhase = plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id
     const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+    const currentSeq = Number(plantData.value.Current_Step || plantData.value.current_step || 0)
 
     if (pPhase && pStep && skuSteps.value.length > 0) {
-        const cleanPPhase = String(pPhase).replace(/\0/g, '').trim()
+        const rawPhase = String(pPhase).replace(/\0/g, '').trim()
+        // MQTT may send a long Phase_ID like "p020-x1010-Heating" — extract just the short code "p020"
+        const cleanPPhase = rawPhase.match(/^(p\d+)/i)?.[1]?.toLowerCase() || rawPhase.toLowerCase()
         const idx = skuSteps.value.findIndex(s => {
-            const cleanSPhase = String(s.phase_number || s.phase).trim()
+            const cleanSPhase = String(s.phase_number || s.phase).trim().toLowerCase()
             return cleanSPhase === cleanPPhase && Number(s.sub_step) === pStep
         })
         if (idx !== -1) return idx
     }
+
+    // Fallback to Current_Step (1-based index from PLC telemetry DB1512)
+    if (currentSeq > 0 && skuSteps.value.length > 0) {
+        const idx = currentSeq - 1
+        if (idx < skuSteps.value.length) return idx
+    }
+
     return localStepIndex.value
 })
+
 let stepInterval: ReturnType<typeof setInterval> | null = null
 
 const currentStep = computed(() => {
@@ -361,10 +494,11 @@ const isPhaseExpanded = (phase: string) => {
     return expandedPhases.value[phase] !== false
 }
 
-// ── QC Trap Logic ──
+// ── QC Trap Logic (REQ-8: Brix/pH input during production) ──
 const qcDialog = ref(false)
 const pendingQcStep = ref<any | null>(null)
 const localStepIndex = ref(0)
+const qcSaving   = ref(false)  // REQ-8: loading state for QC API save
 
 // ── Confirm Start Production Dialog ──
 const confirmStartDialog = ref(false)
@@ -421,7 +555,7 @@ const confirmStartProduction = () => {
     confirmStartDialog.value = false
 
     const plantId = activePlantId.value || '1'
-    const topic = `mixing/plant/${plantId}/cmd`
+    const topic = simCmdTopic(plantId, 'cmd')
     
     // Send final start=1 command to PLC via MQTT
     publishMessage(topic, {
@@ -445,7 +579,7 @@ const confirmStartProduction = () => {
         datatype: "String [20]",
         timestamp: new Date().toISOString()
     }
-    const writeTopic = `mixing/plant/${plantId}/write`
+    const writeTopic = simCmdTopic(plantId, 'write')
     // The S7-comm node expects a raw string payload to write into the DB, not a JSON object
     publishMessage(writeTopic, selectedBatchId.value || '')
     
@@ -482,7 +616,12 @@ const handlePlcMessage = (topic: string, payload: any) => {
         if (!batchRunning.value) return; // If aborted/stopped, ignore
 
         $q.notify({ type: 'info', message: `Step ${payload.step_no} completed.`, position: 'top', timeout: 1000 })
-        
+
+        // Refresh stamp times immediately from DB
+        if (selectedBatchId.value) {
+            setTimeout(() => fetchStampTimes(selectedBatchId.value!), 1000)
+        }
+
         const completedIndex = Number(payload.step_no) - 1;
         const currentCompletedStep = skuSteps.value[completedIndex];
 
@@ -501,13 +640,53 @@ const handlePlcMessage = (topic: string, payload: any) => {
             return;
         }
 
-        // Normal Auto-Advance
-        localStepIndex.value = completedIndex + 1 // Advance to next
+        // ── Software Interlock: validate weight BEFORE auto-advancing ────────────
+        // Even if the PLC (or simulator) fires STEP_COMPLETE, the app must verify
+        // that weight-based steps are within tolerance. If not → block & alert.
+        const aCode = String(currentCompletedStep?.action_code || '')
+        const isWeightStep = aCode.startsWith('2') || aCode.startsWith('3')
+        if (isWeightStep && currentCompletedStep) {
+            const rc = (currentCompletedStep.re_code || '').trim()
+            const requiredWeight = productionRequire(currentCompletedStep)
+            if (requiredWeight > 0) {
+                // Prefer scanned volume (SPP/FH), then live step scale weight
+                const scannedVol = scannedVolumeMap.value[rc]
+                const actualWeight = scannedVol != null
+                    ? scannedVol
+                    : getStepLiveWeight(currentCompletedStep)
+
+                if (actualWeight > 0 && !isWeightInTolerance(currentCompletedStep, actualWeight)) {
+                    // ⛔ INTERLOCK: weight out of tolerance — block advance
+                    batchRunning.value = false
+                    const tolHigh = Number(currentCompletedStep.high_tol || (requiredWeight * 0.02))
+                    const tolLow  = Number(currentCompletedStep.low_tol  || (requiredWeight * 0.02))
+                    $q.notify({
+                        type: 'negative',
+                        icon: 'lock',
+                        message: `⛔ INTERLOCK — Step ${payload.step_no} blocked!`,
+                        caption: `Weight out of tolerance. Req: ${requiredWeight.toFixed(3)} kg | Act: ${actualWeight.toFixed(3)} kg | Range: ${(requiredWeight - tolLow).toFixed(3)}–${(requiredWeight + tolHigh).toFixed(3)} kg. Correct weight then confirm manually.`,
+                        position: 'center',
+                        timeout: 0,  // stays until dismissed
+                        actions: [{ label: 'OK', color: 'white' }]
+                    })
+                    console.warn(`[INTERLOCK] Step ${payload.step_no} (${rc}) blocked — weight ${actualWeight} out of tolerance [${requiredWeight - tolLow}, ${requiredWeight + tolHigh}]`)
+                    return // ⛔ DO NOT advance
+                }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
+        // Normal Auto-Advance (interlock passed)
+        localStepIndex.value = completedIndex + 1
         if (localStepIndex.value < skuSteps.value.length) {
             setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
         } else {
             batchRunning.value = false
             $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+            // Navigate to Production Report automatically
+            setTimeout(() => {
+                router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+            }, 3500)
         }
     }
 
@@ -524,7 +703,7 @@ const handlePlcMessage = (topic: string, payload: any) => {
     }
 }
 
-const confirmQcCheck = () => {
+const confirmQcCheck = async () => {
     if (pendingQcStep.value?.operation_brix_record && !actualBrix.value) {
         $q.notify({ type: 'warning', message: 'Please input Actual Brix' }); return;
     }
@@ -532,10 +711,34 @@ const confirmQcCheck = () => {
         $q.notify({ type: 'warning', message: 'Please input Actual pH' }); return;
     }
 
-    // If an API endpoint for QC data exists, this is where you would sync it.
-
-    $q.notify({ type: 'positive', message: 'QC Data Recorded Successfully!', icon: 'check', timeout: 2000 })
+    // REQ-8: Save to production_qc_records via API
+    qcSaving.value = true
+    try {
+        const step = pendingQcStep.value
+        await $fetch<any>(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/qc-record`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>,
+            body: {
+                step_id: step?.sub_step ?? null,
+                brix_target: step?.brix_sp ? Number(step.brix_sp) : null,
+                brix_actual: actualBrix.value !== '' ? Number(actualBrix.value) : null,
+                ph_target: step?.ph_sp ? Number(step.ph_sp) : null,
+                ph_actual: actualPh.value !== '' ? Number(actualPh.value) : null,
+                operator: user.value?.username || 'operator'
+            }
+        })
+        $q.notify({ type: 'positive', message: '✅ QC Data Saved!', icon: 'check_circle', timeout: 2000 })
+    } catch (e: any) {
+        console.error('[QC] Save failed:', e)
+        $q.notify({ type: 'negative', message: `QC save failed: ${e?.data?.detail || e.message}` })
+        // Don't block production even if save fails — just log it
+    } finally {
+        qcSaving.value = false
+    }
     
+    // Reset QC form (actualBrix/actualPh are ref<string|number> — reset to '')
+    actualBrix.value = ''
+    actualPh.value   = ''
     qcDialog.value = false;
     pendingQcStep.value = null;
     batchRunning.value = true;
@@ -547,6 +750,9 @@ const confirmQcCheck = () => {
     } else {
         batchRunning.value = false
         $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
+        setTimeout(() => {
+            router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+        }, 2000)
     }
 }
 
@@ -554,7 +760,7 @@ const sendStepToPLC = (index: number) => {
     const s = skuSteps.value[index]
     if (!s) return;
     
-    const topic = `mixing/plant/${activePlantId.value}/step_cmd`
+    const topic = simCmdTopic(activePlantId.value, 'step_cmd')
     const payload = {
         // --- DB100 IDENTIFIERS ---
         Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
@@ -594,6 +800,75 @@ const sendStepToPLC = (index: number) => {
     console.log('PLC DB100 Command Sent:', payload)
 }
 
+// ── Recipe Transfer State & Function ──
+const downloadProgress = ref(0)
+const downloadDialog = ref(false)
+const downloadPhases = ref<any[]>([])
+const downloadVerification = ref<any>(null)
+const downloadError = ref('')
+
+const closeDownloadDialog = () => {
+    downloadDialog.value = false
+}
+
+const downloadRecipeToPlc = async (batchId: string) => {
+    downloadDialog.value = true
+    downloadProgress.value = 0
+    downloadPhases.value = []
+    downloadVerification.value = null
+    downloadError.value = ''
+    
+    try {
+        const remoteApiBaseUrl = appConfig.apiBaseUrl
+        
+        // Stage 1: PREPARE
+        downloadProgress.value = 10
+        
+        // Stage 2: TRANSFER + Stage 3: VERIFY
+        const plantId = activePlantId.value || '1'
+        const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/send-recipe/${batchId}?plant_id=${Number(plantId)}`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>
+        })
+        
+        downloadProgress.value = 60
+        console.log('PLC Recipe Response:', res)
+        
+        // Show phase-by-phase progress
+        if (res.transfer?.phases) {
+            for (let i = 0; i < res.transfer.phases.length; i++) {
+                downloadPhases.value.push({ ...res.transfer.phases[i], status: 'done' })
+                downloadProgress.value = 60 + ((i + 1) / res.transfer.phases.length) * 30
+                await new Promise(r => setTimeout(r, 150)) // Visual delay per phase
+            }
+        }
+        
+        // Stage 4: VERIFY — show CRC result
+        downloadProgress.value = 95
+        downloadVerification.value = res.verification
+        
+        await new Promise(r => setTimeout(r, 500))
+        downloadProgress.value = 100
+        
+        $q.notify({ 
+            type: 'positive', 
+            icon: 'verified',
+            message: `✅ Recipe Downloaded — ${res.transfer?.totalSteps} steps, CRC: ${res.verification?.crcHex}`,
+            position: 'top', 
+            timeout: 3000 
+        })
+        
+    } catch (e: any) {
+        console.error('Failed to download recipe to PLC', e)
+        downloadError.value = e?.message || 'Transfer failed'
+        $q.notify({ 
+            type: 'negative', 
+            message: 'Failed to download recipe to PLC', 
+            position: 'top' 
+        })
+    }
+}
+
 // ── PLC Commands ──
 const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
     if (!isPlcConnected.value) {
@@ -609,17 +884,23 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
         batchRunning.value = true
         // Resume from where we were (PLC feedback), or start from 0
         localStepIndex.value = currentStepIndex.value >= skuSteps.value.length ? 0 : currentStepIndex.value
+        
+        // --- ADDED CRC CHECKSUM DOWNLOAD DIALOG LOGIC ---
+        if (batchInfo.value && batchInfo.value.batch_id) {
+            await downloadRecipeToPlc(batchInfo.value.batch_id)
+        }
+        
         sendStepToPLC(localStepIndex.value)
         $q.notify({ type: 'positive', icon: 'settings_remote', message: `STARTED at Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1500 })
         // Also send START state
-        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { 
+        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { 
             command: 'START',
             Batch_ID: selectedBatchId.value || '-'
         })
         return
     } else if (cmd === 'ABORT') {
         batchRunning.value = false
-        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'ABORT' })
+        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
         return
     } else if (cmd === 'NEXT_STEP') {
         batchRunning.value = true
@@ -630,7 +911,7 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
         return
     } else if (cmd === 'PAUSE') {
         batchRunning.value = false
-        publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'PAUSE' })
+        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'PAUSE' })
         return
     }
 }
@@ -651,7 +932,7 @@ const killBatch = () => {
             })
             
             // Send ABORT just to be safe
-            publishMessage(`mixing/plant/${activePlantId.value}/cmd`, { command: 'ABORT' })
+            publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
             batchRunning.value = false
             
             // Reset the frontend state
@@ -669,6 +950,51 @@ const killBatch = () => {
         } catch (e: any) {
             console.error('Failed to kill batch:', e)
             $q.notify({ type: 'negative', message: 'Failed to clear PLC recipe data.' })
+        } finally {
+            $q.loading.hide()
+        }
+    })
+}
+
+const softResetBatch = () => {
+    if (!selectedBatchId.value) {
+        $q.notify({ type: 'warning', message: 'No batch selected to reset.' })
+        return
+    }
+    $q.dialog({
+        title: 'Confirm Reset Batch',
+        message: `Are you sure you want to soft-reset batch ${selectedBatchId.value}? This will clear DB15x0 (Step CMD), DB15x1 (Recipe), DB15x7 (Actuals), delete all step logs in database, and reset status back to Pending.`,
+        cancel: true,
+        persistent: true,
+        color: 'warning'
+    }).onOk(async () => {
+        try {
+            $q.loading.show()
+            const remoteApiBaseUrl = appConfig.apiBaseUrl
+            const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${selectedBatchId.value}`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>
+            })
+            
+            if (res && (res.status === 'success' || res.status === 'partial')) {
+                $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory and database logs cleared.' })
+                
+                // Clear state and go back to Check for Production since batch is now Pending
+                batchInfo.value = null
+                selectedBatchId.value = null
+                selectedSkuId.value = null
+                skuSteps.value = []
+                startConfirmed.value = false
+                
+                const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+                router.replace({ query: newQuery })
+                router.push('/x60-CheckForProduction')
+            } else {
+                $q.notify({ type: 'negative', message: res?.message || 'Failed to soft reset batch.' })
+            }
+        } catch (e: any) {
+            console.error('Failed to soft reset batch:', e)
+            $q.notify({ type: 'negative', message: 'Error calling soft-reset API.' })
         } finally {
             $q.loading.hide()
         }
@@ -716,33 +1042,148 @@ const isWeightInTolerance = (step: any, actualWeight: number) => {
     return actualWeight >= minW && actualWeight <= maxW
 }
 
+// ── Process Interlock: ALL setpoints must be green before step can advance ──
+// Returns { ok: boolean, failed: string[] } — failed lists what's out of range.
+const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
+    const failed: string[] = []
+
+    // 1. Temperature ±5°C (only if SP is set)
+    const tempSP = Number(step.temperature || 0)
+    if (tempSP > 0) {
+        const tempTol = 5  // ±5°C
+        if (Math.abs(actualTankTemp.value - tempSP) > tempTol) {
+            failed.push(`Temp: ${actualTankTemp.value.toFixed(1)}°C ≠ SP ${tempSP}°C (±${tempTol})`)
+        }
+    }
+
+    // 2. Agitator RPM ±10% of SP (only if SP is set)
+    const agitSP = Number(step.agitator_rpm || 0)
+    if (agitSP > 0) {
+        const agitTol = agitSP * 0.10
+        if (Math.abs(actualAgitatorRpm.value - agitSP) > agitTol) {
+            failed.push(`Agitator: ${actualAgitatorRpm.value.toFixed(0)} RPM ≠ SP ${agitSP} RPM (±10%)`)
+        }
+    }
+
+    // 3. High Shear RPM ±10% of SP (only if SP is set)
+    const hsSP = Number(step.high_shear_rpm || 0)
+    if (hsSP > 0) {
+        const hsTol = hsSP * 0.10
+        if (Math.abs(actualHighShearRpm.value - hsSP) > hsTol) {
+            failed.push(`High Shear: ${actualHighShearRpm.value.toFixed(0)} RPM ≠ SP ${hsSP} RPM (±10%)`)
+        }
+    }
+
+    // 4. Brix ±5% of SP (only if SP is set)
+    const brixSP = Number(step.brix_sp || 0)
+    if (brixSP > 0) {
+        const brixTol = brixSP * 0.05
+        const brixAct = Number(actualBrix.value || 0)
+        if (brixAct <= 0 || Math.abs(brixAct - brixSP) > brixTol) {
+            failed.push(`Brix: ${brixAct > 0 ? brixAct.toFixed(2) : '?'} ≠ SP ${brixSP.toFixed(2)} (±5%)`)
+        }
+    }
+
+    // 5. pH ±0.3 of SP (only if SP is set)
+    const phSP = Number(step.ph_sp || 0)
+    if (phSP > 0) {
+        const phTol = 0.3
+        const phAct = Number(actualPh.value || 0)
+        if (phAct <= 0 || Math.abs(phAct - phSP) > phTol) {
+            failed.push(`pH: ${phAct > 0 ? phAct.toFixed(2) : '?'} ≠ SP ${phSP.toFixed(2)} (±${phTol})`)
+        }
+    }
+
+    return { ok: failed.length === 0, failed }
+}
+
+const getStepLiveWeight = (step: any) => {
+    if (!step) return 0
+    
+    // 1. If we have a scanned volume from the QR label, ALWAYS use it!
+    const rc = String(step.re_code || '').trim()
+    if (scannedVolumeMap.value[rc] != null) {
+        return scannedVolumeMap.value[rc]
+    }
+    
+    // 2. Fallback to live PLC scales
+    const whType = prebatchWhMap.value[step.re_code] || ''
+    if (whType === 'SPP' || whType === 'FH') {
+        return actualHopperWeight.value
+    } else {
+        return actualTankWeight.value
+    }
+}
+
 const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
         return
     }
     
-    // Weight Tolerance Check for Manual Add Steps
     const aCode = String(step.action_code || '')
-    if (!skipToleranceCheck && (aCode.startsWith('2') || aCode.startsWith('3'))) {
+    const rc = (step.re_code || '').trim()
+
+    // ── Case 1: SPP/FH — volume confirmed from QR scan ──────────────────────────
+    // Even though we trust the QR label, the scanned volume must still be within
+    // tolerance. If not green → block advance (use Manual Override to bypass).
+    const scannedVol = scannedVolumeMap.value[rc]
+    if (scannedVol != null && (aCode.startsWith('2') || aCode.startsWith('3'))) {
+        const requiredWeight = productionRequire(step)
+        if (requiredWeight > 0 && !isWeightInTolerance(step, scannedVol)) {
+            const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
+            const tolLow  = Number(step.low_tol  || (requiredWeight * 0.02))
+            $q.notify({
+                type: 'negative',
+                message: '⚠️ Scanned volume out of tolerance!',
+                caption: `Req: ${requiredWeight.toFixed(3)} kg | Scanned: ${scannedVol.toFixed(3)} kg | Range: ${(requiredWeight - tolLow).toFixed(3)}–${(requiredWeight + tolHigh).toFixed(3)} kg. Use Override to bypass.`,
+                position: 'center',
+                icon: 'scale',
+                timeout: 6000
+            })
+            return // BLOCK ADVANCE — require is not green
+        }
+    }
+
+    // ── Case 2: Manual add steps — check live hopper/tank weight ────────────────
+    const hasScanConfirmed = scannedVol != null
+    const isWater = rc.toLowerCase().includes('water')
+    if (!skipToleranceCheck && !hasScanConfirmed && !isWater && (aCode.startsWith('2') || aCode.startsWith('3'))) {
         const requiredWeight = productionRequire(step)
         if (requiredWeight > 0) {
-            const actualWeight = actualHopperWeight.value
-            if (!isWeightInTolerance(step, actualWeight)) {
+            const actualWeight = getStepLiveWeight(step)
+            if (actualWeight > 0 && !isWeightInTolerance(step, actualWeight)) {
                 $q.notify({ 
                     type: 'negative', 
-                    message: 'Weight out of tolerance!', 
+                    message: '⚠️ Weight out of tolerance!', 
                     caption: `Req: ${requiredWeight.toFixed(2)} | Act: ${actualWeight.toFixed(2)}. Adjust weight or use Override.`, 
                     position: 'center',
                     icon: 'scale',
                     timeout: 4000
                 })
-                return // BLOCK ADVANCE!
+                return // BLOCK ADVANCE — require is not green
             }
         }
     }
     
-    const topic = `mixing/plant/${activePlantId.value}/step_cmd`
+    // ── Process Interlock: Temp / Agitator / HighShear / Brix / pH ────────────
+    if (!skipToleranceCheck) {
+        const { ok, failed } = isStepAllGreen(step)
+        if (!ok) {
+            $q.notify({
+                type: 'negative',
+                icon: 'lock',
+                message: '⛔ Process not ready — parameters out of range',
+                caption: failed.join(' | '),
+                position: 'center',
+                timeout: 0,
+                actions: [{ label: 'OK', color: 'white' }]
+            })
+            return  // BLOCK ADVANCE
+        }
+    }
+    
+    const topic = simCmdTopic(activePlantId.value, 'step_cmd')
     const payload = {
         Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
         Batch_ID: selectedBatchId.value || '-',
@@ -751,7 +1192,19 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Confirm_Phase: String(step.phase_number || ''),
         Confirm_Step: Number(step.sub_step || 0),
         Cmd_StartTimer: step.step_time ? 1 : 0,
-        HMI_Command: 2 // 2 for Next/Confirm
+        HMI_Command: 1, // 1=START (Resume), 2 was incorrectly pausing the PLC
+        // --- Setpoints ---
+        Step_Time_SP: Number(step.step_time || 0) * 60,
+        Step_Status: 1,
+        Material_ID: step.mat_sap_code || '',
+        Re_Code_ID: step.re_code || '',
+        Req_Qty: productionRequire(step),
+        TT_SP: [Number(step.temperature || 0)],
+        Agitator_Speed: Number(step.agitator_rpm || 0),
+        High_Shear_SP: Number(step.high_shear_rpm || 0),
+        PH_Target: Number(step.ph_sp || 0),
+        Brix_Target: Number(step.brix_sp || 0),
+        Cmd_NewStep: true
     }
     
     publishMessage(topic, payload)
@@ -787,6 +1240,72 @@ const submitManualPass = () => {
     manualPassDialog.value = false
     manualPassStepTarget.value = null
     manualPassReason.value = ''
+}
+
+// ── QR Scan Dialog (SPP / FH steps) ──
+const qrScanDialog = ref(false)
+const qrScanBuffer = ref('')
+const qrScanStep = ref<any>(null)
+
+const openQrScanDialog = (step: any) => {
+    qrScanStep.value = step
+    qrScanBuffer.value = ''
+    _qrAccum   = ''   // clear non-reactive accumulators
+    _scanAccum = ''
+    scanBuffer.value = ''
+    if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
+    qrScanDialog.value = true
+}
+
+const onQrScanInput = (val: string) => {
+    if (val && val.trim().length > 3) {
+        qrScanDialog.value = false
+        handleScan(val.trim())
+        qrScanBuffer.value = ''
+    }
+}
+
+// ── Fault Alarm (wrong QR scan) ──
+const faultAlarmDialog = ref(false)
+const faultAlarmInfo = ref({ scanned: '', expected: '', stepName: '', re_code: '' })
+
+const playAlarmBeep = () => {
+    try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const playTone = (freq: number, start: number, duration: number) => {
+            const osc = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.frequency.value = freq
+            osc.type = 'square'
+            gain.gain.setValueAtTime(0.3, ctx.currentTime + start)
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration)
+            osc.start(ctx.currentTime + start)
+            osc.stop(ctx.currentTime + start + duration)
+        }
+        playTone(880, 0, 0.15)
+        playTone(660, 0.2, 0.15)
+        playTone(440, 0.4, 0.3)
+    } catch { /* audio not supported */ }
+}
+
+const triggerFaultAlarm = (scanned: string, expected: string, step: any) => {
+    faultAlarmInfo.value = {
+        scanned,
+        expected: expected || 'None',
+        stepName: step?.re_code || step?.description || '',
+        re_code: step?.re_code || ''
+    }
+    faultAlarmDialog.value = true
+    qrScanDialog.value = false
+    // ── Clear ALL accumulators (reactive + non-reactive) ──
+    scanBuffer.value = ''
+    qrScanBuffer.value = ''
+    _scanAccum = ''
+    _qrAccum   = ''
+    if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
+    playAlarmBeep()
 }
 
 const printProduction = () => {
@@ -842,6 +1361,7 @@ watch(currentStepIndex, (newIdx) => {
 const prebatchWeightMap = ref<Record<string, number>>({})
 const prebatchIdMap = ref<Record<string, string>>({})
 const prebatchWhMap = ref<Record<string, string>>({})
+const scannedVolumeMap = ref<Record<string, number>>({}) // volume confirmed from QR scan per re_code
 
 const fetchPrebatchWeights = async (batchId: string) => {
     try {
@@ -951,24 +1471,75 @@ const restoreBatchFromPlc = async (batchId: string) => {
             selectedSkuId.value = skuId
         }
             
-        await fetchSkuSteps(selectedSkuId.value || '-')
+        await fetchSkuSteps(selectedSkuId.value || '-', batchId)
         await fetchPrebatchWeights(batchId)
         
         startConfirmed.value = true
         batchRunning.value = true
-        
-        const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
-        const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
-        
-        if (pPhase && pStep && skuSteps.value.length > 0) {
-            const idx = skuSteps.value.findIndex(s => {
-                const cleanSPhase = String(s.phase_number || s.phase).trim()
-                return cleanSPhase === pPhase && Number(s.sub_step) === pStep
+
+        // Strategy: use target.active_step from DB1511 as primary source (most reliable — it's
+        // what the PLC actually has as its running step, not the last completed step).
+        // Fallback chain: DB1511 active_step → MQTT Phase_ID/Step_ID → DB1517 actual phase_id/step_id
+        let restoredIdx = -1
+
+        try {
+            const remoteApiBaseUrl = appConfig.apiBaseUrl
+            const statusData = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/recipe-status`, {
+                headers: getAuthHeader() as Record<string, string>
             })
-            if (idx !== -1) {
-                localStepIndex.value = idx
-                expandedPhases.value[pPhase] = true
+
+            // PRIMARY: DB1511 target.active_step (sequence number of currently running step)
+            const activeSeq = Number(statusData?.target?.active_step ?? 0)
+            if (activeSeq > 0 && skuSteps.value.length > 0) {
+                const idx = skuSteps.value.findIndex(s => Number(s.id) === activeSeq)
+                if (idx !== -1) {
+                    restoredIdx = idx
+                    console.log(`[Restore] ✅ PRIMARY: Restored via DB1511 active_step=${activeSeq} → index ${idx}`)
+                }
             }
+
+            // SECONDARY: DB1517 actual phase_id + step_id (last completed step → use next one)
+            if (restoredIdx === -1) {
+                const actual = statusData?.actual
+                const aPhase = actual?.phase_id ? String(actual.phase_id).replace(/\0/g, '').trim() : ''
+                const aStep = actual?.step_id ? Number(actual.step_id) : 0
+                if (aPhase && aStep && skuSteps.value.length > 0) {
+                    const completedIdx = skuSteps.value.findIndex(s => {
+                        const cleanSPhase = String(s.phase_number || s.phase).trim()
+                        return cleanSPhase === aPhase && Number(s.sub_step) === aStep
+                    })
+                    // Use the NEXT step after the last completed one
+                    if (completedIdx !== -1 && completedIdx + 1 < skuSteps.value.length) {
+                        restoredIdx = completedIdx + 1
+                        console.log(`[Restore] ✅ SECONDARY: Restored via DB1517 last completed (${aPhase}/${aStep}) → next index ${restoredIdx}`)
+                    }
+                }
+            }
+        } catch (apiErr) {
+            console.warn('[Restore] Could not fetch recipe-status from REST API:', apiErr)
+        }
+
+        // TERTIARY: MQTT Phase_ID/Step_ID (only if REST API failed)
+        if (restoredIdx === -1) {
+            const pPhase = String(plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id || '').replace(/\0/g, '').trim()
+            const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
+            if (pPhase && pStep && skuSteps.value.length > 0) {
+                restoredIdx = skuSteps.value.findIndex(s => {
+                    const cleanSPhase = String(s.phase_number || s.phase).trim()
+                    return cleanSPhase === pPhase && Number(s.sub_step) === pStep
+                })
+                if (restoredIdx !== -1) {
+                    console.log(`[Restore] ✅ TERTIARY: Restored via MQTT (${pPhase}/${pStep}) → index ${restoredIdx}`)
+                }
+            }
+        }
+
+        if (restoredIdx !== -1) {
+            localStepIndex.value = restoredIdx
+            const restoredStep = skuSteps.value[restoredIdx]
+            if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
+        } else {
+            console.warn('[Restore] ⚠️ Could not determine current step from any source. Defaulting to step 0.')
         }
         $q.notify({ type: 'info', message: `Restored active batch ${batchId} from PLC.`, position: 'top', icon: 'settings_backup_restore' })
     } catch (e) {
@@ -1058,85 +1629,444 @@ const scanBuffer = ref('')
 let scanTimeout: any = null
 
 const handleScan = (scannedText: string) => {
-    const s = currentStep.value
-    if (!s) return
+    // ── Parse QR JSON — strip newlines/CR that scanners may inject mid-data ──
+    const cleanText = scannedText.replace(/[\r\n]/g, '').trim()
+    let qrData: any = null
+    try { qrData = JSON.parse(cleanText) } catch { /* plain barcode */ }
 
-    const aCode = String(s.action_code || '')
-    // Only apply logic if the current step action code requires scanning
-    if (aCode.startsWith('2') || aCode.startsWith('3')) {
-        const expectedIds = prebatchIdMap.value[s.re_code] || ''
-        
-        // Match the barcode: either exact match or contained inside the string of IDs
-        if (expectedIds.includes(scannedText)) {
+    // Extract ID: if JSON use 'b' field, otherwise use raw text
+    const barcodeId = qrData?.b ?? cleanText
+
+    const normalize = (str: string) => str.toLowerCase().replace(/[-_\s]/g, '')
+    const barcodeNorm = normalize(barcodeId)
+
+    let matchedStep: any = null
+
+    // ── p030 FREE-SCAN: any p030 ingredient can be scanned in any order ─────────
+    // Uses localStepIndex to advance the UI — works even when PLC is OFFLINE.
+    // When ALL p030 steps scanned, a single NEXT_STEP is sent to PLC (best-effort).
+    for (const step of skuSteps.value) {
+        const isP30 = (step.phase_number || '').toLowerCase().includes('p030')
+        if (!isP30) continue
+        const aCode = String(step.action_code || '')
+        if (!aCode.startsWith('2') && !aCode.startsWith('3')) continue
+
+        const expectedIds = prebatchIdMap.value[step.re_code] || ''
+        const expectedNorm = normalize(step.re_code || '')
+        const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
+        const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
+
+        if (isExactMatch || isNameMatch) {
+            const rawVol = qrData?.r ?? qrData?.n ?? null
+            if (rawVol == null) {
+                $q.notify({
+                    type: 'warning', icon: 'qr_code',
+                    message: `p030 Scan — no volume: ${step.re_code}`,
+                    caption: 'Scan again slowly to capture the volume field.',
+                    position: 'top', timeout: 4000
+                })
+                return
+            }
+
+            // 1. Record the scanned volume
+            const scannedVol = Number(rawVol)
+            prebatchWeightMap.value = { ...prebatchWeightMap.value, [step.re_code]: scannedVol }
+            scannedVolumeMap.value  = { ...scannedVolumeMap.value,  [step.re_code]: scannedVol }
+
+            // 2. All p030 ingredient steps in this recipe
+            const allP30Steps = skuSteps.value.filter((s: any) =>
+                (s.phase_number || '').toLowerCase().includes('p030') &&
+                (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+                s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
+            )
+            const scannedCount = allP30Steps.filter((s: any) => scannedVolumeMap.value[s.re_code] != null).length
+            const allScanned   = scannedCount >= allP30Steps.length && allP30Steps.length > 0
+
             $q.notify({
                 type: 'positive',
-                message: `Scan Matched: ${scannedText}. Advancing step...`,
+                message: `✅ p030: ${step.re_code} — ${scannedCount}/${allP30Steps.length} done`,
+                caption: `Volume: ${scannedVol.toFixed(5)} kg | Bag: ${barcodeId}${allScanned ? ' | 🎉 All done!' : ''}`,
+                position: 'top', icon: 'inventory_2', timeout: 3000
+            })
+
+            // 3. Find this step's index in skuSteps
+            const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
+
+            if (allScanned) {
+                // All p030 scanned → advance localStepIndex PAST the last p030 step
+                const lastP30Idx = skuSteps.value.reduce((last: number, s: any, i: number) =>
+                    (s.phase_number || '').toLowerCase().includes('p030') ? i : last, stepIdx)
+                localStepIndex.value = lastP30Idx + 1
+                // Best-effort: tell PLC to advance (may fail if offline, that's OK — TIA Portal handles p030)
+                if (isPlcConnected.value) {
+                    setTimeout(() => sendCommand('NEXT_STEP'), 600)
+                }
+            } else if (stepIdx >= 0) {
+                // Advance localStepIndex to next step so UI moves forward
+                // Even if this isn't the "current" PLC step — frontend tracks independently for p030
+                if (stepIdx >= localStepIndex.value) {
+                    localStepIndex.value = stepIdx + 1
+                }
+            }
+            return
+        }
+    }
+
+    // ── NORMAL FLOW: active-step priority then SPP fallback ───────────────────
+    // 1. Try matching the current step first (priority to active step)
+    const activeS = currentStep.value
+    if (activeS && (String(activeS.action_code || '').startsWith('2') || String(activeS.action_code || '').startsWith('3'))) {
+        const expectedIds = prebatchIdMap.value[activeS.re_code] || ''
+        const expectedNorm = normalize(activeS.re_code || '')
+
+        const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
+        const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
+
+        if (isExactMatch || isNameMatch) {
+            matchedStep = activeS
+        }
+    }
+
+    // 2. Fallback: search SPP steps (non-p030) for out-of-order scan
+    if (!matchedStep) {
+        for (const step of skuSteps.value) {
+            const isP30 = (step.phase_number || '').toLowerCase().includes('p030')
+            if (isP30) continue  // already handled above
+            const aCode = String(step.action_code || '')
+            if (!aCode.startsWith('2') && !aCode.startsWith('3')) continue
+            const whType = prebatchWhMap.value[step.re_code] || ''
+            if (whType !== 'SPP') continue
+
+            const expectedIds = prebatchIdMap.value[step.re_code] || ''
+            const expectedNorm = normalize(step.re_code || '')
+            const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
+            const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
+
+            if (isExactMatch || isNameMatch) {
+                matchedStep = step
+                break
+            }
+        }
+    }
+
+    // 3. Handle the match (normal steps — sends PLC command when active)
+    if (matchedStep) {
+        const whType = prebatchWhMap.value[matchedStep.re_code] || ''
+        const expectedIds = prebatchIdMap.value[matchedStep.re_code] || ''
+        const rawVol = qrData?.r ?? qrData?.n ?? null
+
+        if ((whType === 'FH' || whType === 'SPP') && rawVol != null) {
+            const scannedVol = Number(rawVol)
+            // Save the scanned volume
+            prebatchWeightMap.value = { ...prebatchWeightMap.value, [matchedStep.re_code]: scannedVol }
+            scannedVolumeMap.value = { ...scannedVolumeMap.value, [matchedStep.re_code]: scannedVol }
+
+            $q.notify({
+                type: 'positive',
+                message: `Scan Accepted: ${matchedStep.re_code} (Step ${matchedStep.sub_step})`,
+                caption: `Volume: ${scannedVol.toFixed(5)} kg | Bag: ${barcodeId}`,
+                position: 'top',
+                icon: 'check_circle',
+                timeout: 3000
+            })
+
+            // If the matched step is the current active step, auto-advance it
+            if (currentStep.value && Number(currentStep.value.id) === Number(matchedStep.id)) {
+                confirmStepFromRow(matchedStep, true)
+                // User requested immediate auto-step upon correct scan
+                setTimeout(() => sendCommand('NEXT_STEP'), 500)
+            }
+        } else if (rawVol == null && (whType === 'FH' || whType === 'SPP')) {
+            $q.notify({
+                type: 'warning',
+                icon: 'qr_code',
+                message: 'Could not read volume from scan',
+                caption: 'Scanner may have split the QR. Please scan again slowly.',
+                position: 'top',
+                timeout: 4000
+            })
+        } else {
+            // Standard scan (not FH/SPP)
+            // Auto-fill the required weight to bypass scale tolerance, as requested by the user.
+            const reqVol = productionRequire(matchedStep)
+            prebatchWeightMap.value = { ...prebatchWeightMap.value, [matchedStep.re_code]: reqVol }
+            scannedVolumeMap.value = { ...scannedVolumeMap.value, [matchedStep.re_code]: reqVol }
+            
+            $q.notify({
+                type: 'positive',
+                message: `Scan Matched: ${barcodeId} (Step ${matchedStep.sub_step})`,
+                caption: `Auto-filled required weight: ${reqVol.toFixed(2)} kg`,
                 position: 'top',
                 icon: 'check_circle'
             })
-            confirmStepFromRow(s, false)
-        } else {
-            $q.notify({
-                type: 'negative',
-                message: `Invalid Barcode Scan: ${scannedText}`,
-                position: 'top',
-                caption: `Expected one of: ${expectedIds || 'None'}`,
-                icon: 'warning'
-            })
+            if (currentStep.value && Number(currentStep.value.id) === Number(matchedStep.id)) {
+                confirmStepFromRow(matchedStep, true)
+                // User requested immediate auto-step upon correct scan
+                setTimeout(() => sendCommand('NEXT_STEP'), 500)
+            }
         }
     } else {
-        $q.notify({
-            type: 'info',
-            message: `Scanned: ${scannedText}`,
-            position: 'top',
-            caption: 'Current step does not require scanning.'
-        })
+        // No match found anywhere
+        const s = currentStep.value
+        const hasReCode = s && s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
+        const activeRequiresScan = s && hasReCode && (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3'))
+        
+        if (activeRequiresScan) {
+            // Active step requires scan -> wrong barcode, trigger fault alarm
+            const expectedIds = prebatchIdMap.value[s.re_code] || s.re_code || ''
+            triggerFaultAlarm(barcodeId, expectedIds, s)
+        } else {
+            // Active step does not require scan -> just show general info
+            $q.notify({
+                type: 'info',
+                message: `Scanned: ${scannedText}`,
+                position: 'top',
+                caption: 'Current step does not require scanning.'
+            })
+        }
     }
+}
+
+// ── Non-reactive scan accumulators ───────────────────────────────────────────
+// Plain JS strings — no Vue reactivity per keystroke (avoids ~60 DOM re-renders
+// per QR scan). Reactive refs are only written ONCE on Enter (scan complete).
+let _scanAccum  = ''   // global background buffer (no dialog)
+let _qrAccum    = ''   // buffer when QR scan dialog is open
+
+// ── Physical key → ASCII mapper (layout-agnostic) ───────────────────────────
+// Barcode scanners emulate keyboard input. When OS layout is Thai (or any
+// non-Latin layout), e.key returns Thai characters. Using e.code (physical
+// key position) lets us always derive the intended ASCII character correctly.
+const physicalKeyToAscii = (e: KeyboardEvent): string => {
+    const s = e.shiftKey
+    const c = e.code
+
+    // Digit row: 0-9 and their shifted symbols
+    if (c.startsWith('Digit')) {
+        const d = c[5]                                   // '0'–'9'
+        return s ? '!@#$%^&*()'['0123456789'.indexOf(d)] ?? d : d
+    }
+    // Letter keys: always produce Latin a-z / A-Z
+    if (c.startsWith('Key')) {
+        const letter = c[3]                              // 'A'–'Z'
+        return s ? letter.toUpperCase() : letter.toLowerCase()
+    }
+    // Numpad
+    if (c.startsWith('Numpad')) {
+        const numMap: Record<string, string> = {
+            Numpad0: '0', Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4',
+            Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8', Numpad9: '9',
+            NumpadDecimal: '.', NumpadDivide: '/', NumpadMultiply: '*',
+            NumpadSubtract: '-', NumpadAdd: '+'
+        }
+        return numMap[c] ?? ''
+    }
+    // Punctuation & symbols (standard US layout positions — same physical location on all keyboards)
+    const puncMap: Record<string, [string, string]> = {  // [normal, shifted]
+        Minus:        ['-', '_'],
+        Equal:        ['=', '+'],
+        BracketLeft:  ['[', '{'],
+        BracketRight: [']', '}'],
+        Backslash:    ['\\', '|'],
+        Semicolon:    [';', ':'],
+        Quote:        ["'", '"'],
+        Comma:        [',', '<'],
+        Period:       ['.', '>'],
+        Slash:        ['/', '?'],
+        Backquote:    ['`', '~'],
+        Space:        [' ', ' '],
+    }
+    const pair = puncMap[c]
+    if (pair) return s ? pair[1] : pair[0]
+
+    return '' // Unknown / non-printable key
 }
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
     // Ignore keydown if the user is typing in an input field or textarea
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+    if (e.ctrlKey || e.altKey || e.metaKey) return
+    // ── Block all scanner input while fault alarm is showing ──────────────────
+    if (faultAlarmDialog.value) return
 
-    if (e.key === 'Enter') {
-        if (scanBuffer.value.length > 3) { // Ensure it's a barcode, not an accidental Enter
-            handleScan(scanBuffer.value.trim())
+    if (e.code === 'Enter' || e.key === 'Enter') {
+        if (qrScanDialog.value) {
+            // ── Dialog open: scanner finished → write to ref ONCE then process ──
+            const finalQr = _qrAccum.trim()
+            _qrAccum = ''
+            if (finalQr.length > 3) {
+                qrScanBuffer.value = finalQr   // single reactive write → 1 DOM update
+                onQrScanInput(finalQr)
+            }
+        } else {
+            // ── Background scan (no dialog) ──
+            const finalScan = _scanAccum.trim()
+            _scanAccum = ''
+            scanBuffer.value = ''
+            if (finalScan.length > 3) handleScan(finalScan)
         }
-        scanBuffer.value = ''
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        scanBuffer.value += e.key
-        if (scanTimeout) clearTimeout(scanTimeout)
-        // Scanners act like fast typing. If >150ms between keystrokes, reset the buffer.
-        scanTimeout = setTimeout(() => { scanBuffer.value = '' }, 150)
+        if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
+    } else {
+        // ── Accumulate into plain string (zero Vue reactivity overhead) ──
+        const char = physicalKeyToAscii(e)
+        if (char) {
+            if (qrScanDialog.value) {
+                _qrAccum += char
+            } else {
+                _scanAccum += char
+            }
+            if (scanTimeout) clearTimeout(scanTimeout)
+            // Reset buffer if scanner stops sending (>150ms gap = not a scanner)
+            scanTimeout = setTimeout(() => {
+                _scanAccum = ''
+                if (!qrScanDialog.value) _qrAccum = ''
+            }, 150)
+        }
     }
 }
 
-// ── Automatic Batch Completion ──
+// ── Automatic Batch Completion & Auto Step ──
 watch(() => plantData.value.PLC_State, async (newVal, oldVal) => {
-    // If the PLC explicitly enters state 4 (DONE)
-    if (newVal === 4 && oldVal !== 4 && batchRunning.value) {
+    
+    // Legacy Auto Step: Keep for fallback if PLC_State ever becomes 5
+    if (newVal === 5 && oldVal !== 5 && batchRunning.value) {
+        setTimeout(async () => {
+            const step = currentStep.value
+            if (!step) return
+            
+            if (String(step.action_code || '').startsWith('2') || String(step.action_code || '').startsWith('3')) return
+            
+            const liveWt = getStepLiveWeight(step)
+            if (productionRequire(step) > 0 && !isWeightInTolerance(step, liveWt)) return
+            
+            $q.notify({ type: 'positive', message: 'Auto-Stepping to next step (Legacy)', position: 'top', timeout: 1000 })
+            await sendCommand('NEXT_STEP')
+        }, 1000)
+    }
+})
+
+// ── NEW Auto Step Logic based on Green State (Current_Step) ──
+watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
+    // Only auto-step if batch is actually running
+    if (!batchRunning.value) return;
+    
+    // In this PLC logic, even numbers > 0 (e.g. 4, 8, 12, 16, 20) generally mean the phase is complete
+    if (newVal && oldVal && newVal !== oldVal && newVal > 0 && newVal % 2 === 0) {
+        setTimeout(async () => {
+            const step = currentStep.value
+            if (!step) return
+            
+            // If it's a manual add step (2xxxx or 3xxxx), DO NOT auto-step (needs scan/manual acknowledge)
+            const aCode = String(step.action_code || '')
+            const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
+            if ((aCode.startsWith('2') || aCode.startsWith('3')) && hasReCode) {
+                console.log('Auto-Step BLOCKED: Manual step detected with ingredient', aCode, step.re_code)
+                return
+            }
+            
+            // Check weight tolerance
+            const liveWt = getStepLiveWeight(step)
+            if (productionRequire(step) > 0 && !isWeightInTolerance(step, liveWt)) {
+                console.log('Auto-Step BLOCKED: Weight out of tolerance — setting pendingWeightApproval')
+                pendingWeightApproval.value = true
+                $q.notify({
+                    type: 'warning', icon: 'scale',
+                    message: '⚠️ Weight out of tolerance — Auto-Step pending',
+                    caption: `Adjust weight to target. System will auto-step once weight is OK. Req: ${productionRequire(step).toFixed(3)} kg | Act: ${liveWt.toFixed(3)} kg`,
+                    position: 'center', timeout: 0,
+                    actions: [{ label: 'Dismiss', color: 'white' }]
+                })
+                return
+            }
+
+            // Check all process parameters (Temp / Agitator / HighShear / Brix / pH)
+            const { ok: procOk, failed: procFailed } = isStepAllGreen(step)
+            if (!procOk) {
+                console.log('Auto-Step BLOCKED: Process params out of range', procFailed)
+                $q.notify({
+                    type: 'warning', icon: 'thermostat',
+                    message: '⚠️ Process not ready — Auto-Step holding',
+                    caption: procFailed.join(' | '),
+                    position: 'top', timeout: 5000
+                })
+                return
+            }
+            
+            pendingWeightApproval.value = false
+            // If automated step and weight is good, confirm automatically
+            console.log(`Auto-Stepping triggered by Green State: ${newVal}`)
+            
+            // ** BATCH COMPLETE CHECK **
+            if (isLastStep.value) {
+                batchRunning.value = false
+                $q.notify({ type: 'positive', message: '🎉 BATCH COMPLETE!', position: 'center', timeout: 5000 })
+                
+                if (batchInfo.value && batchInfo.value.id) {
+                    try {
+                        const remoteApiBaseUrl = appConfig.apiBaseUrl
+                        await $fetch(`${remoteApiBaseUrl}/production-batches/${batchInfo.value.id}/status?status=Done`, {
+                            method: 'PATCH',
+                            headers: getAuthHeader() as Record<string, string>
+                        })
+                        $q.notify({ type: 'info', message: 'Batch marked as Done in MES.', position: 'top-right' })
+                        batchInfo.value.status = 'Done'
+                        batchInfo.value.done = true
+                    } catch (e) {
+                        console.error('[Batch Complete] Failed to sync status to MES:', e)
+                    }
+                }
+                // Navigate to report
+                setTimeout(() => {
+                    router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+                }, 2000)
+            } else {
+                $q.notify({ type: 'positive', message: `PLC Finished Phase (State ${newVal}) - Auto Stepping`, position: 'top', timeout: 2000 })
+                await sendCommand('NEXT_STEP')
+            }
+            
+        }, 1000)
+    }
+})
+
+// ── Weight Recovery Watcher: auto-step when weight comes back into tolerance ──
+// Handles the case where PLC sent step_done but weight was not in tolerance.
+// When operator corrects the weight, this fires and resumes the auto-step.
+const _doWeightRecoveryStep = async () => {
+    if (!pendingWeightApproval.value) return
+    if (!batchRunning.value) return
+    const step = currentStep.value
+    if (!step) return
+    const aCode = String(step.action_code || '')
+    const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
+    if ((aCode.startsWith('2') || aCode.startsWith('3')) && hasReCode) return  // still manual, don't auto-step
+    const liveWt = getStepLiveWeight(step)
+    if (!isWeightInTolerance(step, liveWt)) return  // still not in range
+    // Weight is now OK — fire the pending step!
+    pendingWeightApproval.value = false
+    console.log('[Weight Recovery] Weight OK — auto-stepping now')
+    $q.notify({ type: 'positive', icon: 'check_circle', message: '✅ Weight OK — Auto-Stepping', position: 'top', timeout: 2000 })
+    if (isLastStep.value) {
         batchRunning.value = false
-        $q.notify({ type: 'positive', message: '🎉 PLC REPORTS BATCH COMPLETE!', position: 'center', timeout: 5000 })
-        
-        // Sync with Backend database
-        if (batchInfo.value && batchInfo.value.id) {
+        $q.notify({ type: 'positive', message: '🎉 BATCH COMPLETE!', position: 'center', timeout: 5000 })
+        if (batchInfo.value?.id) {
             try {
-                const remoteApiBaseUrl = appConfig.apiBaseUrl
-                await $fetch(`${remoteApiBaseUrl}/production-batches/${batchInfo.value.id}/status?status=Done`, {
+                await $fetch(`${appConfig.apiBaseUrl}/production-batches/${batchInfo.value.id}/status?status=Done`, {
                     method: 'PATCH',
                     headers: getAuthHeader() as Record<string, string>
                 })
-                $q.notify({ type: 'info', message: 'Batch marked as Done in MES.', position: 'top-right' })
-                
-                // Refresh local status
                 batchInfo.value.status = 'Done'
                 batchInfo.value.done = true
-            } catch (e) {
-                console.error('[Batch Complete] Failed to sync status to MES:', e)
-            }
+            } catch (e) { console.error('[Batch Complete]', e) }
         }
+        setTimeout(() => {
+            router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+        }, 2000)
+    } else {
+        await sendCommand('NEXT_STEP')
     }
-})
+}
+watch(actualTankWeight,   () => _doWeightRecoveryStep())
+watch(actualHopperWeight, () => _doWeightRecoveryStep())
 
 onMounted(async () => {
     Promise.all([
@@ -1210,19 +2140,30 @@ onMounted(async () => {
     }, 2000)
 })
 
+// Auto-fetch stamp times whenever batch changes
+watch(selectedBatchId, (newBatchId) => {
+    if (newBatchId) {
+        fetchStampTimes(newBatchId)
+        startStampRefresh()
+    } else {
+        stopStampRefresh()
+    }
+})
+
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     offMessage(handlePlcMessage)
+    stopStampRefresh()
     disconnect()
 })
 </script>
 
 <template>
-  <q-page class="q-pa-sm" style="height: calc(100vh - 56px); overflow: hidden;">
+  <q-page class="q-pa-sm column no-wrap" style="height: calc(100vh - 105px) !important; min-height: calc(100vh - 105px) !important; max-height: calc(100vh - 105px) !important; overflow: hidden !important;">
 
     <!-- ═══ PAGE HEADER ═══ -->
-    <div class="bg-deep-purple-10 text-white q-pa-sm rounded-borders q-mb-sm shadow-2 row items-center justify-between no-wrap">
+    <div class="bg-deep-purple-10 text-white q-pa-sm rounded-borders q-mb-sm shadow-2 row items-center justify-between no-wrap" style="flex-shrink: 0; min-height: 60px; z-index: 50; position: sticky; top: 0;">
        <!-- LEFT: Branding & Plant Selection -->
        <div class="row items-center q-gutter-x-sm" style="flex-shrink: 0;">
           <q-btn flat round dense icon="arrow_back" color="white" @click="goBack" class="no-print" />
@@ -1268,7 +2209,15 @@ onUnmounted(() => {
              <q-separator vertical class="q-mx-xs" v-if="skuStepsByPhase.length > 0" />
              <q-btn flat dense icon="refresh" color="teal-8" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
+             <q-btn flat dense icon="settings_backup_restore" color="orange-9" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
+             <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="delete_forever" color="red-9" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
+             <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
+             <!-- View Report: direct link to production report for current batch -->
+             <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-5"
+                    @click="router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId || '' } })">
+               <q-tooltip>View Production Report ({{ selectedBatchId }})</q-tooltip>
+             </q-btn>
           </div>
           
           <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
@@ -1285,7 +2234,7 @@ onUnmounted(() => {
                  </q-badge>
              </div>
              <q-badge color="green-3" text-color="green-10" class="text-weight-bold shadow-1 ellipsis" style="padding: 4px 6px; font-size: 11px; max-width: 220px;">
-                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />Step: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
+                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />State: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
              </q-badge>
           </div>
        </div>
@@ -1370,7 +2319,7 @@ onUnmounted(() => {
         
         <template v-else>
           <!-- SKU DETAIL TITLE & CURRENT STEP INFO -->
-          <div class="bg-teal-7 text-white q-pa-sm shadow-1" style="flex-shrink: 0; z-index: 2;">
+          <div class="bg-teal-7 text-white q-pa-sm shadow-1" style="flex-shrink: 0; min-height: 60px; z-index: 2;">
             <div class="row items-center">
               <q-icon name="inventory_2" size="24px" class="q-mr-sm" />
               <div>
@@ -1462,7 +2411,7 @@ onUnmounted(() => {
             
             <div v-if="skuStepsByPhase.length > 0" class="scroll" style="flex: 1; min-height: 0;">
               <q-markup-table flat bordered dense separator="cell" style="font-size: 16px;" class="full-width production-table sticky-header-table">
-              <thead class="bg-grey-3 text-grey-9">
+              <thead class="bg-red-5 text-white">
                 <tr>
                   <th class="text-center text-weight-bold" style="width: 50px;">Phase</th>
                   <th class="text-center text-weight-bold" style="width: 40px;">Step</th>
@@ -1500,7 +2449,7 @@ onUnmounted(() => {
                       <td class="text-center text-weight-bold" style="color: #424242;">{{ step.sub_step }}</td>
                       <td class="text-weight-bold">
                         <div class="row items-center no-wrap">
-                          <q-icon v-if="String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3')" 
+                          <q-icon v-if="(String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3')) && step.re_code && step.re_code !== '-'" 
                                   name="qr_code_scanner" 
                                   size="16px" 
                                   color="deep-purple-8" 
@@ -1520,10 +2469,18 @@ onUnmounted(() => {
                       <!-- Require / Volume -->
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
-                          <!-- LIVE: Hopper actual vs required -->
-                          <span class="act-num" :class="productionRequire(step) && isWeightInTolerance(step, actualHopperWeight) ? 'text-green-8' : 'text-deep-orange-9'">{{ actualHopperWeight !== 0 ? Number(actualHopperWeight).toFixed(2) : '-' }}</span>
-                          <span class="slash">/</span>
-                          <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
+                          <!-- SPP/FH with confirmed scan: show scan volume, not load cell -->
+                          <template v-if="(prebatchWhMap[step.re_code] === 'SPP' || prebatchWhMap[step.re_code] === 'FH') && scannedVolumeMap[step.re_code] != null">
+                            <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[step.re_code]).toFixed(3) }}</span>
+                            <span class="slash">/</span>
+                            <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(3) : '-' }}</span>
+                          </template>
+                          <!-- Default: LIVE Hopper scale vs required -->
+                          <template v-else>
+                            <span class="act-num" :class="productionRequire(step) && isWeightInTolerance(step, getStepLiveWeight(step)) ? 'text-green-8' : 'text-deep-orange-9'">{{ getStepLiveWeight(step) !== 0 ? Number(getStepLiveWeight(step)).toFixed(2) : '-' }}</span>
+                            <span class="slash">/</span>
+                            <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
+                          </template>
                         </template>
                         <template v-else>
                           <span class="act-num">{{ step.actual_volume != null ? Number(step.actual_volume).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
@@ -1610,10 +2567,23 @@ onUnmounted(() => {
                                <q-tooltip>Confirm & Next Step (or Start Timer)</q-tooltip>
                         </q-btn>
                         <q-btn v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) && (String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3'))"
+                                dense flat color="blue-7" icon="qr_code_scanner"
+                                @click.stop="openQrScanDialog(step)"
+                                >
+                                <q-tooltip>Scan FH/SPP Label</q-tooltip>
+                         </q-btn>
+                        <q-btn v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) && (String(step.action_code).startsWith('2') || String(step.action_code).startsWith('3'))"
                                dense flat color="orange-9" icon="warning"
                                @click.stop="promptManualPass(step)"
                                >
                                <q-tooltip>Manual Override (Provide Reason)</q-tooltip>
+                        </q-btn>
+                        <!-- QC Brix/pH Entry: shown on any step with brix_sp or ph_sp set -->
+                        <q-btn v-if="step.brix_sp || step.ph_sp"
+                               dense flat color="indigo-7" icon="science"
+                               @click.stop="() => { pendingQcStep = step; actualBrix = step.actual_brix ?? ''; actualPh = step.actual_ph ?? ''; qcDialog = true; }"
+                               >
+                               <q-tooltip>Enter QC Brix / pH for this step</q-tooltip>
                         </q-btn>
                       </td>
                     </tr>
@@ -1628,6 +2598,80 @@ onUnmounted(() => {
     </div>
       </div> <!-- /col-9 -->
     </div> <!-- /row -->
+
+    <!-- ⚠️ FAULT ALARM DIALOG (Wrong QR Scan) -->
+    <q-dialog v-model="faultAlarmDialog" persistent backdrop-filter="blur(6px)">
+      <q-card style="width: 420px; max-width: 95vw; border-radius: 14px; border: 3px solid #c62828; animation: pulse-red 0.6s ease-in-out;">
+        <q-card-section class="bg-red-9 text-white row items-center q-pb-sm">
+          <q-icon name="gpp_bad" size="2.5rem" class="q-mr-sm" style="animation: blink 0.5s step-start infinite;"/>
+          <div>
+            <div class="text-h5 text-weight-bold">⚠ SCAN FAULT</div>
+            <div class="text-caption" style="opacity:0.9;">Wrong barcode detected!</div>
+          </div>
+          <q-space/>
+          <q-badge color="red-3" text-color="red-10" label="ALARM" class="text-weight-bold"/>
+        </q-card-section>
+        <q-separator color="red-4"/>
+        <q-card-section class="q-pa-lg">
+          <div class="text-subtitle2 text-grey-7 q-mb-xs">Step / Ingredient</div>
+          <div class="text-h6 text-weight-bold text-red-9 q-mb-md">{{ faultAlarmInfo.stepName }}</div>
+
+          <div class="row q-col-gutter-sm">
+            <div class="col-12">
+              <q-banner dense rounded class="bg-red-1 text-red-9 q-mb-sm" style="border: 1px solid #ef9a9a;">
+                <template v-slot:avatar><q-icon name="qr_code" color="red-7"/></template>
+                <div class="text-caption text-grey-6">Scanned</div>
+                <div class="text-body2 text-weight-bold" style="word-break: break-all;">{{ faultAlarmInfo.scanned }}</div>
+              </q-banner>
+              <q-banner dense rounded class="bg-green-1 text-green-9" style="border: 1px solid #a5d6a7;">
+                <template v-slot:avatar><q-icon name="check_circle" color="green-7"/></template>
+                <div class="text-caption text-grey-6">Expected</div>
+                <div class="text-body2 text-weight-bold" style="word-break: break-all;">{{ faultAlarmInfo.expected }}</div>
+              </q-banner>
+            </div>
+          </div>
+        </q-card-section>
+        <q-card-actions align="center" class="q-pa-md bg-red-1">
+          <q-btn unelevated size="lg" color="red-8" icon="close" label="Dismiss Alarm"
+                 style="min-width: 180px;"
+                 @click="faultAlarmDialog = false" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+
+    <!-- QR SCAN DIALOG (SPP / FH steps) -->
+    <!-- Scanner input is routed here via handleGlobalKeydown when dialog is open -->
+    <q-dialog v-model="qrScanDialog" backdrop-filter="blur(4px)" @hide="qrScanBuffer = ''">
+      <q-card style="width: 360px; max-width: 90vw; border-radius: 14px; border: 2px solid #1565c0;">
+        <q-card-section class="bg-blue-9 text-white row items-center q-pb-sm">
+          <q-icon name="qr_code_scanner" size="2rem" class="q-mr-sm"/>
+          <div>
+            <div class="text-h6 text-weight-bold">Scan Label</div>
+            <div class="text-caption" style="opacity:0.85;">
+              {{ qrScanStep ? `${prebatchWhMap[qrScanStep.re_code] || 'WH'} — ${qrScanStep.re_code}` : '' }}
+            </div>
+          </div>
+        </q-card-section>
+        <q-card-section class="q-pa-lg text-center">
+          <q-icon name="qr_code" size="4rem" color="blue-8" class="q-mb-md"/>
+          <p class="text-grey-8 q-mb-md">Point scanner at the label QR code</p>
+          <div class="text-caption text-grey-6 q-mt-sm">Or type manually and press Enter</div>
+          <!-- Single input — scanner fills this via handleGlobalKeydown, no hidden ghost input needed -->
+          <q-input
+            v-model="qrScanBuffer"
+            outlined dense
+            placeholder="Manual Input..."
+            class="q-mt-sm"
+            @keyup.enter="onQrScanInput(qrScanBuffer)"
+          />
+        </q-card-section>
+        <q-card-actions align="right" class="q-pa-md">
+          <q-btn flat label="Cancel" color="grey-7" v-close-popup />
+          <q-btn unelevated label="Confirm" color="blue-8" @click="onQrScanInput(qrScanBuffer)" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
 
     <!-- THE QC TRAP DIALOG -->
     <q-dialog v-model="qcDialog" persistent backdrop-filter="blur(4px)">
@@ -1661,8 +2705,8 @@ onUnmounted(() => {
         <q-separator />
 
         <q-card-actions align="right" class="bg-grey-1 q-pa-md">
-          <q-btn flat label="Pause Batch" color="grey-8" @click="() => { qcDialog = false; sendCommand('PAUSE'); }" />
-          <q-btn label="Confirm & Continuing" color="positive" icon="check_circle" @click="confirmQcCheck" />
+          <q-btn flat label="Pause Batch" color="grey-8" @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }" />
+          <q-btn label="Confirm & Continue" color="positive" icon="check_circle" :loading="qcSaving" @click="confirmQcCheck" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -2016,12 +3060,123 @@ onUnmounted(() => {
       </q-card>
     </q-dialog>
 
+    <!-- ═══ RECIPE DOWNLOAD PROGRESS DIALOG ═══ -->
+    <q-dialog v-model="downloadDialog" persistent backdrop-filter="blur(6px)">
+      <q-card style="width: 560px; max-width: 95vw; border-radius: 16px; border: 3px solid #1565c0; overflow: hidden;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%); padding: 20px 24px; color: white;">
+          <div class="row items-center q-gutter-sm">
+            <q-icon :name="downloadProgress >= 100 ? 'verified' : 'cloud_download'" size="36px" color="cyan-3" />
+            <div>
+              <div class="text-h5 text-weight-bolder">
+                {{ downloadProgress >= 100 ? '✅ Recipe Downloaded' : '📥 Downloading Recipe to PLC...' }}
+              </div>
+              <div class="text-caption text-blue-2" style="opacity: 0.85;">
+                4-Stage Transfer: PREPARE → TRANSFER → VERIFY → ACTIVATE
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <q-separator />
+
+        <q-card-section class="q-pa-lg">
+          <!-- Progress Bar -->
+          <div class="q-mb-md">
+            <q-linear-progress 
+              :value="downloadProgress / 100" 
+              size="24px" 
+              rounded 
+              :color="downloadError ? 'negative' : downloadProgress >= 100 ? 'positive' : 'primary'"
+              track-color="blue-1"
+              stripe
+              :animation-speed="downloadProgress < 100 ? 800 : 0"
+            >
+              <div class="absolute-full flex flex-center">
+                <span class="text-weight-bold text-white" style="font-size: 12px;">
+                  {{ downloadProgress }}%
+                </span>
+              </div>
+            </q-linear-progress>
+          </div>
+
+          <!-- Error -->
+          <div v-if="downloadError" class="q-pa-sm bg-red-1 text-red-9 rounded-borders q-mb-md">
+            <q-icon name="error" class="q-mr-xs" /> {{ downloadError }}
+          </div>
+
+          <!-- Phase-by-Phase Progress -->
+          <div v-if="downloadPhases.length" class="q-mb-md">
+            <div class="text-caption text-weight-bold text-grey-7 q-mb-xs">PHASES TRANSFERRED:</div>
+            <div v-for="(p, i) in downloadPhases" :key="i" class="row items-center q-py-xs" style="border-bottom: 1px solid #e0e0e0;">
+              <q-icon name="check_circle" color="positive" size="18px" class="q-mr-sm" />
+              <div class="text-body2">
+                Phase {{ p.processNo }} — {{ p.stepCount }} step{{ p.stepCount > 1 ? 's' : '' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Verification Results -->
+          <div v-if="downloadVerification" class="q-pa-md bg-green-1 rounded-borders" style="border: 1px solid #66bb6a;">
+            <div class="text-subtitle2 text-weight-bold text-green-9 q-mb-sm">
+              <q-icon name="verified" class="q-mr-xs" /> Verification Passed
+            </div>
+            <div class="row q-col-gutter-sm">
+              <div class="col-6">
+                <div class="text-caption text-grey-7">CRC Checksum</div>
+                <div class="text-weight-bold text-mono">{{ downloadVerification.crcHex }}</div>
+              </div>
+              <div class="col-3">
+                <div class="text-caption text-grey-7">Phases</div>
+                <div class="text-weight-bold">{{ downloadVerification.processCount }}</div>
+              </div>
+              <div class="col-3">
+                <div class="text-caption text-grey-7">Steps</div>
+                <div class="text-weight-bold">{{ downloadVerification.totalSteps }}</div>
+              </div>
+            </div>
+            <div v-if="downloadVerification.firstStep" class="row q-col-gutter-sm q-mt-sm">
+              <div class="col-6">
+                <div class="text-caption text-grey-7">First Step</div>
+                <div class="text-body2">P{{ downloadVerification.firstStep.processNo }}-S{{ downloadVerification.firstStep.stepNo }}</div>
+              </div>
+              <div class="col-6">
+                <div class="text-caption text-grey-7">Last Step</div>
+                <div class="text-body2">P{{ downloadVerification.lastStep?.processNo }}-S{{ downloadVerification.lastStep?.stepNo }}</div>
+              </div>
+            </div>
+          </div>
+        </q-card-section>
+
+        <q-separator />
+
+        <q-card-actions align="right" class="bg-grey-1 q-pa-md">
+          <q-btn
+            v-if="downloadProgress >= 100"
+            label="CLOSE — READY TO START"
+            color="green-8"
+            icon="check"
+            unelevated
+            class="text-weight-bolder q-px-lg"
+            @click="closeDownloadDialog"
+          />
+          <q-btn v-else-if="downloadError" label="Close" flat color="grey-7" @click="closeDownloadDialog" />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <style scoped>
 .heartbeat-icon {
   animation: heartbeat 1s ease-in-out infinite;
+}
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(198,40,40,0.4); }
+  50% { box-shadow: 0 0 0 12px rgba(198,40,40,0); }
+}
+@keyframes blink {
+  50% { opacity: 0; }
 }
 @keyframes heartbeat {
   0%, 100% { transform: scale(1); opacity: 0.8; }
@@ -2067,11 +3222,12 @@ onUnmounted(() => {
   margin: 0 1px;
 }
 
-.sticky-header-table thead tr th {
+:deep(.sticky-header-table thead tr th) {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: #eeeeee !important;
+  background: #f44336 !important;
+  color: white !important;
   box-shadow: 0 1px 0 #ccc;
 }
 /* Ensure the table itself doesn't hide the sticky header */

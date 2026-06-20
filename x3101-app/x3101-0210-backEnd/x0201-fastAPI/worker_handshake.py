@@ -1,0 +1,500 @@
+"""
+Worker: Handshake Poller — DB1513 Background Loop
+===================================================
+Polls the PLC's DB1513 (Handshake) data block every 1 second to detect
+step completion events and log them to the MySQL database.
+
+Also subscribes to MQTT step_cmd topics to log operator step commands to
+the database in real-time.
+
+Topic routing:
+  Production : mixing/plant/+/step_cmd
+  SIM mode   : sim/plant/+/step_cmd   (when MQTT_TOPIC_PREFIX=SIM/)
+
+This runs as a background asyncio task inside the FastAPI application.
+"""
+
+import asyncio
+import logging
+import struct
+import threading
+from datetime import datetime
+from typing import Optional, Dict
+
+from sqlalchemy.orm import Session
+from database import SessionLocal
+from plc_service import read_handshake, read_telemetry, plc, get_db_number, unpack_s7_string
+import paho.mqtt.publish as publish
+import paho.mqtt.client as mqtt_client
+import json
+
+logger = logging.getLogger(__name__)
+
+# ─── State Tracking ─────────────────────────────────────────────────────────
+_last_finished_step: Dict[int, int] = {1: -1, 2: -1, 3: -1}
+_last_batch_id: Dict[int, str] = {1: "", 2: "", 3: ""}  # track batch change per plant
+_running: bool = False
+_task: Optional[asyncio.Task] = None
+
+
+async def _poll_handshake_loop(interval: float = 1.0):
+    """
+    Continuously poll DB1513, 1523, 1533 for step completion signals.
+    When Step_Complete is detected, log the result to the database and clear the bit.
+    """
+    global _last_finished_step, _last_batch_id, _running
+    _running = True
+    logger.info("🔄 Handshake worker started (polling DB15x3 every %.1fs)", interval)
+
+    while _running:
+        try:
+            for plant_id in [1, 2, 3]:
+                # 1. Telemetry Loop
+                tel = read_telemetry(plant_id)
+                if tel:
+                    # Reset memory if PLC step goes backward (e.g. restart or new batch)
+                    current_plc_step = tel.get("current_step", 0)
+                    if current_plc_step < _last_finished_step[plant_id]:
+                        _last_finished_step[plant_id] = -1
+                    # Publish DB1512 directly to UI bypassing Kepware
+                    try:
+                        import os as _os
+                        _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "")
+                        publish.single(
+                            topic=f"{_prefix}mixing/plant/{plant_id}/telemetry",
+                            payload=json.dumps(tel),
+                            hostname="127.0.0.1",
+                            port=1883,
+                            qos=0,
+                            retain=False,
+                            auth={'username': 'xMixingNode-1', 'password': 'x123456'}
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to publish telemetry for Plant {plant_id}: {e}")
+
+                # 2. Handshake Loop
+                hs = read_handshake(plant_id)
+                if hs is None:
+                    continue  # PLC not connected or DB read failed
+
+                # Detect batch change → reset step tracker so step 1 of new batch is not skipped
+                _hdr = plc.db_read(get_db_number('full_recipe', plant_id), 0, 20)
+                _cur_bid = unpack_s7_string(_hdr, 0, 20).strip() if _hdr else ""
+                if _cur_bid and _cur_bid not in ("-", "") and _cur_bid != _last_batch_id[plant_id]:
+                    logger.info(f"🔄 Plant {plant_id} batch changed: {_last_batch_id[plant_id]!r} → {_cur_bid!r} | resetting step tracker")
+                    _last_finished_step[plant_id] = -1
+                    _last_batch_id[plant_id] = _cur_bid
+
+                if hs["step_complete"] and hs["finished_step"] != _last_finished_step[plant_id]:
+                    step_no = hs["finished_step"]
+                    _last_finished_step[plant_id] = step_no
+
+                    logger.info(
+                        f"✅ Plant {plant_id} Step {step_no} COMPLETE — "
+                        f"Temp={hs['end_temp']}°C, Weight={hs['end_weight']}kg, "
+                        f"Error={hs['error_flag']}"
+                    )
+
+                    # Log to database
+                    await _log_step_completion(
+                        plant_id=plant_id,
+                        step_no=step_no,
+                        end_temp=hs["end_temp"],
+                        end_weight=hs["end_weight"],
+                        error_flag=hs["error_flag"],
+                        error_code=hs["error_code"]
+                    )
+                    
+                    # Publish MQTT STEP_COMPLETE for frontend auto-advance
+                    try:
+                        mqtt_payload = {
+                            "status": "STEP_COMPLETE",
+                            "step_no": step_no,
+                            "end_temp": hs["end_temp"],
+                            "end_weight": hs["end_weight"]
+                        }
+                        # Publish to local Mosquitto with optional SIM prefix to avoid crossover
+                        import os as _os
+                        _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "")
+                        publish.single(f"{_prefix}mixing/plant/{plant_id}/status", payload=json.dumps(mqtt_payload), hostname="127.0.0.1", port=1883, auth={'username': 'xMixingNode-1', 'password': 'x123456'})
+                        logger.info(f"📢 Published STEP_COMPLETE for Plant {plant_id} Step {step_no} (prefix='{_prefix}')")
+                    except Exception as mqtt_e:
+                        logger.error(f"Failed to publish STEP_COMPLETE: {mqtt_e}")
+                    
+                    # Acknowledge: Clear the step_complete bit in PLC
+                    db_number = get_db_number('handshake', plant_id)
+                    plc.db_write(db_number, 0, b'\x00')
+
+                if hs["error_flag"]:
+                    logger.warning(f"⚠️ Plant {plant_id} PLC Error detected: code={hs['error_code']}")
+
+        except Exception as e:
+            logger.error(f"Handshake poll error: {e}")
+
+        await asyncio.sleep(interval)
+
+    logger.info("🛑 Handshake worker stopped")
+
+
+async def _log_step_completion(
+    plant_id: int,
+    step_no: int,
+    end_temp: float,
+    end_weight: float,
+    error_flag: bool,
+    error_code: int
+):
+    """
+    Write step completion data to the production_step_logs table.
+    Uses a synchronous DB session in an executor to avoid blocking asyncio.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _sync_log_step, plant_id, step_no, end_temp, end_weight, error_flag, error_code)
+    except Exception as e:
+        logger.error(f"Failed to log step completion: {e}")
+
+
+def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: float, error_flag: bool, error_code: int):
+    """Synchronous database write for step completion logging."""
+    db: Session = SessionLocal()
+    try:
+        from sqlalchemy import text
+        import re
+        from plc_service import get_db_number, plc, unpack_s7_string, deserialize_recipe_step
+
+        # 1. Read Batch_ID and SKU_ID from PLC's DB15x1
+        db_number = get_db_number('full_recipe', plant_id)
+        header = plc.db_read(db_number, 0, 52)
+        
+        batch_id = f"PLANT-{plant_id}-STEP-{step_no}"
+        sku_id = None
+        phase_id = ""
+        step_log_id = step_no  # default: seq number; overridden to sub_step when matched
+        action_code = ""
+        re_code = ""
+        target_value = 0.0
+
+        if header:
+            batch_id = unpack_s7_string(header, 0, 20)
+            
+        # 2. Query Batch and SKU info from App Database
+        if batch_id:
+            batch_row = db.execute(text("""
+                SELECT sku_id FROM production_batches 
+                WHERE batch_id = :batch_id LIMIT 1
+            """), {"batch_id": batch_id}).fetchone()
+            if batch_row:
+                sku_id = batch_row[0]
+
+        # If DB1511 batch_id is invalid/empty, skip logging to avoid writing to wrong batch
+        if not sku_id or batch_id.startswith("PLANT-") or batch_id in ("-", ""):
+            logger.warning(
+                f"⚠️ Plant {plant_id} Step {step_no}: DB1511 has no valid batch_id ('{batch_id}'). "
+                f"Load recipe first. Skipping step log."
+            )
+            return
+
+        # 3. Retrieve Step Details from SkuStep (App database recipe)
+        db_step_found = False
+        if sku_id:
+            try:
+                steps_res = db.execute(text("""
+                    SELECT phase_number, sub_step, phase_id, action_code, re_code, `require` 
+                    FROM sku_steps WHERE sku_id = :sku_id
+                """), {"sku_id": sku_id}).fetchall()
+                
+                if steps_res:
+                    steps_list = []
+                    for r in steps_res:
+                        steps_list.append({
+                            "phase_number": r[0],
+                            "sub_step": r[1],
+                            "phase_id": r[2],
+                            "action_code": r[3],
+                            "re_code": r[4],
+                            "require": r[5]
+                        })
+                    
+                    # Sort steps using same logic as router_plc
+                    sorted_steps = sorted(steps_list, key=lambda s: (
+                        int(re.sub(r'^[a-zA-Z]+', '', str(s["phase_number"] or '0').strip()) or 0),
+                        s["sub_step"] or 0
+                    ))
+                    
+                    if 0 <= (step_no - 1) < len(sorted_steps):
+                        matched_step = sorted_steps[step_no - 1]
+                        # Use the actual phase_id from SKU step (e.g. 'A1010', 'D1010', 'x1010')
+                        # NOT a derived 'p010' format which doesn't match the recipe UI
+                        phase_id = matched_step["phase_id"] or f"p{_phase_num:03d}"
+                        step_log_id = matched_step["sub_step"] or step_no   # 10, 20, 30...
+                        action_code = matched_step["action_code"] or ""
+                        re_code = matched_step["re_code"] or ""
+                        target_value = matched_step["require"] or 0.0
+                        db_step_found = True
+                        logger.info(f"Matched step {step_no} → phase_id={phase_id} sub_step={step_log_id} re_code={re_code} (SKU: {sku_id})")
+            except Exception as db_err:
+                logger.error(f"Failed to query step details from database: {db_err}")
+
+        # 4. Fallback to reading step detail from PLC DB15x1 if DB query failed/returned nothing
+        if not db_step_found and header:
+            try:
+                step_offset = 52 + (step_no - 1) * 78
+                step_data = plc.db_read(db_number, step_offset, 78)
+                if step_data:
+                    step_detail = deserialize_recipe_step(step_data, 0)
+                    phase_id = step_detail.get('phase_id', '')
+                    action_code = step_detail.get('action_code', '')
+                    re_code = step_detail.get('re_code', '')
+                    target_value = step_detail.get('target_weight', 0.0)
+                    logger.info(f"Fallback: read step {step_no} details from PLC DB15{plant_id}1")
+            except Exception as plc_err:
+                logger.error(f"PLC read fallback failed: {plc_err}")
+
+        # 5. Fetch the latest active logged-in operator from App
+        operator = "System"
+        try:
+            user_row = db.execute(text("""
+                SELECT username FROM users 
+                WHERE status = 'Active' AND last_login IS NOT NULL 
+                ORDER BY last_login DESC LIMIT 1
+            """)).fetchone()
+            if user_row:
+                operator = user_row[0]
+                logger.info(f"Logged step operator assigned to latest login user: {operator}")
+        except Exception as user_err:
+            logger.warning(f"Could not query latest active user: {user_err}")
+
+        # 6. Insert log into production_step_logs
+        db.execute(text("""
+            INSERT INTO production_step_logs 
+                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator)
+            VALUES 
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator)
+        """), {
+            "batch_id": batch_id,
+            "phase_id": phase_id,
+            "step_id": step_log_id,  # sub_step (10/20/30) matches UI format
+            "action_code": action_code,
+            "re_code": re_code,
+            "target_value": target_value,
+            "actual_value": end_weight,
+            "completed_at": datetime.now(),
+            "operator": operator
+        })
+        db.commit()
+        logger.info(f"📝 Plant {plant_id} Step {step_no} logged to database (batch_id={batch_id}, operator={operator})")
+
+        # 7. Auto-complete batch when last step is done
+        total_steps = struct.unpack_from('>h', header, 46)[0] if header else 0
+        if total_steps > 0 and step_no >= total_steps:
+            try:
+                result = db.execute(text("""
+                    UPDATE production_batches
+                    SET status = 'Done', updated_at = NOW()
+                    WHERE batch_id = :batch_id AND status = 'In-Progress'
+                """), {"batch_id": batch_id})
+                db.commit()
+                if result.rowcount > 0:
+                    logger.info(f"🏁 Batch {batch_id} auto-completed → Done ({step_no}/{total_steps} steps)")
+                else:
+                    logger.info(f"ℹ️ Batch {batch_id} last step done but status was not In-Progress")
+            except Exception as done_err:
+                logger.error(f"Failed to auto-complete batch {batch_id}: {done_err}")
+                db.rollback()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Could not log step {step_no} to DB: {e}")
+    finally:
+        db.close()
+
+
+# ─── MQTT step_cmd Subscriber ────────────────────────────────────────────────
+
+_mqtt_subscriber_thread: Optional[threading.Thread] = None
+_mqtt_sub_client: Optional[any] = None
+
+MQTT_HOST = "127.0.0.1"
+MQTT_PORT = 1883
+MQTT_USER = "xMixingNode-1"
+MQTT_PASS = "x123456"
+import os as _os
+MQTT_PREFIX = _os.getenv("MQTT_TOPIC_PREFIX", "")  # e.g. "SIM/" for SIM mode, "" for production
+
+
+def _on_step_cmd_message(client, userdata, message):
+    """Handle incoming step_cmd messages — log to database."""
+    try:
+        topic = message.topic  # e.g. "mixing/plant/1/step_cmd" or "sim/plant/1/step_cmd"
+        parts = topic.split("/")
+        # Support both formats:
+        #   mixing/plant/{N}/step_cmd  → parts[2] = plant_id
+        #   sim/plant/{N}/step_cmd     → parts[2] = plant_id
+        #   SIM/mixing/plant/{N}/...   → parts[3] = plant_id (legacy prefix style)
+        plant_id = 1
+        for i, part in enumerate(parts):
+            if part == 'plant' and i + 1 < len(parts) and parts[i + 1].isdigit():
+                plant_id = int(parts[i + 1])
+                break
+
+        payload_str = message.payload.decode("utf-8", errors="replace")
+        payload = json.loads(payload_str)
+
+        batch_id  = str(payload.get("Batch_ID") or "").strip()
+        phase_id  = str(payload.get("Phase_ID") or payload.get("Confirm_Phase") or "").strip()
+        step_id   = int(payload.get("Step_ID") or payload.get("Confirm_Step") or 0)
+        action_code = str(payload.get("HMI_Command") or "").strip()
+        re_code   = str(payload.get("Re_Code_ID") or "").strip()
+        target_val = float(payload.get("Req_Qty") or 0)
+
+        if not batch_id or batch_id == "-":
+            logger.debug(f"step_cmd received but no valid Batch_ID, skipping DB log")
+            return
+
+        logger.info(
+            f"📨 step_cmd received — Plant {plant_id} | Batch={batch_id} "
+            f"| Phase={phase_id} | Step={step_id} | re_code={re_code} | qty={target_val}"
+        )
+
+        # Log to database synchronously (this runs in a thread, so sync DB is fine)
+        _sync_log_step_cmd(
+            batch_id=batch_id,
+            phase_id=phase_id,
+            step_id=step_id,
+            action_code=action_code,
+            re_code=re_code,
+            target_value=target_val,
+        )
+
+    except Exception as e:
+        logger.error(f"Error handling step_cmd message: {e}")
+
+
+def _sync_log_step_cmd(
+    batch_id: str,
+    phase_id: str,
+    step_id: int,
+    action_code: str,
+    re_code: str,
+    target_value: float,
+):
+    """Write operator step command to production_step_logs."""
+    db: Session = SessionLocal()
+    try:
+        from sqlalchemy import text
+
+        # Fetch latest active operator
+        operator = "operator"
+        try:
+            user_row = db.execute(text("""
+                SELECT username FROM users
+                WHERE status = 'Active' AND last_login IS NOT NULL
+                ORDER BY last_login DESC LIMIT 1
+            """)).fetchone()
+            if user_row:
+                operator = user_row[0]
+        except Exception:
+            pass
+
+        db.execute(text("""
+            INSERT INTO production_step_logs
+                (batch_id, phase_id, step_id, action_code, re_code,
+                 target_value, actual_value, completed_at, operator)
+            VALUES
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code,
+                 :target_value, :actual_value, :completed_at, :operator)
+        """), {
+            "batch_id":    batch_id,
+            "phase_id":    phase_id,
+            "step_id":     step_id,
+            "action_code": action_code,
+            "re_code":     re_code,
+            "target_value": target_value,
+            "actual_value": target_value,  # will be overwritten by handshake log on completion
+            "completed_at": datetime.now(),
+            "operator":    operator,
+        })
+        db.commit()
+        logger.info(
+            f"📝 step_cmd logged — batch={batch_id} phase={phase_id} "
+            f"step={step_id} re_code={re_code} operator={operator}"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to log step_cmd to DB: {e}")
+    finally:
+        db.close()
+
+
+def _start_mqtt_step_cmd_subscriber():
+    """Start a background MQTT client that subscribes to all plant step_cmd topics."""
+    global _mqtt_sub_client
+    try:
+        import random, string
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        client = mqtt_client.Client(client_id=f"xmixing-step-cmd-{suffix}", clean_session=True)
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+        client.on_message = _on_step_cmd_message
+
+        def on_connect(c, userdata, flags, rc):
+            if rc == 0:
+                import os as _os
+                _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "").strip("/")
+                if _prefix.upper() == "SIM":
+                    # SIM mode: frontend publishes to sim/plant/N/step_cmd
+                    topic = "sim/plant/+/step_cmd"
+                else:
+                    # Production mode: standard mixing/plant/N/step_cmd
+                    prefix_part = f"{_prefix}/" if _prefix else ""
+                    topic = f"{prefix_part}mixing/plant/+/step_cmd"
+                c.subscribe(topic, qos=1)
+                logger.info(f"📡 step_cmd MQTT subscriber connected → subscribed to '{topic}'")
+            else:
+                logger.error(f"step_cmd MQTT subscriber connect failed: rc={rc}")
+
+        client.on_connect = on_connect
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+        _mqtt_sub_client = client
+        client.loop_forever()
+    except Exception as e:
+        logger.error(f"step_cmd MQTT subscriber error: {e}")
+
+
+# ─── Public API ──────────────────────────────────────────────────────────────
+
+def start_handshake_worker():
+    """Start the background handshake polling task and MQTT step_cmd subscriber."""
+    global _task, _mqtt_subscriber_thread
+    if _task is not None and not _task.done():
+        logger.info("Handshake worker is already running")
+        return
+
+    loop = asyncio.get_event_loop()
+    _task = loop.create_task(_poll_handshake_loop())
+    logger.info("🚀 Handshake worker task created")
+
+    # Start MQTT step_cmd subscriber in a background daemon thread
+    if _mqtt_subscriber_thread is None or not _mqtt_subscriber_thread.is_alive():
+        _mqtt_subscriber_thread = threading.Thread(
+            target=_start_mqtt_step_cmd_subscriber,
+            daemon=True,
+            name="mqtt-step-cmd-sub"
+        )
+        _mqtt_subscriber_thread.start()
+        logger.info("🚀 MQTT step_cmd subscriber thread started")
+
+
+def stop_handshake_worker():
+    """Stop the background handshake polling task and MQTT subscriber."""
+    global _running, _task, _mqtt_sub_client
+    _running = False
+    if _task:
+        _task.cancel()
+        _task = None
+    if _mqtt_sub_client:
+        try:
+            _mqtt_sub_client.disconnect()
+        except Exception:
+            pass
+        _mqtt_sub_client = None
+    logger.info("Handshake worker stop requested")

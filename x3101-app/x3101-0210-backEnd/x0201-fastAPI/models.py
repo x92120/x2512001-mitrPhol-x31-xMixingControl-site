@@ -334,6 +334,25 @@ class ProductionQcRecord(Base):
     operator = Column(String(50))
 
 
+# ── Production Sub-Batches (REQ-1: multiple runs per batch A,B,C) ─────────────
+
+class ProductionSubBatch(Base):
+    """One row per sub-run within a production batch.
+    E.g. batch P260613-01-01-001 may have sub-runs A, B, C if split into multiple pours."""
+    __tablename__ = "production_sub_batches"
+    id               = Column(Integer, primary_key=True, index=True)
+    batch_id         = Column(String(100), ForeignKey("production_batches.batch_id"), index=True, nullable=False)
+    sub_run          = Column(String(10), nullable=False)        # 'A', 'B', 'C'
+    actual_volume    = Column(Float, nullable=True)              # kg
+    start_time       = Column(TIMESTAMP, nullable=True)
+    stop_time        = Column(TIMESTAMP, nullable=True)
+    remarks          = Column(String(255), nullable=True)
+    operator         = Column(String(100), nullable=True)
+    created_at       = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at       = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), onupdate=func.now())
+    batch            = relationship("ProductionBatch", backref="sub_batches")
+
+
 # ── PreBatch (Legacy — kept for backward compat) ─────────────────────────────
 
 class PreBatchReq(Base):

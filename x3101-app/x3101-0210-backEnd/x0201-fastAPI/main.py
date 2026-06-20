@@ -62,19 +62,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create database tables
-models.Base.metadata.create_all(bind=engine)
+try:
+    models.Base.metadata.create_all(bind=engine)
+except Exception as e:
+    logger.warning(f"Failed to create tables on startup (DB may be offline): {e}")
 
 # =============================================================================
 # APPLICATION SETUP
 # =============================================================================
+
+from contextlib import asynccontextmanager
+from worker_handshake import start_handshake_worker, stop_handshake_worker
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting background workers...")
+    start_handshake_worker()
+    yield
+    # Shutdown
+    logger.info("Stopping background workers...")
+    stop_handshake_worker()
 
 app = FastAPI(
     title="xMixing API",
     description="Backend API for xMixing batch control system",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS Configuration

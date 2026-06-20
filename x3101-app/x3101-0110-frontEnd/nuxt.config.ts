@@ -30,19 +30,20 @@ export default defineNuxtConfig({
     sassVariables: fileURLToPath(new URL('./app/assets/quasar-variables.sass', import.meta.url)),
     plugins: [
       'Notify',
-      'Dialog'
+      'Dialog',
+      'Loading'
     ],
     extras: {
       fontIcons: ['material-icons']
     }
   },
-  devtools: { enabled: true },
+  devtools: { enabled: false },
   future: {
     compatibilityVersion: 4,
   },
   vite: {
     server: {
-      allowedHosts: ['xmixingcontrolprocess.xdev.co.th', 'localhost']
+      allowedHosts: true
     }
   },
   compatibilityDate: '2024-11-01',

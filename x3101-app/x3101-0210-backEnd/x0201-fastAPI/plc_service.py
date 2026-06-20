@@ -303,7 +303,11 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     Read Telemetry DB for live PLC status.
     """
     db_number = get_db_number('telemetry', plant_id)
-    data = plc.db_read(db_number, 0, 38)
+    try:
+        data = plc.db_read(db_number, 0, 28)
+    except Exception as e:
+        logger.error(f"PLC db_read error (DB{db_number}): {e}")
+        return None
     if data is None:
         return None
 
@@ -319,14 +323,23 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
 
     return {
         "watchdog": watchdog,
+        "Watch_Doc": watchdog,
         "plc_state": plc_state,
+        "PLC_State": plc_state,
         "current_step": current_step,
+        "Current_Step": current_step,
         "step_timer": step_timer,
+        "Step_Timer": step_timer,
         "mix_temp": round(mix_temp, 2),
+        "MixTank_Temp": round(mix_temp, 2),
         "mix_weight": round(mix_weight, 2),
+        "MixTank_Weight": round(mix_weight, 2),
         "agitator_act": round(agitator_act, 2),
+        "Agitator_Act": round(agitator_act, 2),
         "highshear_act": round(highshear_act, 2),
-        "hopper_weight": round(hopper_weight, 2)
+        "HighShear_Act": round(highshear_act, 2),
+        "hopper_weight": round(hopper_weight, 2),
+        "Hopper_Weight": round(hopper_weight, 2)
     }
 
 # ─── Recipe Deserialization ─────────────────────────────────────────────────
@@ -370,3 +383,101 @@ def read_recipe_from_plc(db_number: int) -> Optional[Dict[str, Any]]:
         "active_step": active_step,
         "steps": steps
     }
+
+def decode_dtl(data: bytes, offset: int) -> Optional[str]:
+    """Decode 12-byte Siemens DTL into ISO 8601 string."""
+    try:
+        y, m, d, wd, hr, mn, sc, ns = struct.unpack_from('>HBBBBBBL', data, offset)
+        if y == 0: return None
+        return f"{y:04d}-{m:02d}-{d:02d}T{hr:02d}:{mn:02d}:{sc:02d}"
+    except Exception:
+        return None
+
+def read_full_actuals(plant_id: int = 1) -> Optional[Dict[str, Any]]:
+    """Read DB1517/1527/1537 Full Actual Results Array."""
+    db_number = get_db_number('actual', plant_id)
+    # Header 50 bytes + 128*60 bytes = 7730 bytes
+    data = plc.db_read(db_number, 0, 7730)
+    if data is None:
+        return None
+        
+    batch_id = unpack_s7_string(data, 0, 20)
+    sku_id = unpack_s7_string(data, 22, 20)
+    total_steps = struct.unpack_from('>h', data, 44)[0]
+    current_seq = struct.unpack_from('>h', data, 46)[0]
+    batch_status = struct.unpack_from('>h', data, 48)[0]
+    
+    steps = []
+    base_offset = 50
+    step_size = 60
+    
+    # Read up to the maximum we need
+    limit = max(total_steps, current_seq)
+    if limit <= 0 or limit > 128:
+        limit = 128
+        
+    for i in range(limit):
+        off = base_offset + (i * step_size)
+        step_idx, ph_num, sub_step = struct.unpack_from('>hhh', data, off)
+        
+        if step_idx == 0:
+            continue
+            
+        r_weight, r_temp, r_agit, r_shear, r_brix, r_ph = struct.unpack_from('>ffffff', data, off + 6)
+        time_start = decode_dtl(data, off + 30)
+        time_end = decode_dtl(data, off + 42)
+        duration = struct.unpack_from('>l', data, off + 54)[0]
+        status_code = struct.unpack_from('>h', data, off + 58)[0]
+        
+        steps.append({
+            "step_index": step_idx,
+            "phase_number": ph_num,
+            "sub_step": sub_step,
+            "actual_weight": round(r_weight, 2),
+            "actual_temp": round(r_temp, 2),
+            "actual_agitator": round(r_agit, 2),
+            "actual_highshear": round(r_shear, 2),
+            "actual_brix": round(r_brix, 2),
+            "actual_ph": round(r_ph, 2),
+            "time_start": time_start,
+            "time_end": time_end,
+            "duration_sec": duration,
+            "status_code": status_code
+        })
+        
+    # Derive current phase_id and step_id from the active step entry (current_seq matches step_index)
+    current_phase_id = None
+    current_step_id = None
+    if current_seq > 0:
+        for s in steps:
+            if s["step_index"] == current_seq:
+                current_phase_id = f"p{str(s['phase_number']).zfill(3)}"
+                current_step_id = s["sub_step"]
+                break
+
+    return {
+        "batch_id": batch_id,
+        "sku_id": sku_id,
+        "total_steps": total_steps,
+        "current_seq": current_seq,
+        "batch_status": batch_status,
+        "phase_id": current_phase_id,   # e.g. "p010" — used by frontend on page refresh
+        "step_id": current_step_id,     # e.g. 10 — used by frontend on page refresh
+        "steps": steps
+    }
+
+
+def clear_actuals_in_plc(plant_id: int = 1) -> bool:
+    """
+    Zero-out DB15x7 (Actual Results) to clear all PLC execution history.
+    Header (50 bytes) + 128 steps × 60 bytes = 7,730 bytes total → write all zeros.
+    """
+    db_number = get_db_number('actual', plant_id)
+    zeros = b'\x00' * 7730
+    logger.info(f"🗑️  Clearing actual results in DB{db_number} ({len(zeros)} bytes)...")
+    result = plc.db_write(db_number, 0, zeros)
+    if result:
+        logger.info(f"✅ DB{db_number} (Actuals) cleared successfully")
+    else:
+        logger.error(f"❌ Failed to clear DB{db_number} (Actuals)")
+    return result

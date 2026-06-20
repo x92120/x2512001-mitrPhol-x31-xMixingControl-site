@@ -61,7 +61,7 @@ const NODE_RED_FIELD_MAP: Record<string, keyof PlantData> = {
     'TEMP03': 'TEMP03',
 }
 
-const mqttClient = ref<mqtt.MqttClient | null>(null)
+let mqttClient: any = null
 const isConnected = ref(false)
 const connectionStatus = ref('Disconnected')
 const messageCallbacks = new Set<(topic: string, payload: any) => void>()
@@ -79,62 +79,62 @@ export function useMQTT() {
         return `ws://${hostname}:15675/ws`
     }
 
-    const MQTT_BROKER = getBrokerUrl()
-    const MQTT_USERNAME = 'xMixingNode-1'
-    const MQTT_PASSWORD = 'x123456'
+    const MQTT_BROKER = import.meta.env.VITE_MQTT_BROKER || getBrokerUrl()
+    const MQTT_USERNAME = import.meta.env.VITE_MQTT_USERNAME || 'xMixingNode-1'
+    const MQTT_PASSWORD = import.meta.env.VITE_MQTT_PASSWORD || 'x123456'
 
     const connect = () => {
         if (import.meta.server) return
 
-        if (mqttClient.value?.connected || connectionStatus.value === 'Connecting...') {
+        if (mqttClient?.connected || connectionStatus.value === 'Connecting...') {
             return
         }
 
         try {
             connectionStatus.value = 'Connecting...'
-            const url = new URL(MQTT_BROKER)
-
             const options: any = {
                 clientId: `xmixing-plants-${Math.random().toString(16).substring(2, 10)}`,
                 username: MQTT_USERNAME,
                 password: MQTT_PASSWORD,
-                reconnectPeriod: 1000,
+                reconnectPeriod: 5000,
                 clean: true,
-                connectTimeout: 2000,
+                connectTimeout: 30000,
                 protocolVersion: 4,
-                protocol: url.protocol.replace(':', ''),
-                host: url.hostname,
-                port: parseInt(url.port),
-                path: url.pathname,
                 wsOptions: { protocols: ['mqtt'] }
             }
 
-            mqttClient.value = mqtt.connect(options)
+            mqttClient = mqtt.connect(MQTT_BROKER, options)
 
-            mqttClient.value.on('connect', () => {
+            mqttClient.on('connect', () => {
                 isConnected.value = true
                 connectionStatus.value = 'Connected'
                 console.log('✅ MQTT Connected — subscribing to plant topics')
                 // Subscribe to specific topics instead of '#' wildcard
                 // to avoid flooding the browser with irrelevant messages
                 const topics = [
-                    'MIX01/#', 'MIX02/#', 'MIX03/#',          // Node-RED individual fields
+                    // 'MIX01/#', 'MIX02/#', 'MIX03/#',          // Legacy Node-RED individual fields (disabled to prevent flickering)
                     '/Mix-01/Recipe', '/Mix-02/Recipe', '/Mix-03/Recipe', // Recipe payloads
                     'MIX-01-READ', 'MIX-02-READ', 'MIX-03-READ',       // PLC readback
                     'MIX-01-PUT', 'MIX-02-PUT', 'MIX-03-PUT',         // PLC write confirm
-                    '/MIX-01', '/MIX-02', '/MIX-03',                  // Plant telemetry payloads
+                    // '/MIX-01', '/MIX-02', '/MIX-03',                  // Legacy Kepware telemetry payloads (disabled to prevent flickering)
                     'mixing/plant/+/#',                                 // App command/status
                     'mixing/plant/+/status',
                     'mixing/plant/+/+',
                     'mixing/plant/#',
-                    '#'                                                 // Catch-all
+                    // '#'                                                 // Catch-all (disabled to prevent stale data conflicts)
                 ]
-                mqttClient.value?.subscribe(topics)
+                mqttClient?.subscribe(topics)
                 console.log('✅ Connected to RabbitMQ — subscribed to', topics.length, 'topic patterns')
             })
 
-            mqttClient.value.on('message', (topic, message) => {
-                const messageStr = message.toString().trim()
+            mqttClient.on('message', (topic: string, message: any) => {
+                let messageStr = ''
+                try {
+                    messageStr = typeof message === 'string' ? message : (message instanceof Uint8Array ? new TextDecoder().decode(message) : message.toString())
+                    messageStr = messageStr.trim()
+                } catch (e) {
+                    messageStr = message.toString().trim()
+                }
                 if (MQTT_DEBUG) console.log('📥 [MQTT raw]', topic, messageStr)
 
                 try {
@@ -282,20 +282,21 @@ export function useMQTT() {
                                 Batch_ID: actualPayload[`MIX0${plantId}.Batch_ID`] ?? actualPayload[`MIX0${plantId}.Batch_id`] ?? actualPayload.Batch_ID ?? actualPayload.Batch_id ?? actualPayload.batch_id ?? prev.Batch_ID,
                                 Plan_ID: actualPayload[`MIX0${plantId}.Plan_ID`] ?? actualPayload[`MIX0${plantId}.Plan_id`] ?? actualPayload.Plan_ID ?? actualPayload.Plan_id ?? actualPayload.plan_id ?? prev.Plan_ID,
                                 SKU_Name: actualPayload[`MIX0${plantId}.SKU_Name`] ?? actualPayload[`MIX0${plantId}.SKU_name`] ?? actualPayload.SKU_Name ?? actualPayload.SKU_name ?? actualPayload.sku_name ?? prev.SKU_Name,
-                                PLC_State: (actualPayload[`MIX0${plantId}.PLC_State`] ?? actualPayload.PLC_State ?? prev.PLC_State) || 0,
-                                Current_Step: (actualPayload[`MIX0${plantId}.Current_Step`] ?? actualPayload.Current_Step ?? prev.Current_Step) || 0,
-                                Step_Timer: (actualPayload[`MIX0${plantId}.STEP_TIMER`] ?? actualPayload[`MIX0${plantId}.Step_Timer`] ?? actualPayload.Step_Timer ?? actualPayload.Timer_Act ?? prev.Step_Timer) || 0,
+                                PLC_State: (actualPayload[`MIX0${plantId}.PLC_State`] ?? actualPayload.PLC_State ?? actualPayload.plc_state ?? prev.PLC_State) || 0,
+                                Current_Step: (actualPayload[`MIX0${plantId}.Current_Step`] ?? actualPayload.Current_Step ?? actualPayload.current_step ?? prev.Current_Step) || 0,
+                                Step_Timer: (actualPayload[`MIX0${plantId}.STEP_TIMER`] ?? actualPayload[`MIX0${plantId}.Step_Timer`] ?? actualPayload.Step_Timer ?? actualPayload.step_timer ?? actualPayload.Timer_Act ?? prev.Step_Timer) || 0,
                                 watchdog: actualPayload[`MIX0${plantId}.WATCHDOG`] ?? actualPayload[`MIX0${plantId}.Watch_Doc`] ?? actualPayload['Watch-Dog'] ?? actualPayload.Watch_Doc ?? actualPayload.watchdog ?? prev.watchdog,
-                                Hopper_Weight: round2(actualPayload[`MIX0${plantId}.HOPPER.SCALE`] ?? actualPayload[`MIX0${plantId}.Hopper_Weight`] ?? actualPayload.Hopper_Weight ?? actualPayload.HopperScale_Act ?? prev.Hopper_Weight),
-                                MixingTank_Agitator_Speed: round2(actualPayload[`MIX0${plantId}.MIXING.AJITATOR SPEED`] ?? actualPayload[`MIX0${plantId}.Agitator_Act`] ?? actualPayload.MixingTank_Agitator_Speed ?? actualPayload.Agitator_Act ?? actualPayload.Agitator_Speed ?? prev.MixingTank_Agitator_Speed),
-                                HighShare_Speed: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.SPEED`] ?? actualPayload[`MIX0${plantId}.HighShear_Act`] ?? actualPayload.HighShare_Speed ?? actualPayload.HighShear_Act ?? actualPayload.HighShare_Speed_Act ?? prev.HighShare_Speed),
+                                Hopper_Weight: round2(actualPayload[`MIX0${plantId}.HOPPER.SCALE`] ?? actualPayload[`MIX0${plantId}.Hopper_Weight`] ?? actualPayload.Hopper_Weight ?? actualPayload.hopper_weight ?? actualPayload.HopperScale_Act ?? prev.Hopper_Weight),
+                                MixingTank_Agitator_Speed: round2(actualPayload[`MIX0${plantId}.MIXING.AJITATOR SPEED`] ?? actualPayload[`MIX0${plantId}.Agitator_Act`] ?? actualPayload.MixingTank_Agitator_Speed ?? actualPayload.Agitator_Act ?? actualPayload.agitator_act ?? actualPayload.Agitator_Speed ?? prev.MixingTank_Agitator_Speed),
+                                HighShare_Speed: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.SPEED`] ?? actualPayload[`MIX0${plantId}.HighShear_Act`] ?? actualPayload.HighShare_Speed ?? actualPayload.HighShear_Act ?? actualPayload.highshear_act ?? actualPayload.HighShare_Speed_Act ?? prev.HighShare_Speed),
                                 HighShare_Temperature: round2(actualPayload[`MIX0${plantId}.HIGHSHARE.TEMPERATURE`] ?? actualPayload[`MIX0${plantId}.HighShear_Temp`] ?? actualPayload.HighShare_Temperature ?? actualPayload.HighShear_Temp ?? prev.HighShare_Temperature),
-                                Mixing_Tank_Volume: round2(actualPayload[`MIX0${plantId}.MIXING.SCALE`] ?? actualPayload[`MIX0${plantId}.MixTank_Weight`] ?? actualPayload.Mixing_Tank_Volume ?? actualPayload.Mixing_Tank_Weight ?? actualPayload.MixTank_Weight ?? actualPayload.Scale_Act ?? prev.Mixing_Tank_Volume),
-                                Mixing_Tank_Temperature: round2(actualPayload[`MIX0${plantId}.MIXING.TEMPERATURE`] ?? actualPayload[`MIX0${plantId}.MixTank_Temp`] ?? actualPayload.Mixing_Tank_Temperature ?? actualPayload.MixTank_Temp ?? actualPayload.Temp_Act ?? prev.Mixing_Tank_Temperature),
+                                Mixing_Tank_Volume: round2(actualPayload[`MIX0${plantId}.MIXING.SCALE`] ?? actualPayload[`MIX0${plantId}.MixTank_Weight`] ?? actualPayload.Mixing_Tank_Volume ?? actualPayload.Mixing_Tank_Weight ?? actualPayload.MixTank_Weight ?? actualPayload.mix_weight ?? actualPayload.Scale_Act ?? prev.Mixing_Tank_Volume),
+                                Mixing_Tank_Temperature: round2(actualPayload[`MIX0${plantId}.MIXING.TEMPERATURE`] ?? actualPayload[`MIX0${plantId}.MixTank_Temp`] ?? actualPayload.Mixing_Tank_Temperature ?? actualPayload.MixTank_Temp ?? actualPayload.mix_temp ?? actualPayload.Temp_Act ?? prev.Mixing_Tank_Temperature),
                                 Circulation_Speed: round2(actualPayload[`MIX0${plantId}.CIRCULATION.PUMP SPEED`] ?? actualPayload[`MIX0${plantId}.Circulation_Pump_Act`] ?? actualPayload.Circulation_Speed ?? actualPayload.Circulation_Pump_Act ?? prev.Circulation_Speed),
                                 Flow_Rate: round2(actualPayload[`MIX0${plantId}.CIRCULATION.FLOW RATE`] ?? actualPayload[`MIX0${plantId}.Flow_Rate_Act`] ?? actualPayload.Flow_Rate ?? actualPayload.Flow_Rate_Act ?? prev.Flow_Rate),
                                 Circulation_Temperature: round2(actualPayload[`MIX0${plantId}.CIRCULATION.TEMPERATURE`] ?? actualPayload[`MIX0${plantId}.Circulation_Temp_Act`] ?? actualPayload.Circulation_Temperature ?? actualPayload.Circulation_Temp_Act ?? prev.Circulation_Temperature),
-                                last_update: new Date().toLocaleTimeString()
+                                last_update: new Date().toLocaleTimeString(),
+                                last_update_ts: Date.now()
                             }
                         }
 
@@ -320,12 +321,12 @@ export function useMQTT() {
                 }
             })
 
-            mqttClient.value.on('error', (err) => {
+            mqttClient.on('error', (err: any) => {
                 console.error('MQTT Error', err)
                 connectionStatus.value = `Error: ${err.message}`
             })
 
-            mqttClient.value.on('close', () => {
+            mqttClient.on('close', () => {
                 isConnected.value = false
                 connectionStatus.value = 'Disconnected'
             })
@@ -335,18 +336,22 @@ export function useMQTT() {
     }
 
     const disconnect = () => {
-        if (mqttClient.value) {
-            mqttClient.value.end()
-            mqttClient.value = null
+        // [Hotfix] Do not kill the singleton connection during Vue Router page transitions.
+        // The MQTT connection should stay alive for the lifetime of the SPA.
+        /*
+        if (mqttClient) {
+            mqttClient.end()
+            mqttClient = null
             isConnected.value = false
             connectionStatus.value = 'Disconnected'
         }
+        */
     }
 
     const publishMessage = (topic: string, payload: any) => {
-        if (mqttClient.value && isConnected.value) {
+        if (mqttClient && isConnected.value) {
             const messageStr = typeof payload === 'string' ? payload : JSON.stringify(payload)
-            mqttClient.value.publish(topic, messageStr)
+            mqttClient.publish(topic, messageStr)
             console.log(`🚀 [useMQTT] Published to ${topic}:`, payload)
             return true
         }

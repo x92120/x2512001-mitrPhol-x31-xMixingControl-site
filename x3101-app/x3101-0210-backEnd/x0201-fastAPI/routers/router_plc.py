@@ -48,9 +48,33 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
             detail=f"No SKU steps found for SKU '{plan.sku_id}'"
         )
 
+    # Fetch prebatch items or requirements to determine the WH (Warehouse) of each re_code
+    prebatch_items = db.query(models.PreBatchItem).filter(
+        models.PreBatchItem.batch_id == batch_id
+    ).all()
+    
+    wh_map = {}
+    for item in prebatch_items:
+        if item.re_code:
+            wh_map[item.re_code.strip()] = (item.wh or "").strip().upper()
+            
+    # If any re_code in sku_steps is not in wh_map, look up from Ingredient table
+    missing_re_codes = [s.re_code for s in sku_steps if s.re_code and s.re_code.strip() not in wh_map]
+    if missing_re_codes:
+        ingredients = db.query(models.Ingredient).filter(
+            models.Ingredient.re_code.in_(missing_re_codes)
+        ).all()
+        for ing in ingredients:
+            if ing.re_code:
+                wh_map[ing.re_code.strip()] = (ing.warehouse or "").strip().upper()
+
     # 4. Convert ORM objects to dicts
     step_dicts = []
     for s in sku_steps:
+        re_code_clean = str(s.re_code or "").strip()
+        wh_val = wh_map.get(re_code_clean, "")
+        is_mix = wh_val in ("MIX", "MIXING")
+        
         step_dicts.append({
             "phase_number": s.phase_number,
             "phase_id": s.phase_id,
@@ -66,8 +90,8 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
             "low_tol": s.low_tol,
             "high_tol": s.high_tol,
             "step_condition": s.step_condition,
-            "agitator_rpm": s.agitator_rpm,
-            "high_shear_rpm": s.high_shear_rpm,
+            "agitator_rpm": 0.0 if is_mix else s.agitator_rpm,
+            "high_shear_rpm": 0.0 if is_mix else s.high_shear_rpm,
             "temperature": s.temperature,
             "temp_low": s.temp_low,
             "temp_high": s.temp_high,
@@ -111,6 +135,11 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
     Send recipe to the real Siemens S7-1200 PLC directly via DB1511.
     """
     import re
+    # Ensure plant_id is valid (must be 1, 2, or 3)
+    if plant_id not in [1, 2, 3]:
+        logger.warning(f"Invalid plant_id {plant_id} received. Defaulting to 1.")
+        plant_id = 1
+        
     # 1. Fetch the batch and plan in a single query
     result = db.query(models.ProductionBatch, models.ProductionPlan).join(
         models.ProductionPlan, models.ProductionBatch.plan_id == models.ProductionPlan.id
@@ -140,10 +169,34 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
         s.sub_step or 0
     ))
 
+    # Fetch prebatch items or requirements to determine the WH (Warehouse) of each re_code
+    prebatch_items = db.query(models.PreBatchItem).filter(
+        models.PreBatchItem.batch_id == batch_id
+    ).all()
+    
+    wh_map = {}
+    for item in prebatch_items:
+        if item.re_code:
+            wh_map[item.re_code.strip()] = (item.wh or "").strip().upper()
+            
+    # If any re_code in sorted_steps is not in wh_map, look up from Ingredient table
+    missing_re_codes = [s.re_code for s in sorted_steps if s.re_code and s.re_code.strip() not in wh_map]
+    if missing_re_codes:
+        ingredients = db.query(models.Ingredient).filter(
+            models.Ingredient.re_code.in_(missing_re_codes)
+        ).all()
+        for ing in ingredients:
+            if ing.re_code:
+                wh_map[ing.re_code.strip()] = (ing.warehouse or "").strip().upper()
+
     # Convert to UDT layout steps
     step_dicts = []
     for idx, s in enumerate(sorted_steps):
         phase_no_val = int(re.sub(r'^[a-zA-Z]+', '', str(s.phase_number or '0').strip()) or 0)
+        re_code_clean = str(s.re_code or "").strip()
+        wh_val = wh_map.get(re_code_clean, "")
+        is_mix = wh_val in ("MIX", "MIXING")
+        
         step_dicts.append({
             "seq": idx + 1,
             "phase_no": phase_no_val,
@@ -155,8 +208,8 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
             "temp_sp": float(s.temperature or 0.0),
             "temp_low": float(s.temp_low or 0.0),
             "temp_high": float(s.temp_high or 0.0),
-            "agitator_sp": float(s.agitator_rpm or 0.0),
-            "highshear_sp": float(s.high_shear_rpm or 0.0),
+            "agitator_sp": 0.0 if is_mix else float(s.agitator_rpm or 0.0),
+            "highshear_sp": 0.0 if is_mix else float(s.high_shear_rpm or 0.0),
             "step_time": int(s.step_time or 0)
         })
 
@@ -187,6 +240,40 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
             raise HTTPException(status_code=502, detail=f"Verification mismatch! Expected {len(step_dicts)} steps for {batch.batch_id}, got {verify_data['total_steps']} steps for {verify_data['batch_id']}.")
             
         logger.info(f"Successfully wrote and verified recipe to real PLC for batch {batch_id}!")
+        
+        # --- Hybrid Approach: Publish to MQTT for Node-RED / Remote Debugging ---
+        try:
+            import json, os as _os
+            import paho.mqtt.publish as publish
+            _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "")
+            mqtt_topic = f"{_prefix}MPL/PLC/Plant{plant_id}/Recipe_Sync"
+            mqtt_payload = {
+                "batch_id": batch.batch_id,
+                "sku_id": plan.sku_id,
+                "plant_id": plant_id,
+                "total_steps": len(step_dicts),
+                "steps": step_dicts
+            }
+            publish.single(mqtt_topic, payload=json.dumps(mqtt_payload), hostname="127.0.0.1", port=1883,
+                           auth={'username': 'xMixingNode-1', 'password': 'x123456'})
+            logger.info(f"📢 Published recipe JSON to MQTT topic: {mqtt_topic} for Node-RED")
+        except Exception as mqtt_e:
+            logger.error(f"Failed to publish recipe to MQTT: {mqtt_e}")
+
+        # 6. Auto-update batch status → In-Progress so handshake worker can find it
+        try:
+            from sqlalchemy import text as _text
+            db.execute(_text("""
+                UPDATE production_batches
+                SET status = 'In-Progress', updated_at = NOW()
+                WHERE batch_id = :batch_id AND status NOT IN ('Done', 'Cancelled')
+            """), {"batch_id": batch.batch_id})
+            db.commit()
+            logger.info(f"✅ Batch {batch.batch_id} status → In-Progress")
+        except Exception as status_err:
+            logger.warning(f"Could not update batch status: {status_err}")
+            db.rollback()
+            
     except Exception as e:
         logger.error(f"Failed to write recipe to real PLC: {e}")
         raise HTTPException(
@@ -216,14 +303,34 @@ from plc_interface import DB1510StepCommand, DB1512Telemetry
 def send_step_command(command: DB1510StepCommand, db: Session = Depends(get_db)):
     """
     Push a new step command/setpoint to the PLC (DB1510).
-    In modern architecture, this often publishes to MQTT or writes via S7.
+    Also logs this step to production_step_logs for Production Report.
     """
-    # 1. (Optional) Log to database for traceability
     logger.info(f"Received Step Command: {command.Step_ID} for Batch {command.Batch_ID}")
 
-    # 2. (Implementation) Write to PLC or Publish to MQTT
-    # payload = command.serialize()
-    # mqtt_client.publish("MPL/PLC/DB100", payload)
+    # Log step to database for Production Report traceability
+    try:
+        from sqlalchemy import text as _text
+        db.execute(_text("""
+            INSERT INTO production_step_logs 
+                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator)
+            VALUES 
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator)
+        """), {
+            "batch_id": getattr(command, "Batch_ID", "") or "",
+            "phase_id": str(getattr(command, "Phase_ID", "") or ""),
+            "step_id": int(getattr(command, "Step_ID", 0) or 0),
+            "action_code": str(getattr(command, "HMI_Command", "") or ""),
+            "re_code": str(getattr(command, "Re_Code_ID", "") or ""),
+            "target_value": float(getattr(command, "Req_Qty", 0) or 0),
+            "actual_value": float(getattr(command, "Req_Qty", 0) or 0),
+            "completed_at": datetime.now(),
+            "operator": "operator",
+        })
+        db.commit()
+        logger.info(f"Step log saved for batch={command.Batch_ID} phase={getattr(command, 'Phase_ID', '')} step={command.Step_ID}")
+    except Exception as log_err:
+        logger.warning(f"Could not save step log: {log_err}")
+        db.rollback()
 
     return {
         "status": "success",
@@ -260,7 +367,7 @@ def update_plc_telemetry(data: DB1512Telemetry):
     _last_telemetry.Last_Update = datetime.now()
     return {"status": "updated"}
 
-from plc_service import read_recipe_from_plc
+from plc_service import read_recipe_from_plc, read_full_actuals
 
 @router.get("/plant/{plant_id}/recipe-status")
 def get_plant_recipe_status(plant_id: str):
@@ -270,10 +377,9 @@ def get_plant_recipe_status(plant_id: str):
     try:
         from plc_service import get_db_number
         recipe_db = get_db_number('full_recipe', int(plant_id))
-        actual_db = get_db_number('actual', int(plant_id))
         
         target = read_recipe_from_plc(recipe_db)
-        actual = read_recipe_from_plc(actual_db)
+        actual = read_full_actuals(int(plant_id))
         
         return {
             "success": True,
@@ -301,3 +407,97 @@ def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")
         raise HTTPException(status_code=500, detail=f"Failed to clear recipe in PLC DB15{plant_id}1")
 
     return {"status": "success", "message": f"Recipe memory cleared for Plant {plant_id}"}
+
+
+@router.post("/plant/{plant_id}/reset-batch/{batch_id}")
+def reset_batch_soft(
+    plant_id: int = Path(..., title="Plant ID (1, 2, or 3)"),
+    batch_id: str = Path(..., title="Batch ID to soft-reset"),
+    db: Session = Depends(get_db)
+):
+    """
+    Soft Reset for a batch:
+      1. Clear DB15x1 (Recipe)        — PLC forgets the recipe
+      2. Clear DB15x7 (Actuals)       — PLC forgets execution history (current_seq → 0)
+      3. Delete production_step_logs  — UI stamp times cleared
+      4. Reset batch status → Pending — Batch can be restarted from Check-for-Production
+    Prebatch records (FH/SPP boxes) are intentionally preserved.
+    """
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    from sqlalchemy import text as _text
+
+    results = {}
+
+    # ── 0. Clear DB15x0 (Step Command) ────────────────────────────────────────
+    try:
+        db_cmd_number = get_db_number('step_cmd', plant_id)
+        zeros_cmd = b'\x00' * 88
+        r0 = plc.db_write(db_cmd_number, 0, zeros_cmd)
+        results["clear_step_cmd_db1510"] = "ok" if r0 else "failed"
+        logger.info(f"[Reset] DB15{plant_id}0 clear: {results['clear_step_cmd_db1510']}")
+    except Exception as cmd_err:
+        results["clear_step_cmd_db1510"] = f"failed: {cmd_err}"
+        logger.error(f"[Reset] Failed to clear DB15{plant_id}0: {cmd_err}")
+
+    # ── 1. Clear DB15x1 (Recipe) ──────────────────────────────────────────────
+    r1 = write_full_recipe_to_plc(batch_id="-", sku_id="-", steps=[], plant_id=plant_id)
+    results["clear_recipe_db1511"] = "ok" if r1 else "failed"
+    logger.info(f"[Reset] DB15{plant_id}1 clear: {results['clear_recipe_db1511']}")
+
+    # ── 2. Clear DB15x7 (Actuals) ─────────────────────────────────────────────
+    r2 = clear_actuals_in_plc(plant_id)
+    results["clear_actuals_db1517"] = "ok" if r2 else "failed"
+    logger.info(f"[Reset] DB15{plant_id}7 clear: {results['clear_actuals_db1517']}")
+
+    # ── 3. Delete production_step_logs for this batch ─────────────────────────
+    try:
+        deleted = db.execute(
+            _text("DELETE FROM production_step_logs WHERE batch_id = :bid"),
+            {"bid": batch_id}
+        )
+        db.commit()
+        results["clear_step_logs"] = f"ok ({deleted.rowcount} rows deleted)"
+        logger.info(f"[Reset] Step logs cleared for {batch_id}: {deleted.rowcount} rows")
+    except Exception as e:
+        db.rollback()
+        results["clear_step_logs"] = f"failed: {e}"
+        logger.error(f"[Reset] Failed to clear step logs: {e}")
+
+    # ── 4. Reset batch status → Pending ───────────────────────────────────────
+    try:
+        db.execute(
+            _text("""
+                UPDATE production_batches
+                SET status = 'Pending', updated_at = NOW()
+                WHERE batch_id = :bid
+            """),
+            {"bid": batch_id}
+        )
+        db.commit()
+        results["reset_batch_status"] = "ok (→ Pending)"
+        logger.info(f"[Reset] Batch {batch_id} status → Pending")
+    except Exception as e:
+        db.rollback()
+        results["reset_batch_status"] = f"failed: {e}"
+        logger.error(f"[Reset] Failed to reset batch status: {e}")
+
+    # ── 5. Reset handshake worker in-memory state for this plant ──────────────
+    try:
+        from worker_handshake import _last_batch_id, _last_finished_step
+        _last_batch_id[plant_id] = ""          # Force batch-change detection on next poll
+        _last_finished_step[plant_id] = -1     # Reset step tracker so step 1 is not skipped
+        results["reset_worker_state"] = "ok (tracker cleared)"
+        logger.info(f"[Reset] Worker state cleared for Plant {plant_id} — _last_batch_id='', _last_finished_step=-1")
+    except Exception as e:
+        results["reset_worker_state"] = f"warning: {e}"
+        logger.warning(f"[Reset] Could not reset worker state: {e}")
+
+    all_ok = all(v.startswith("ok") for v in results.values())
+    return {
+        "status": "success" if all_ok else "partial",
+        "batch_id": batch_id,
+        "plant_id": plant_id,
+        "results": results,
+        "message": "Soft reset complete. PLC memory cleared, step logs deleted, batch → Pending. Prebatch records preserved."
+        if all_ok else "Some steps failed — check results for details."
+    }

@@ -1,0 +1,594 @@
+[
+    {
+        "id": "2202b21f.3f4d7e",
+        "type": "tab",
+        "label": "Split and switch string",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "1dd6bbb793ba2176",
+        "type": "mqtt-broker",
+        "name": "xLoc",
+        "broker": "192.168.21.198",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "9cc2e6ba6a40a4cc",
+        "type": "mqtt-broker",
+        "name": "REMOTE",
+        "broker": "152.42.166.150",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "30c8203f5891b927",
+        "type": "mqtt-broker",
+        "name": "LOCAL",
+        "broker": "192.168.21.198",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "92e26cbf.d1005",
+        "type": "split",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "splt": "1",
+        "spltType": "len",
+        "arraySplt": 1,
+        "arraySpltType": "len",
+        "stream": false,
+        "addname": "",
+        "x": 270,
+        "y": 140,
+        "wires": [
+            [
+                "7e0b01e6.4fe07"
+            ]
+        ]
+    },
+    {
+        "id": "b156d544.144f08",
+        "type": "inject",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "props": [
+            {
+                "p": "payload",
+                "v": "1001",
+                "vt": "str"
+            },
+            {
+                "p": "topic",
+                "v": "",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "1001",
+        "payloadType": "str",
+        "x": 110,
+        "y": 140,
+        "wires": [
+            [
+                "92e26cbf.d1005"
+            ]
+        ]
+    },
+    {
+        "id": "6a2fed9e.1ad054",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "7e0b01e6.4fe07",
+        "type": "switch",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "property": "parts.index",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "0",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "1",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "2",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "3",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 4,
+        "x": 410,
+        "y": 140,
+        "wires": [
+            [
+                "6a2fed9e.1ad054"
+            ],
+            [
+                "105055c9.5a19ea"
+            ],
+            [
+                "26c7ab09.eb4054"
+            ],
+            [
+                "b1e6810f.30e29"
+            ]
+        ]
+    },
+    {
+        "id": "feba729e.fcdd8",
+        "type": "comment",
+        "z": "2202b21f.3f4d7e",
+        "name": "Split and switch string",
+        "info": "Source: https://discourse.nodered.org/t/split-to-different-outputs/5773/2\n",
+        "x": 140,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "105055c9.5a19ea",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "26c7ab09.eb4054",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "b1e6810f.30e29",
+        "type": "debug",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "parts.index",
+        "x": 600,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "1f23e237bfe5b610",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 440,
+        "wires": [
+            [
+                "11e349957c90d757"
+            ]
+        ]
+    },
+    {
+        "id": "11e349957c90d757",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "56739c2bba1ac07b",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 500,
+        "wires": [
+            [
+                "745f4f568c6f04c2"
+            ]
+        ]
+    },
+    {
+        "id": "745f4f568c6f04c2",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "b573a1dd45b92c84",
+        "type": "mqtt in",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "30c8203f5891b927",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 530,
+        "y": 560,
+        "wires": [
+            [
+                "7d74bec1bd5f5ef6"
+            ]
+        ]
+    },
+    {
+        "id": "7d74bec1bd5f5ef6",
+        "type": "mqtt out",
+        "z": "2202b21f.3f4d7e",
+        "name": "",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "9cc2e6ba6a40a4cc",
+        "x": 800,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "plant_monitor_tab",
+        "type": "tab",
+        "label": "Plant Production Monitor",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "s7_plc_endpoint",
+        "type": "s7 endpoint",
+        "transport": "iso-on-tcp",
+        "address": "192.168.21.210",
+        "port": "102",
+        "rack": "0",
+        "slot": "1",
+        "localtsaphi": "01",
+        "localtsaplo": "00",
+        "remotetsaphi": "01",
+        "remotetsaplo": "00",
+        "connmode": "rack-slot",
+        "adapter": "",
+        "busaddr": "2",
+        "cycletime": "1000",
+        "timeout": "2000",
+        "name": "Siemens_S7-1200",
+        "vartable": [
+            {
+                "addr": "DB1512,INT0",
+                "name": "watchdog"
+            },
+            {
+                "addr": "DB1512,INT2",
+                "name": "plc_state"
+            },
+            {
+                "addr": "DB1512,INT4",
+                "name": "current_step"
+            },
+            {
+                "addr": "DB1512,INT6",
+                "name": "step_timer"
+            },
+            {
+                "addr": "DB1512,REAL8",
+                "name": "mix_temp"
+            },
+            {
+                "addr": "DB1512,REAL12",
+                "name": "mix_weight"
+            },
+            {
+                "addr": "DB1512,REAL16",
+                "name": "agitator_act"
+            },
+            {
+                "addr": "DB1512,REAL20",
+                "name": "highshear_act"
+            },
+            {
+                "addr": "DB1512,REAL24",
+                "name": "hopper_weight"
+            }
+        ]
+    },
+    {
+        "id": "s7_in_telemetry",
+        "type": "s7 in",
+        "z": "plant_monitor_tab",
+        "endpoint": "s7_plc_endpoint",
+        "mode": "all",
+        "name": "Read PLC DB1512",
+        "x": 160,
+        "y": 140,
+        "wires": [
+            [
+                "format_plant1_json"
+            ]
+        ]
+    },
+    {
+        "id": "format_plant1_json",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Format Plant 1 Status",
+        "func": "const plc = msg.payload;\nmsg.payload = {\n    \"Step_no\": Number(plc.current_step || 0),\n    \"Step_Timer\": Number(plc.step_timer || 0),\n    \"Mixing_Tank_Volume\": Number(Number(plc.mix_weight || 0).toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(Number(plc.mix_temp || 0).toFixed(2)),\n    \"MixingTank_Agitator_Speed\": Number(Number(plc.agitator_act || 0).toFixed(2)),\n    \"HighShare_Speed\": Number(Number(plc.highshear_act || 0).toFixed(2)),\n    \"watchdog\": Number(plc.watchdog || 0),\n    \"PLC_State\": Number(plc.plc_state || 0),\n    \"Hopper_Weight\": Number(Number(plc.hopper_weight || 0).toFixed(2))\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 380,
+        "y": 140,
+        "wires": [
+            [
+                "mqtt_out_plant1"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt_out_plant1",
+        "type": "mqtt out",
+        "z": "plant_monitor_tab",
+        "name": "Publish Plant 1",
+        "topic": "/MIX-01",
+        "qos": "0",
+        "retain": "",
+        "broker": "30c8203f5891b927",
+        "x": 620,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "inject_plant2",
+        "type": "inject",
+        "z": "plant_monitor_tab",
+        "name": "Tick 2s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "2",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "x": 130,
+        "y": 240,
+        "wires": [
+            [
+                "sim_plant2"
+            ]
+        ]
+    },
+    {
+        "id": "sim_plant2",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Simulate Plant 2",
+        "func": "const step = context.get('step') || 1;\nlet timer = context.get('timer') || 0;\ntimer += 2;\nif (timer >= 60) {\n    timer = 0;\n}\ncontext.set('timer', timer);\n\n// realistic curves\nconst vol = 120 + Math.sin(Date.now() / 60000) * 15;\nconst temp = 62 + Math.cos(Date.now() / 120000) * 2;\nconst agit = 1500;\n\nmsg.payload = {\n    \"Step_no\": step,\n    \"Step_Timer\": timer,\n    \"Mixing_Tank_Volume\": Number(vol.toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(temp.toFixed(2)),\n    \"MixingTank_Agitator_Speed\": agit,\n    \"HighShare_Speed\": 0,\n    \"watchdog\": Math.floor(Math.random() * 100),\n    \"PLC_State\": 1\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 380,
+        "y": 240,
+        "wires": [
+            [
+                "mqtt_out_plant2"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt_out_plant2",
+        "type": "mqtt out",
+        "z": "plant_monitor_tab",
+        "name": "Publish Plant 2",
+        "topic": "/MIX-02",
+        "qos": "0",
+        "retain": "",
+        "broker": "30c8203f5891b927",
+        "x": 620,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "inject_plant3",
+        "type": "inject",
+        "z": "plant_monitor_tab",
+        "name": "Tick 2.5s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "2.5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1.0",
+        "x": 130,
+        "y": 320,
+        "wires": [
+            [
+                "sim_plant3"
+            ]
+        ]
+    },
+    {
+        "id": "sim_plant3",
+        "type": "function",
+        "z": "plant_monitor_tab",
+        "name": "Simulate Plant 3",
+        "func": "const step = context.get('step') || 3;\nlet timer = context.get('timer') || 0;\ntimer += 3;\nif (timer >= 120) {\n    timer = 0;\n}\ncontext.set('timer', timer);\n\n// realistic curves\nconst vol = 135 + Math.sin(Date.now() / 45000) * 10;\nconst temp = 45 + Math.sin(Date.now() / 90000) * 3;\nconst agit = 1200;\nconst shear = 2800;\n\nmsg.payload = {\n    \"Step_no\": step,\n    \"Step_Timer\": timer,\n    \"Mixing_Tank_Volume\": Number(vol.toFixed(2)),\n    \"Mixing_Tank_Temperature\": Number(temp.toFixed(2)),\n    \"MixingTank_Agitator_Speed\": agit,\n    \"HighShare_Speed\": shear,\n    \"watchdog\": Math.floor(Math.random() * 100),\n    \"PLC_State\": 1\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 380,
+        "y": 320,
+        "wires": [
+            [
+                "mqtt_out_plant3"
+            ]
+        ]
+    },
+    {
+        "id": "mqtt_out_plant3",
+        "type": "mqtt out",
+        "z": "plant_monitor_tab",
+        "name": "Publish Plant 3",
+        "topic": "/MIX-03",
+        "qos": "0",
+        "retain": "",
+        "broker": "30c8203f5891b927",
+        "x": 620,
+        "y": 320,
+        "wires": []
+    }
+]

@@ -302,3 +302,69 @@ def read_telemetry() -> Optional[Dict[str, Any]]:
         "highshear_act": round(highshear_act, 2),
         "hopper_weight": round(hopper_weight, 2)
     }
+
+def decode_dtl(data: bytes, offset: int) -> Optional[str]:
+    """Decode 12-byte Siemens DTL into ISO 8601 string."""
+    try:
+        y, m, d, wd, hr, mn, sc, ns = struct.unpack_from('>HBBBBBBL', data, offset)
+        if y == 0: return None
+        return f"{y:04d}-{m:02d}-{d:02d}T{hr:02d}:{mn:02d}:{sc:02d}"
+    except Exception:
+        return None
+
+def read_full_actuals(db_number: int = 1517) -> Optional[Dict[str, Any]]:
+    """Read DB1517/1527/1537 Full Actual Results Array (6706 bytes)."""
+    data = plc.db_read(db_number, 0, 6706)
+    if data is None:
+        return None
+        
+    batch_id = unpack_s7_string(data, 0, 20)
+    sku_id = unpack_s7_string(data, 22, 20)
+    total_steps = struct.unpack_from('>h', data, 44)[0]
+    current_seq = struct.unpack_from('>h', data, 46)[0]
+    batch_status = struct.unpack_from('>h', data, 48)[0]
+    
+    steps = []
+    base_offset = 50
+    step_size = 52
+    
+    # Limit parsing to save processing (128 max)
+    limit = max(total_steps, current_seq)
+    if limit <= 0 or limit > 128:
+        limit = 128
+        
+    for i in range(limit):
+        off = base_offset + (i * step_size)
+        step_idx, ph_num, sub_step = struct.unpack_from('>hhh', data, off)
+        
+        if step_idx == 0:
+            continue  # Empty slot
+            
+        r_weight, r_temp, r_agit, r_shear = struct.unpack_from('>ffff', data, off + 6)
+        time_start = decode_dtl(data, off + 22)
+        time_end = decode_dtl(data, off + 34)
+        duration = struct.unpack_from('>l', data, off + 46)[0]
+        status_code = struct.unpack_from('>h', data, off + 50)[0]
+        
+        steps.append({
+            "step_index": step_idx,
+            "phase_number": ph_num,
+            "sub_step": sub_step,
+            "actual_weight": round(r_weight, 2),
+            "actual_temp": round(r_temp, 2),
+            "actual_agitator": round(r_agit, 2),
+            "actual_highshear": round(r_shear, 2),
+            "time_start": time_start,
+            "time_end": time_end,
+            "duration_sec": duration,
+            "status_code": status_code
+        })
+        
+    return {
+        "batch_id": batch_id,
+        "sku_id": sku_id,
+        "total_steps": total_steps,
+        "current_seq": current_seq,
+        "batch_status": batch_status,
+        "steps": steps
+    }
