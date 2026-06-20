@@ -558,6 +558,7 @@ const copyPayloadToClipboard = () => {
 
 const confirmStartProduction = () => {
     startConfirmed.value = true
+    batchRunning.value = true      // ← CRITICAL: enables STEP_COMPLETE handler (was missing!)
     confirmStartDialog.value = false
 
     const plantId = activePlantId.value || '1'
