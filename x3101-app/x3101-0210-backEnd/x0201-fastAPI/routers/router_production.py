@@ -66,7 +66,9 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
     
     # 2. Fetch batches for these plans (single query)
     batches_by_plan: dict = {}
+    batches_with_logs = set()
     if plan_ids:
+        # Fetch batches
         batches = db.execute(
             sql_text("""
                 SELECT id, plan_id, batch_id, sku_id, plant, batch_size, status,
@@ -79,14 +81,32 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             {"plan_ids": plan_ids}
         ).fetchall()
         
+        # Fetch batch IDs that actually have step execution logs
+        log_rows = db.execute(
+            sql_text("""
+                SELECT DISTINCT l.batch_id 
+                FROM production_step_logs l
+                JOIN production_batches b ON l.batch_id = b.batch_id
+                WHERE b.plan_id IN :plan_ids
+            """).bindparams(bindparam("plan_ids", expanding=True)),
+            {"plan_ids": plan_ids}
+        ).fetchall()
+        batches_with_logs = {r.batch_id for r in log_rows}
+        
         for b in batches:
             pid = b.plan_id
             if pid not in batches_by_plan:
                 batches_by_plan[pid] = []
+            
+            # Demote 'Done' status to Prepared or Created if there are no step logs
+            status_val = b.status
+            if status_val == "Done" and b.batch_id not in batches_with_logs:
+                status_val = "Prepared" if bool(b.batch_prepare) else "Created"
+                
             batches_by_plan[pid].append({
                 "id": b.id, "plan_id": b.plan_id, "batch_id": b.batch_id,
                 "sku_id": b.sku_id, "plant": b.plant, "batch_size": b.batch_size,
-                "status": b.status, "flavour_house": bool(b.flavour_house),
+                "status": status_val, "flavour_house": bool(b.flavour_house),
                 "spp": bool(b.spp), "batch_prepare": bool(b.batch_prepare),
                 "ready_to_product": bool(b.ready_to_product),
                 "production": bool(b.production), "done": bool(b.done),
@@ -97,14 +117,9 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             })
     
     # 2b. Fetch recheck/packing stats per batch from prebatch_recs, split by warehouse
-    batch_id_strs = []
-    for blist in batches_by_plan.values():
-        for bd in blist:
-            batch_id_strs.append(bd["batch_id"])
-    
     recheck_map = {}
-    if batch_id_strs:
-        # Overall recheck stats
+    if plan_ids:
+        # Overall recheck stats using plan_ids to reduce IN clause size
         rc_rows = db.execute(sql_text("""
             SELECT 
                 q.batch_id AS bid,
@@ -114,9 +129,10 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
                 SUM(CASE WHEN r.packing_status = 1 THEN 1 ELSE 0 END) AS packed
             FROM prebatch_recs r
             JOIN prebatch_reqs q ON r.req_id = q.id
-            WHERE q.batch_id IN :batch_ids
+            JOIN production_batches b ON q.batch_id = b.batch_id
+            WHERE b.plan_id IN :plan_ids
             GROUP BY q.batch_id
-        """).bindparams(bindparam("batch_ids", expanding=True)), {"batch_ids": batch_id_strs}).fetchall()
+        """).bindparams(bindparam("plan_ids", expanding=True)), {"plan_ids": plan_ids}).fetchall()
         for r in rc_rows:
             recheck_map[r.bid] = {
                 'total': int(r.total), 'recheck_ok': int(r.recheck_ok),
@@ -124,7 +140,7 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
                 'fh_packed': 0, 'spp_packed': 0, 'fh_total': 0, 'spp_total': 0,
             }
         
-        # Per-warehouse packed counts (join with prebatch_reqs for wh)
+        # Per-warehouse packed counts
         wh_rows = db.execute(sql_text("""
             SELECT 
                 q.batch_id AS bid,
@@ -133,9 +149,10 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
                 SUM(CASE WHEN r.packing_status = 1 THEN 1 ELSE 0 END) AS packed
             FROM prebatch_recs r
             JOIN prebatch_reqs q ON r.req_id = q.id
-            WHERE q.batch_id IN :batch_ids
+            JOIN production_batches b ON q.batch_id = b.batch_id
+            WHERE b.plan_id IN :plan_ids
             GROUP BY q.batch_id, wh
-        """).bindparams(bindparam("batch_ids", expanding=True)), {"batch_ids": batch_id_strs}).fetchall()
+        """).bindparams(bindparam("plan_ids", expanding=True)), {"plan_ids": plan_ids}).fetchall()
         for r in wh_rows:
             if r.bid in recheck_map:
                 w = (r.wh or '').upper()
@@ -294,10 +311,61 @@ def get_production_batches_summary(db: Session = Depends(get_db)):
         for r in rows
     ]
 
+@router.get("/production-batches/done-all")
+def get_all_done_batches(db: Session = Depends(get_db)):
+    """Return ALL Done batches with completed_at + last_operator from step logs.
+    Used by Production Report to ensure Done batches are never hidden by pagination limit.
+    """
+    from sqlalchemy import text as _sql
+    rows = db.execute(_sql("""
+        SELECT
+            pb.id, pb.batch_id, pb.sku_id, pb.plant, pb.batch_size,
+            pb.status, pb.done, pb.created_at, pb.updated_at,
+            pp.plan_id, pp.sku_name,
+            MAX(psl.completed_at)  AS completed_at,
+            SUBSTRING_INDEX(
+                GROUP_CONCAT(psl.operator ORDER BY psl.completed_at DESC SEPARATOR ','),
+                ',', 1
+            )                      AS last_operator
+        FROM production_batches pb
+        LEFT JOIN production_plans pp  ON pp.id = pb.plan_id
+        LEFT JOIN production_step_logs psl ON psl.batch_id = pb.batch_id
+        WHERE pb.status = 'Done'
+        GROUP BY pb.id, pb.batch_id, pb.sku_id, pb.plant, pb.batch_size,
+                 pb.status, pb.done, pb.created_at, pb.updated_at,
+                 pp.plan_id, pp.sku_name
+        ORDER BY MAX(psl.completed_at) DESC
+    """)).fetchall()
+    return [
+        {
+            "id": r.id, "batch_id": r.batch_id, "sku_id": r.sku_id,
+            "sku_name": r.sku_name or r.sku_id,
+            "plant": r.plant, "batch_size": float(r.batch_size or 0),
+            "status": r.status, "done": bool(r.done),
+            "plan_id": r.plan_id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "last_operator": r.last_operator or "—",
+        }
+        for r in rows
+    ]
+
 @router.get("/production-batches/", response_model=List[schemas.ProductionBatch])
 def get_production_batches(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
     """Get all production batches."""
     return crud.get_production_batches(db, skip=skip, limit=limit)
+
+# NOTE: This must come BEFORE /production-batches/{batch_id} to avoid route conflict
+@router.get("/production-batches/done-all")
+def get_done_batches(db: Session = Depends(get_db)):
+    """Get all completed batches (bypasses limit to ensure all reports can be viewed)."""
+    with track_performance("GET /production-batches/done-all") as tracker:
+        results = db.query(models.ProductionBatch).filter(
+            models.ProductionBatch.status == 'Done'
+        ).order_by(models.ProductionBatch.updated_at.desc()).all()
+        tracker.record_count = len(results)
+        return results
 
 # NOTE: This must come BEFORE /production-batches/{batch_id} to avoid route conflict
 @router.get("/production-batches/box-contents/{batch_id_str}")
@@ -1537,6 +1605,10 @@ def get_production_summary_stats(db: Session = Depends(get_db)):
     
     total_batches = db.query(models.ProductionBatch).count()
     pending_batches = db.query(models.ProductionBatch).filter(models.ProductionBatch.status == "Created").count()
+    done_batches = db.query(models.ProductionBatch).filter(models.ProductionBatch.status == "Done").count()
+    in_progress_batches = db.query(models.ProductionBatch).filter(models.ProductionBatch.status == "In-Progress").count()
+    prepared_batches = db.query(models.ProductionBatch).filter(models.ProductionBatch.status == "Prepared").count()
+    cancelled_batches = db.query(models.ProductionBatch).filter(models.ProductionBatch.status == "Cancelled").count()
     
     # Simple count of records today
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1550,7 +1622,11 @@ def get_production_summary_stats(db: Session = Depends(get_db)):
         },
         "batches": {
             "total": total_batches,
-            "pending": pending_batches
+            "done": done_batches,
+            "in_progress": in_progress_batches,
+            "prepared": prepared_batches,
+            "pending": pending_batches,
+            "cancelled": cancelled_batches
         },
         "records_today": records_today,
         "timestamp": datetime.now()
@@ -2099,19 +2175,160 @@ def save_qc_record(batch_id_str: str, qc_data: QcRecordRequest, db: Session = De
 
 @router.get("/production-batches/{batch_id_str}/logs")
 def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
-    """Get all executed step logs for a batch."""
+    """
+    Return sku_steps recipe rows with actual values merged from logs.
+    Ensures temperature/agitator/destination always show from recipe.
+    Falls back to log-only rows when no recipe exists for the SKU.
+    """
     logs = db.query(models.ProductionStepLog).filter(
         models.ProductionStepLog.batch_id == batch_id_str
     ).order_by(models.ProductionStepLog.completed_at.asc()).all()
-    
-    # Also fetch QC records
+
     qc_records = db.query(models.ProductionQcRecord).filter(
         models.ProductionQcRecord.batch_id == batch_id_str
     ).all()
-    
+
+    batch_row = db.query(models.ProductionBatch).filter(
+        models.ProductionBatch.batch_id == batch_id_str
+    ).first()
+    sku_id = batch_row.sku_id if batch_row else None
+
+    action_map: dict = {str(ac.action_code): ac.action_description
+                        for ac in db.query(models.SkuAction).all()}
+
+    # Build recipe lookup: index sku_steps by BOTH phase_id AND phase_number
+    # KEY FIX: phase_number in sku_steps is 'p0010' but logs use 'p010'
+    # Normalize by removing extra leading zeros: p0010 → p010, p0020 → p020
+    import re as _re
+    def norm_pnum(s: str) -> str:
+        return _re.sub(r'^(p)(0+)', lambda m: m.group(1), s) if s else s
+
+    recipe_map: dict = {}
+    if sku_id:
+        for ss in db.query(models.SkuStep).filter(models.SkuStep.sku_id == sku_id).all():
+            pid   = str(ss.phase_id    or '').strip()
+            pnum  = str(ss.phase_number or '').strip()
+            pnorm = norm_pnum(pnum)   # p0010 → p010
+            sub   = ss.sub_step
+            if pid:   recipe_map[(pid,   sub)] = ss
+            if pnum:  recipe_map[(pnum,  sub)] = ss
+            if pnorm and pnorm != pnum:
+                recipe_map[(pnorm, sub)] = ss  # p010 key for legacy log match
+
+    def fmt_ts(dt):
+        return dt.isoformat() if dt else None
+
+    result_logs = []
+    for log in logs:
+        pid = str(log.phase_id or '').strip()
+        # Try all possible recipe matches (raw, normalized)
+        recipe = (recipe_map.get((pid, log.step_id)) or
+                  recipe_map.get((norm_pnum(pid), log.step_id)))
+        result_logs.append({
+            "phase_id":           log.phase_id,
+            "sub_step":           log.step_id,
+            "action_code":        log.action_code,
+            "action":             recipe.action             if recipe else None,
+            "action_description": (recipe.action_description if recipe else None)
+                                  or action_map.get(str(log.action_code or '')),
+            "re_code":            log.re_code or (recipe.re_code if recipe else None),
+            "target_value":       log.target_value or (recipe.require if recipe else None),
+            "actual_value":       log.actual_value,
+            "uom":                (recipe.uom if recipe else None) or "kg",
+            "temperature":        recipe.temperature    if recipe else None,
+            "agitator_rpm":       recipe.agitator_rpm   if recipe else None,
+            "hi_shear_rpm":       recipe.high_shear_rpm if recipe else None,
+            "destination":        recipe.destination    if recipe else None,
+            "step_condition":     recipe.step_condition if recipe else None,
+            "low_tol":            recipe.low_tol        if recipe else None,
+            "high_tol":           recipe.high_tol       if recipe else None,
+            "completed_at":       fmt_ts(log.completed_at),
+            "operator":           log.operator,
+            "operator2":          None,
+        })
+
     return {
-        "batch_id": batch_id_str,
-        "logs": logs,
-        "qc_records": qc_records
+        "batch_id":   batch_id_str,
+        "sku_id":     sku_id,
+        "logs":       result_logs,
+        "qc_records": [
+            {
+                "id":          qc.id,
+                "batch_id":    qc.batch_id,
+                "step_id":     qc.step_id,
+                "brix_target": qc.brix_target,
+                "brix_actual": qc.brix_actual,
+                "brix_ok":     (abs(qc.brix_actual - qc.brix_target) <= 0.5)
+                               if (qc.brix_actual is not None and qc.brix_target is not None) else None,
+                "ph_target":   qc.ph_target,
+                "ph_actual":   qc.ph_actual,
+                "ph_ok":       (abs(qc.ph_actual - qc.ph_target) <= 0.1)
+                               if (qc.ph_actual is not None and qc.ph_target is not None) else None,
+                "recorded_at": fmt_ts(qc.recorded_at),
+                "operator":    qc.operator,
+            }
+            for qc in qc_records
+        ],
     }
 
+
+# ── REQ-1: Sub-Batch Runs (A, B, C per batch) ────────────────────────────────
+
+@router.get("/production-batches/{batch_id_str}/sub-batches")
+def get_sub_batches(batch_id_str: str, db: Session = Depends(get_db)):
+    rows = db.query(models.ProductionSubBatch).filter(
+        models.ProductionSubBatch.batch_id == batch_id_str
+    ).order_by(models.ProductionSubBatch.sub_run.asc()).all()
+    return rows
+
+
+class SubBatchCreate(BaseModel):
+    sub_run: str
+    actual_volume: Optional[float] = None
+    start_time: Optional[str] = None
+    stop_time: Optional[str] = None
+    remarks: Optional[str] = None
+    operator: Optional[str] = None
+
+
+@router.post("/production-batches/{batch_id_str}/sub-batches")
+def upsert_sub_batch(batch_id_str: str, body: SubBatchCreate, db: Session = Depends(get_db)):
+    from datetime import datetime
+    def parse_ts(s): return datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
+    existing = db.query(models.ProductionSubBatch).filter(
+        models.ProductionSubBatch.batch_id == batch_id_str,
+        models.ProductionSubBatch.sub_run == body.sub_run
+    ).first()
+    try:
+        if existing:
+            existing.actual_volume = body.actual_volume
+            existing.start_time    = parse_ts(body.start_time)
+            existing.stop_time     = parse_ts(body.stop_time)
+            existing.remarks       = body.remarks
+            existing.operator      = body.operator
+        else:
+            db.add(models.ProductionSubBatch(
+                batch_id=batch_id_str, sub_run=body.sub_run,
+                actual_volume=body.actual_volume,
+                start_time=parse_ts(body.start_time),
+                stop_time=parse_ts(body.stop_time),
+                remarks=body.remarks, operator=body.operator
+            ))
+        db.commit()
+        return {"status": "ok", "sub_run": body.sub_run}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/production-batches/{batch_id_str}/sub-batches/{sub_run}")
+def delete_sub_batch(batch_id_str: str, sub_run: str, db: Session = Depends(get_db)):
+    row = db.query(models.ProductionSubBatch).filter(
+        models.ProductionSubBatch.batch_id == batch_id_str,
+        models.ProductionSubBatch.sub_run == sub_run
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Sub-batch not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted"}
