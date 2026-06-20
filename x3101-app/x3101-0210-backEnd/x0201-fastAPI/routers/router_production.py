@@ -2196,6 +2196,17 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
     action_map: dict = {str(ac.action_code): ac.action_description
                         for ac in db.query(models.SkuAction).all()}
 
+    # Build phase description map from sku_phases table
+    # e.g. D1010 → 'ละลาย ingredient', A1010 → 'Mixing'
+    phase_desc_map: dict = {}
+    try:
+        from sqlalchemy import text as _text
+        rows = db.execute(_text("SELECT phase_code, phase_description FROM sku_phases")).fetchall()
+        for r in rows:
+            phase_desc_map[str(r[0])] = r[1]
+    except Exception:
+        pass
+
     # Build recipe lookup: index sku_steps by BOTH phase_id AND phase_number
     # KEY FIX: phase_number in sku_steps is 'p0010' but logs use 'p010'
     # Normalize by removing extra leading zeros: p0010 → p010, p0020 → p020
@@ -2226,6 +2237,9 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
                   recipe_map.get((norm_pnum(pid), log.step_id)))
         result_logs.append({
             "phase_id":           log.phase_id,
+            "phase_description":  phase_desc_map.get(str(log.phase_id or '').strip())
+                                  or (phase_desc_map.get(str(recipe.phase_id or '').strip()) if recipe else None)
+                                  or '',
             "sub_step":           log.step_id,
             "action_code":        log.action_code,
             "action":             recipe.action             if recipe else None,

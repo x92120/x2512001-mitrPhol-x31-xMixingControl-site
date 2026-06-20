@@ -64,10 +64,11 @@ const stats = computed(() => ({
 
 // Group step logs by phase_id
 const phases = computed(() => {
-  const map: Record<string, { phase_id: string; steps: any[] }> = {}
+  const map: Record<string, { phase_id: string; phase_description: string; steps: any[] }> = {}
   for (const s of stepLogs.value) {
     const pid = s.phase_id || s.phase_number || '—'
-    if (!map[pid]) map[pid] = { phase_id: pid, steps: [] }
+    if (!map[pid]) map[pid] = { phase_id: pid, phase_description: s.phase_description || '', steps: [] }
+    if (!map[pid].phase_description && s.phase_description) map[pid].phase_description = s.phase_description
     map[pid].steps.push(s)
   }
   return Object.values(map)
@@ -102,6 +103,15 @@ const actionColor = (code: string | number) => {
   if (s.startsWith('3')) return { bg: '#fff3e0', text: '#e65100' }
   return { bg: '#f3e5f5', text: '#6a1b9a' }
 }
+const plantChipColor = (plant: string) => {
+  const p = (plant || '').toLowerCase()
+  if (p.includes('line-1')) return { bg: 'blue-1',   text: 'blue-8'   }
+  if (p.includes('line-2')) return { bg: 'teal-1',   text: 'teal-8'   }
+  if (p.includes('line-3')) return { bg: 'indigo-1', text: 'indigo-8' }
+  if (p.includes('line-4')) return { bg: 'orange-1', text: 'orange-9' }
+  if (p.includes('line-5')) return { bg: 'green-1',  text: 'green-8'  }
+  return { bg: 'purple-1', text: 'purple-8' }
+}
 
 // ── Data fetching ─────────────────────────────────────────
 const loadBatches = async () => {
@@ -118,7 +128,8 @@ const loadBatches = async () => {
         flat.push({
           ...b,
           sku_name: p.sku_name || b.sku_id || '—',
-          plan_id: p.plan_id
+          plan_id: p.plan_id,
+          plant: b.plant || p.plant || ''
         })
       })
     })
@@ -331,7 +342,7 @@ const exportPdf = () => {
     }).join('')
     phaseHtml += `
       <div class="section">
-        <div class="section-title">◆ ${phase.phase_id} — ${phase.steps.length} ${lbl.steps}</div>
+        <div class="section-title">◆ ${phase.phase_id}${phase.phase_description ? ' — ' + phase.phase_description : ''}   ${phase.steps.length} ${lbl.steps}</div>
         <table>
           <thead><tr style="background:#e8eaf6">
             <th style="width:34px">${lbl.step}</th>
@@ -521,6 +532,12 @@ onMounted(async () => {
                   <q-chip dense :color="statusColor[b.status] || 'grey-5'" text-color="white" size="xs">
                     {{ b.status }}
                   </q-chip>
+                  <q-chip v-if="b.plant" dense
+                    :color="plantChipColor(b.plant).bg"
+                    :text-color="plantChipColor(b.plant).text"
+                    size="xs" icon="factory" class="text-weight-bold">
+                    {{ b.plant }}
+                  </q-chip>
                 </div>
                 <div class="text-caption text-grey-6 ellipsis" style="max-width:240px">{{ b.sku_name }}</div>
                 <div class="text-caption text-grey-5">{{ b.plan_id }}</div>
@@ -558,6 +575,12 @@ onMounted(async () => {
               <div class="text-caption text-grey-6">
                 {{ selectedBatch.sku_name }}&nbsp;·&nbsp;Plan: {{ selectedBatch.plan_id }}
                 &nbsp;·&nbsp;{{ (selectedBatch.batch_size || 0).toLocaleString() }} kg
+                <span v-if="selectedBatch.plant">&nbsp;·&nbsp;
+                  <q-chip dense
+                    :color="plantChipColor(selectedBatch.plant).bg"
+                    :text-color="plantChipColor(selectedBatch.plant).text"
+                    size="xs" icon="factory" class="text-weight-bold">{{ selectedBatch.plant }}</q-chip>
+                </span>
               </div>
             </div>
             <q-chip :color="statusColor[selectedBatch.status] || 'grey-5'" text-color="white" dense>
@@ -671,6 +694,7 @@ onMounted(async () => {
                       <q-chip dense color="indigo-7" text-color="white" size="sm" icon="layers">
                         {{ phase.phase_id }}
                       </q-chip>
+                      <span v-if="phase.phase_description" class="text-caption text-weight-bold text-indigo-8">{{ phase.phase_description }}</span>
                       <span class="text-caption text-grey-6">{{ phase.steps.length }} steps</span>
                     </div>
 
