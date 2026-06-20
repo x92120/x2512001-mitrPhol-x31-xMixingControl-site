@@ -449,7 +449,13 @@ const currentStepIndex = computed(() => {
     const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
     const currentSeq = Number(plantData.value.Current_Step || plantData.value.current_step || 0)
 
-    if (pPhase && pStep && skuSteps.value.length > 0) {
+    // Guard: only trust MQTT Phase_ID/Step_ID if PLC Batch_ID matches selected batch
+    // After soft-reset, PLC batch_id = '-' → skip to Current_Step fallback
+    const plcBatchId = String(plantData.value.Batch_ID || plantData.value.batch_id || '').replace(/\0/g, '').trim()
+    const mqttBatchOk = selectedBatchId.value && plcBatchId && plcBatchId !== '-' && plcBatchId !== '0'
+        && plcBatchId === selectedBatchId.value
+
+    if (mqttBatchOk && pPhase && pStep && skuSteps.value.length > 0) {
         const rawPhase = String(pPhase).replace(/\0/g, '').trim()
         // MQTT may send a long Phase_ID like "p020-x1010-Heating" — extract just the short code "p020"
         const cleanPPhase = rawPhase.match(/^(p\d+)/i)?.[1]?.toLowerCase() || rawPhase.toLowerCase()
