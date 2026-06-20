@@ -459,12 +459,12 @@ const handlePlcMessage = (topic: string, payload: any) => {
         }
         // ─────────────────────────────────────────────────────────────────────────
 
-        // Normal Auto-Advance
-        localStepIndex.value = completedIndex + 1 // Advance to next
+        // Normal Auto-Advance (display only — PLC drives each step via FC1517)
+        localStepIndex.value = completedIndex + 1
         if (localStepIndex.value < skuSteps.value.length) {
-            // PLC needs the command to move to the next step
             $q.notify({ type: 'info', message: `Step ${completedIndex + 1} Done. PLC proceeding.`, position: 'top', timeout: 1000 })
-            setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+            // [PLC-DRIVE MODE] App does not send step cmd back — PLC fires next step itself
+            // setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
         } else {
             batchRunning.value = false
             $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })

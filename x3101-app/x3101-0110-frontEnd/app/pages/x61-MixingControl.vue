@@ -676,10 +676,15 @@ const handlePlcMessage = (topic: string, payload: any) => {
         }
         // ─────────────────────────────────────────────────────────────────────────
 
-        // Normal Auto-Advance (interlock passed)
-        localStepIndex.value = completedIndex + 1
+        // Normal Auto-Advance (display only — PLC drives each step via FC1517)
+        // Never go backwards: p030 free-scan may have already moved localStepIndex to p040
+        const newIdx = completedIndex + 1
+        if (newIdx > localStepIndex.value) {
+            localStepIndex.value = newIdx
+        }
         if (localStepIndex.value < skuSteps.value.length) {
-            setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+            // [PLC-DRIVE MODE] App does not send step cmd back — PLC fires next step itself
+            // setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
         } else {
             batchRunning.value = false
             $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
@@ -743,10 +748,11 @@ const confirmQcCheck = async () => {
     pendingQcStep.value = null;
     batchRunning.value = true;
     
-    // Resume auto-advance
+    // Resume after QC (display only — PLC drives itself)
     if (localStepIndex.value < skuSteps.value.length) {
-        setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
-        $q.notify({ type: 'info', message: `Resuming: Advanced to Step ${localStepIndex.value + 1}`, position: 'top', timeout: 1000 })
+        // [PLC-DRIVE MODE] App does not send step cmd back — PLC fires next step itself
+        // setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
+        $q.notify({ type: 'info', message: `Resuming: Step ${localStepIndex.value + 1} active on PLC`, position: 'top', timeout: 1000 })
     } else {
         batchRunning.value = false
         $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
@@ -979,7 +985,9 @@ const softResetBatch = () => {
             if (res && (res.status === 'success' || res.status === 'partial')) {
                 $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory and database logs cleared.' })
                 
-                // Clear state and go back to Check for Production since batch is now Pending
+                // Reset ALL step-tracking state before navigating away
+                localStepIndex.value = 0
+                batchRunning.value = false
                 batchInfo.value = null
                 selectedBatchId.value = null
                 selectedSkuId.value = null
@@ -1693,14 +1701,32 @@ const handleScan = (scannedText: string) => {
             const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
 
             if (allScanned) {
-                // All p030 scanned → advance localStepIndex PAST the last p030 step
+                // All p030 scanned → advance directly to first step of p040
                 const lastP30Idx = skuSteps.value.reduce((last: number, s: any, i: number) =>
                     (s.phase_number || '').toLowerCase().includes('p030') ? i : last, stepIdx)
-                localStepIndex.value = lastP30Idx + 1
-                // Best-effort: tell PLC to advance (may fail if offline, that's OK — TIA Portal handles p030)
-                if (isPlcConnected.value) {
-                    setTimeout(() => sendCommand('NEXT_STEP'), 600)
+                const nextIdx = lastP30Idx + 1
+                localStepIndex.value = nextIdx
+
+                // Auto-expand p040 phase and scroll to it
+                if (nextIdx < skuSteps.value.length) {
+                    const nextStep = skuSteps.value[nextIdx]
+                    if (nextStep) {
+                        const nextPhase = nextStep.phase_number || '0'
+                        expandedPhases.value[nextPhase] = true
+                        $q.notify({
+                            type: 'positive', icon: 'rocket_launch',
+                            message: '🎉 P30 สแกนครบ! → ข้ามไป P40',
+                            caption: `Phase ${nextPhase} Step ${nextStep.sub_step} - กรุณาดำเนินการต่อ`,
+                            position: 'center', timeout: 3000
+                        })
+                        nextTick(() => {
+                            const el = document.querySelector('.active-step')
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                        })
+                    }
                 }
+                // [PLC-DRIVE MODE] PLC handles p030→p040 transition autonomously
+                // sendCommand('NEXT_STEP') removed — avoid overwriting localStepIndex
             } else if (stepIdx >= 0) {
                 // Advance localStepIndex to next step so UI moves forward
                 // Even if this isn't the "current" PLC step — frontend tracks independently for p030
@@ -1949,9 +1975,13 @@ watch(() => plantData.value.PLC_State, async (newVal, oldVal) => {
 watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
     // Only auto-step if batch is actually running
     if (!batchRunning.value) return;
+    // [PLC-DRIVE MODE] Fully disabled — return early
+    return;
     
-    // In this PLC logic, even numbers > 0 (e.g. 4, 8, 12, 16, 20) generally mean the phase is complete
-    if (newVal && oldVal && newVal !== oldVal && newVal > 0 && newVal % 2 === 0) {
+    // [PLC-DRIVE MODE] Auto-step via even Current_Step DISABLED
+    // FC1517 now uses sequential counter: step done → Current_Step+1 → always even after odd!
+    // This was causing double-trigger: User trigger step1 → PLC Current_Step=2(even) → auto fire
+    // if (newVal && oldVal && newVal !== oldVal && newVal > 0 && newVal % 2 === 0) {
         setTimeout(async () => {
             const step = currentStep.value
             if (!step) return
@@ -2025,7 +2055,7 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
             }
             
         }, 1000)
-    }
+    // } ← closing brace of disabled if(newVal % 2 === 0) block
 })
 
 // ── Weight Recovery Watcher: auto-step when weight comes back into tolerance ──
