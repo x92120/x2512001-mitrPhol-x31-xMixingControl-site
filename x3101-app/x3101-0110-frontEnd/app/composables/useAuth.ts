@@ -111,6 +111,22 @@ export function useAuth() {
         return token.value ? { Authorization: `Bearer ${token.value}` } : {}
     }
 
+    /**
+     * Switch the active station user without changing the auth token.
+     * Used for badge-scan user switching on shared production stations.
+     * The token stays unchanged; only the displayed identity updates.
+     * On page refresh the session reverts to the original logged-in user.
+     */
+    const switchStationUser = (userData: User) => {
+        user.value = { ...userData }
+        // Update session cookie so SSR hydration stays consistent
+        cookieUser.value = { ...userData }
+        // Update sessionStorage display name (token unchanged)
+        if (import.meta.client) {
+            sessionStorage.setItem('user', JSON.stringify({ ...userData }))
+        }
+    }
+
     return {
         user: computed(() => user.value),
         token: computed(() => token.value),
@@ -120,5 +136,6 @@ export function useAuth() {
         login,
         logout,
         getAuthHeader,
+        switchStationUser,
     }
 }

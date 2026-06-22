@@ -90,3 +90,58 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
         user.role = "Operator"
     
     return crud.create_user(db=db, user=user)
+
+
+@router.post("/badge-login")
+def badge_login(request: schemas.BadgeLoginRequest, db: Session = Depends(get_db)):
+    """QR Badge login — authenticate with username + 4-8 digit PIN (no password needed).
+    
+    The badge PIN must be set by an admin via the User Management page.
+    """
+    db_user = crud.get_user_by_username(db, username=request.username)
+    if not db_user:
+        raise HTTPException(status_code=401, detail="Badge not recognized")
+    
+    if not db_user.badge_pin_hash:
+        raise HTTPException(status_code=403, detail="No badge PIN set for this user. Contact administrator.")
+    
+    if not verify_password(request.badge_pin, db_user.badge_pin_hash):
+        logger.warning(f"Failed badge login for user: {request.username}")
+        raise HTTPException(status_code=401, detail="Invalid badge PIN")
+    
+    if db_user.status and db_user.status.value == 'Inactive':
+        raise HTTPException(status_code=403, detail="Account is inactive")
+    
+    # Update last login
+    try:
+        db_user.last_login = datetime.now()
+        db.commit()
+    except Exception:
+        db.rollback()
+    
+    access_token = create_access_token(
+        data={
+            "sub": db_user.email,
+            "user_id": db_user.id,
+            "username": db_user.username,
+            "role": db_user.role,
+            "permissions": db_user.permissions or []
+        },
+        expires_delta=timedelta(hours=8)
+    )
+    
+    logger.info(f"Badge login success: {db_user.username}")
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": db_user.id,
+            "username": db_user.username,
+            "email": db_user.email,
+            "full_name": db_user.full_name,
+            "role": db_user.role,
+            "department": db_user.department,
+            "status": db_user.status,
+            "permissions": db_user.permissions or []
+        }
+    }

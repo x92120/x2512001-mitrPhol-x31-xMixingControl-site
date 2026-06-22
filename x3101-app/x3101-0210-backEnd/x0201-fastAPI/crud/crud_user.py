@@ -57,11 +57,19 @@ def update_user(db: Session, user_id: int, user_update: schemas.UserUpdate) -> O
         update_data = user_update.dict(exclude_unset=True)
         if 'password' in update_data:
             password = update_data.pop('password')
-            print(f"DEBUG: Hashing password of type {type(password)} and length {len(password)}")
             db_user.password_hash = get_password_hash(password)
         
+        # Handle badge PIN (4-8 digit QR login PIN)
+        if 'badge_pin' in update_data:
+            badge_pin = update_data.pop('badge_pin')
+            if badge_pin == '' or badge_pin is None:
+                db_user.badge_pin_hash = None   # clear badge PIN
+            else:
+                db_user.badge_pin_hash = get_password_hash(str(badge_pin))
+        
         for key, value in update_data.items():
-            setattr(db_user, key, value)
+            if hasattr(db_user, key):
+                setattr(db_user, key, value)
             
         db.commit()
         db.refresh(db_user)

@@ -64,7 +64,84 @@ const simCmdTopic = (plantId: string | number, suffix: string): string => {
     }
     return `mixing/plant/${plantId}/${suffix}`
 }
-const { getAuthHeader, user } = useAuth()
+const { getAuthHeader, user, switchStationUser } = useAuth()
+
+// ── Operator Scan State ─────────────────────────────────────────────────
+// User 1: เท (Pour operator) — auto from login, scannable
+const pourScanInput = ref('')
+const pourScanLoading = ref(false)
+const pourOperator = ref<{ username: string; full_name: string } | null>(null)
+
+// User 2: ต้ม (Cook operator) — secondary operator, scannable
+const cookScanInput = ref('')
+const cookScanLoading = ref(false)
+const cookOperator = ref<{ username: string; full_name: string } | null>(null)
+
+// currentOperator = pour operator (primary) for all step records
+const currentMixOperator = computed(() =>
+    pourOperator.value?.username || user.value?.username || 'unknown'
+)
+
+/** Resolve a scanned QR value against /users/ → set operator ref + beep/alarm */
+async function resolveOperatorScan(
+    rawVal: string,
+    targetRef: typeof pourOperator,
+    loadingRef: typeof pourScanLoading,
+    inputRef: typeof pourScanInput,
+    isPrimary: boolean
+) {
+    const val = rawVal.trim()
+    if (!val) return
+    inputRef.value = ''
+    loadingRef.value = true
+    try {
+        const res = await $fetch<any[]>(`${appConfig.apiBaseUrl}/users/`, {
+            headers: getAuthHeader() as Record<string, string>
+        })
+        const found = res.find((u: any) => u.username.toLowerCase() === val.toLowerCase())
+        if (found) {
+            targetRef.value = { username: found.username, full_name: found.full_name || found.username }
+            if (isPrimary) switchStationUser(found)
+            // success beep
+            try {
+                const ctx = new AudioContext()
+                const osc = ctx.createOscillator(); const g = ctx.createGain()
+                osc.connect(g); g.connect(ctx.destination)
+                osc.frequency.value = 880; g.gain.value = 0.3
+                osc.start(); osc.stop(ctx.currentTime + 0.12)
+            } catch {}
+            $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ ${isPrimary ? '🫗 เท' : '🍳 ต้ม'}: ${found.full_name || found.username}`, position: 'top-right', timeout: 1800 })
+        } else {
+            // error alarm
+            try {
+                const ctx = new AudioContext()
+                const osc = ctx.createOscillator(); const g = ctx.createGain()
+                osc.connect(g); g.connect(ctx.destination)
+                osc.type = 'sawtooth'; osc.frequency.value = 220; g.gain.value = 0.4
+                osc.start(); osc.stop(ctx.currentTime + 0.5)
+            } catch {}
+            $q.notify({ type: 'negative', icon: 'person_off', message: `❌ User "${val}" not found`, caption: 'QR Badge not registered', position: 'top', timeout: 4000 })
+        }
+    } catch {
+        $q.notify({ type: 'negative', icon: 'wifi_off', message: 'Cannot reach server', position: 'top', timeout: 3000 })
+    } finally {
+        loadingRef.value = false
+    }
+}
+
+// Debounce watchers — auto-submit when scanner stops
+let _pourDbx: ReturnType<typeof setTimeout> | null = null
+let _cookDbx: ReturnType<typeof setTimeout> | null = null
+watch(pourScanInput, (v) => {
+    if (!v) return
+    if (_pourDbx) clearTimeout(_pourDbx)
+    _pourDbx = setTimeout(() => { if (pourScanInput.value.trim()) resolveOperatorScan(pourScanInput.value, pourOperator, pourScanLoading, pourScanInput, true) }, 150)
+})
+watch(cookScanInput, (v) => {
+    if (!v) return
+    if (_cookDbx) clearTimeout(_cookDbx)
+    _cookDbx = setTimeout(() => { if (cookScanInput.value.trim()) resolveOperatorScan(cookScanInput.value, cookOperator, cookScanLoading, cookScanInput, false) }, 150)
+})
 const $q = useQuasar()
 
 // ── State ──
@@ -810,7 +887,7 @@ const confirmQcCheck = async () => {
                 brix_actual: actualBrix.value !== '' ? Number(actualBrix.value) : null,
                 ph_target:   parseSP(step?.ph_sp) > 0 ? parseSP(step.ph_sp) : null,
                 ph_actual:   actualPh.value !== '' ? Number(actualPh.value) : null,
-                operator: user.value?.username || 'operator'
+                operator: currentMixOperator.value, operator2: cookOperator.value?.username || null
             }
         })
         $q.notify({ type: 'positive', message: '✅ QC Data Saved!', icon: 'check_circle', timeout: 2000 })
@@ -2352,6 +2429,13 @@ watch(actualTankWeight,   () => _doWeightRecoveryStep())
 watch(actualHopperWeight, () => _doWeightRecoveryStep())
 
 onMounted(async () => {
+    // Auto-fill pour operator from login user
+    if (user.value) {
+        pourOperator.value = {
+            username: user.value.username || '',
+            full_name: (user.value as any).full_name || user.value.username || ''
+        }
+    }
     Promise.all([
         fetchPhaseMap(),
         fetchActionMap(),
@@ -2449,7 +2533,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <q-page class="q-pa-sm column no-wrap" style="height: calc(100vh - 105px) !important; min-height: calc(100vh - 105px) !important; max-height: calc(100vh - 105px) !important; overflow: hidden !important;">
+  <q-page class="q-pa-xs column no-wrap" style="height: calc(100vh - 105px) !important; min-height: calc(100vh - 105px) !important; max-height: calc(100vh - 105px) !important; overflow: hidden !important;">
 
     <!-- ═══ PAGE HEADER ═══ -->
     <div class="bg-deep-purple-10 text-white q-pa-sm rounded-borders q-mb-sm shadow-2 row items-center justify-between no-wrap" style="flex-shrink: 0; min-height: 60px; z-index: 50; position: sticky; top: 0;">
@@ -2571,16 +2655,45 @@ onUnmounted(() => {
              </div>
           </template>
        </div>
+
+       <!-- ── Pour/Cook Operator Row (inside header) ── -->
+       <q-separator vertical dark class="q-mx-sm" style="opacity: 0.3;" />
+       <div class="row items-center no-wrap q-gutter-xs">
+         <q-icon name="badge" color="teal-3" size="16px" />
+         <span class="mix-op-label" style="color:#b2dfdb;">Pour/Cook:</span>
+         <div class="mix-op-badge row items-center no-wrap q-gutter-xs" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3);">
+           <q-icon name="how_to_reg" color="teal-3" size="14px" />
+           <span class="mix-op-value" style="color:#e0f2f1;">{{ pourOperator?.full_name || user?.username || '-' }}</span>
+           <q-badge outline color="teal-3" style="font-size:10px;">@{{ pourOperator?.username || user?.username }}</q-badge>
+         </div>
+         <q-input
+           v-model="pourScanInput"
+           outlined dense dark
+           placeholder="Scan QR to change..."
+           @keyup.enter="resolveOperatorScan(pourScanInput, pourOperator, pourScanLoading, pourScanInput, true)"
+           :loading="pourScanLoading"
+           style="font-size:12px; width:180px;"
+         >
+           <template v-slot:prepend><q-icon name="qr_code_scanner" color="teal-3" size="xs" /></template>
+           <template v-slot:append>
+             <q-btn v-if="pourOperator?.username !== user?.username"
+               flat round dense icon="restart_alt" size="xs" color="teal-3"
+               @click="pourOperator = user.value ? { username: user.value.username, full_name: (user.value as any).full_name || user.value.username } : null">
+               <q-tooltip>Reset to login user</q-tooltip>
+             </q-btn>
+           </template>
+         </q-input>
+       </div>
     </div>
 
     <!-- ═══ PAGE LAYOUT ROW ═══ -->
     <div class="row q-col-gutter-sm" style="flex: 1; min-height: 0;">
       <!-- ═══ MAIN PANE: PRODUCTION CONTROL ═══ -->
-      <div class="col-12" style="display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
+      <div class="col-12" style="display: flex; flex-direction: column; overflow: hidden; min-height: 0; height: 100%;">
 
 
     <!-- ═══ BOTTOM CARD: SKU PROCESS AND STEP LIST ═══ -->
-    <div style="height: 100%; display: flex; flex-direction: column;">
+    <div style="height: 100%; flex: 1; display: flex; flex-direction: column;">
       <q-card flat bordered class="shadow-1" style="flex: 1; overflow: hidden; display: flex; flex-direction: column;">
         <template v-if="!selectedBatchId">
           <div class="column items-center justify-center" style="flex: 1;">
@@ -2698,105 +2811,7 @@ onUnmounted(() => {
               No details available for this SKU
             </div>
             
-            <!-- ── Brix / pH Actual Input Bar ────────────────────────────────── -->
-            <div v-if="startConfirmed && skuSteps.length > 0"
-                 class="row items-center q-px-sm q-py-xs q-mb-xs q-gutter-x-md"
-                 style="background: linear-gradient(90deg, #1a237e 0%, #283593 100%); border-radius: 8px; border: 1px solid #3949ab;">
 
-              <!-- Brix Section -->
-              <div class="row items-center q-gutter-x-sm">
-                <q-icon name="opacity" color="cyan-3" size="18px" />
-                <div>
-                  <div class="text-caption text-cyan-2" style="font-size: 11px; letter-spacing: 1px;">BRIX</div>
-                  <div class="text-caption text-cyan-4" style="font-size: 10px;">
-                    SP: <strong>{{ currentStep?.brix_sp || skuSteps.find((s:any) => s.brix_sp)?.brix_sp || '—' }}</strong>
-                  </div>
-                </div>
-                <q-input
-                  v-model="actualBrix"
-                  dense outlined type="number" step="0.01"
-                  placeholder="กรอก Brix"
-                  style="max-width: 100px; background: rgba(255,255,255,0.12); border-radius: 6px;"
-                  input-class="text-weight-bold text-white text-center"
-                  dark
-                  :color="actualBrix && currentStep?.brix_sp
-                    ? (Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'green-4' : 'red-4')
-                    : 'cyan-3'"
-                >
-                  <template #append>
-                    <q-icon
-                      v-if="actualBrix && currentStep?.brix_sp"
-                      :name="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'check_circle' : 'cancel'"
-                      :color="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'green-4' : 'red-4'"
-                      size="18px"
-                    />
-                  </template>
-                </q-input>
-                <div v-if="actualBrix && currentStep?.brix_sp" class="text-caption" style="font-size: 11px;"
-                     :class="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'text-green-3' : 'text-red-3'">
-                  {{ Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? '✓ IN RANGE' : '✗ OUT' }}
-                </div>
-                <q-btn v-if="actualBrix" flat dense icon="clear" color="red-3" size="xs" @click="actualBrix = ''" />
-              </div>
-
-              <q-separator vertical dark style="opacity: 0.3;" />
-
-              <!-- pH Section -->
-              <div class="row items-center q-gutter-x-sm">
-                <q-icon name="science" color="amber-3" size="18px" />
-                <div>
-                  <div class="text-caption text-amber-2" style="font-size: 11px; letter-spacing: 1px;">pH</div>
-                  <div class="text-caption text-amber-4" style="font-size: 10px;">
-                    SP: <strong>{{ currentStep?.ph_sp || skuSteps.find((s:any) => s.ph_sp)?.ph_sp || '—' }}</strong>
-                  </div>
-                </div>
-                <q-input
-                  v-model="actualPh"
-                  dense outlined type="number" step="0.01"
-                  placeholder="กรอก pH"
-                  style="max-width: 100px; background: rgba(255,255,255,0.12); border-radius: 6px;"
-                  input-class="text-weight-bold text-white text-center"
-                  dark
-                  :color="actualPh && currentStep?.ph_sp
-                    ? (Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'green-4' : 'red-4')
-                    : 'amber-3'"
-                >
-                  <template #append>
-                    <q-icon
-                      v-if="actualPh && currentStep?.ph_sp"
-                      :name="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'check_circle' : 'cancel'"
-                      :color="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'green-4' : 'red-4'"
-                      size="18px"
-                    />
-                  </template>
-                </q-input>
-                <div v-if="actualPh && currentStep?.ph_sp" class="text-caption" style="font-size: 11px;"
-                     :class="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'text-green-3' : 'text-red-3'">
-                  {{ Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? '✓ IN RANGE' : '✗ OUT' }}
-                </div>
-                <q-btn v-if="actualPh" flat dense icon="clear" color="red-3" size="xs" @click="actualPh = ''" />
-              </div>
-
-              <q-separator vertical dark style="opacity: 0.3;" />
-
-              <!-- Quick status summary -->
-              <div class="row items-center q-gutter-x-xs">
-                <q-chip
-                  v-if="actualBrix || actualPh"
-                  dense
-                  :color="(actualBrix && currentStep?.brix_sp && Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) > Number(currentStep.brix_sp)*0.05)
-                    || (actualPh && currentStep?.ph_sp && Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) > 0.3)
-                    ? 'red-8' : 'green-8'"
-                  text-color="white" icon="analytics" size="sm"
-                >
-                  {{ (actualBrix && currentStep?.brix_sp && Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) > Number(currentStep.brix_sp)*0.05)
-                    || (actualPh && currentStep?.ph_sp && Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) > 0.3)
-                    ? 'QC FAIL' : 'QC PASS' }}
-                </q-chip>
-                <div class="text-grey-4 text-caption" style="font-size: 10px;" v-if="!actualBrix && !actualPh">กรอกค่า Brix / pH เพื่อตรวจสอบ</div>
-              </div>
-            </div>
-            <!-- ── End Brix/pH Bar ─────────────────────────────────────────── -->
 
             <div v-if="skuStepsByPhase.length > 0" class="scroll" style="flex: 1; min-height: 0;">
               <q-markup-table flat bordered dense separator="cell" style="font-size: 16px;" class="full-width production-table sticky-header-table">
@@ -3698,5 +3713,27 @@ onUnmounted(() => {
   .production-table {
     font-size: 11px !important;
   }
+}
+
+/* Operator bar — same compact style as Inspector in x60 */
+.mix-op-badge {
+  background: #e0f2f1;
+  border-radius: 20px;
+  padding: 3px 12px;
+  border: 1px solid #80cbc4;
+  white-space: nowrap;
+}
+.mix-op-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #004d40;
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.mix-op-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #00695c;
 }
 </style>

@@ -17,6 +17,20 @@ class UserBase(BaseModel):
     status: str = Field("Active", max_length=20)
     permissions: List[str] = []
 
+    @field_validator('permissions', mode='before')
+    @classmethod
+    def normalize_permissions(cls, v):
+        """Convert NULL/None from DB to empty list"""
+        if v is None:
+            return []
+        if isinstance(v, str):
+            import json
+            try:
+                return json.loads(v)
+            except Exception:
+                return []
+        return v
+
 class UserCreate(UserBase):
     """User creation with password validation"""
     password: str = Field(..., min_length=6, max_length=255)
@@ -40,6 +54,12 @@ class UserUpdate(BaseModel):
     permissions: Optional[List[str]] = None
     username: Optional[str] = Field(None, max_length=50)
     email: Optional[EmailStr] = None
+    badge_pin: Optional[str] = Field(None, min_length=4, max_length=8, description="4-8 digit badge PIN for QR login. Send empty string to clear.")
+
+class BadgeLoginRequest(BaseModel):
+    """QR Badge login — username + 4-8 digit PIN"""
+    username: str = Field(..., min_length=1, max_length=50)
+    badge_pin: str = Field(..., min_length=4, max_length=8)
 
 class User(UserBase):
     """User response model"""

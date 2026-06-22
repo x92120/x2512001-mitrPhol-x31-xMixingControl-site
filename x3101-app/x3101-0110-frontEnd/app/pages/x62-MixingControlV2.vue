@@ -42,7 +42,79 @@ const router = useRouter()
 
 // ── PLC Connection via Shared MQTT Composable ──
 const { connect, disconnect, publishMessage, isConnected: plcConnectedGlobal, plantsData, onMessage, offMessage } = useMQTT()
-const { getAuthHeader, user } = useAuth()
+const { getAuthHeader, user, switchStationUser } = useAuth()
+
+// ── Operator Scan State ──────────────────────────────────────────────────
+// User 1: เท (Pour operator) — auto from login, scannable
+const pourScanInput = ref('')
+const pourScanLoading = ref(false)
+const pourOperator = ref<{ username: string; full_name: string } | null>(null)
+
+// User 2: ต้ม (Cook operator) — secondary operator, scannable
+const cookScanInput = ref('')
+const cookScanLoading = ref(false)
+const cookOperator = ref<{ username: string; full_name: string } | null>(null)
+
+// currentOperator = pour operator (primary) for all step records
+const currentOperator = computed(() =>
+    pourOperator.value?.username || user?.value?.username || 'unknown'
+)
+
+/** Resolve a scanned value against /users/ → set operator ref + play sound */
+async function resolveUserScan(
+    rawVal: string,
+    targetRef: typeof pourOperator,
+    loadingRef: typeof pourScanLoading,
+    isPrimary: boolean
+) {
+    const val = rawVal.trim()
+    if (!val) return
+    loadingRef.value = true
+    try {
+        const res = await $fetch<any[]>(`${appConfig.apiBaseUrl}/users/`, {
+            headers: getAuthHeader() as Record<string, string>
+        })
+        const found = res.find((u: any) => u.username.toLowerCase() === val.toLowerCase())
+        if (found) {
+            targetRef.value = { username: found.username, full_name: found.full_name || found.username }
+            if (isPrimary) switchStationUser(found)
+            const beepCtx = new AudioContext()
+            const osc = beepCtx.createOscillator()
+            const gain = beepCtx.createGain()
+            osc.connect(gain); gain.connect(beepCtx.destination)
+            osc.frequency.value = 880; gain.gain.value = 0.3
+            osc.start(); osc.stop(beepCtx.currentTime + 0.12)
+            $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ ${isPrimary ? '🫗 เท' : '🍳 ต้ม'}: ${found.full_name || found.username}`, position: 'top-right', timeout: 1800 })
+        } else {
+            // Alarm
+            const errCtx = new AudioContext()
+            const osc = errCtx.createOscillator()
+            const gain = errCtx.createGain()
+            osc.connect(gain); gain.connect(errCtx.destination)
+            osc.type = 'sawtooth'; osc.frequency.value = 220; gain.gain.value = 0.4
+            osc.start(); osc.stop(errCtx.currentTime + 0.5)
+            $q.notify({ type: 'negative', icon: 'person_off', message: `❌ User "${val}" not found`, caption: 'QR Badge not registered', position: 'top', timeout: 4000 })
+        }
+    } catch {
+        $q.notify({ type: 'negative', icon: 'wifi_off', message: 'Cannot reach server', position: 'top', timeout: 3000 })
+    } finally {
+        loadingRef.value = false
+    }
+}
+
+// Debounce watchers for auto-submit
+let _pourDebounce: ReturnType<typeof setTimeout> | null = null
+let _cookDebounce: ReturnType<typeof setTimeout> | null = null
+watch(pourScanInput, (val) => {
+    if (!val) return
+    if (_pourDebounce) clearTimeout(_pourDebounce)
+    _pourDebounce = setTimeout(() => { if (pourScanInput.value.trim()) { resolveUserScan(pourScanInput.value, pourOperator, pourScanLoading, true); pourScanInput.value = '' } }, 150)
+})
+watch(cookScanInput, (val) => {
+    if (!val) return
+    if (_cookDebounce) clearTimeout(_cookDebounce)
+    _cookDebounce = setTimeout(() => { if (cookScanInput.value.trim()) { resolveUserScan(cookScanInput.value, cookOperator, cookScanLoading, false); cookScanInput.value = '' } }, 150)
+})
 const $q = useQuasar()
 
 // ── State ──
@@ -407,7 +479,7 @@ const handlePlcMessage = (topic: string, payload: any) => {
                     re_code: currentCompletedStep.re_code,
                     target_value: Number(currentCompletedStep.require || 0),
                     actual_value: Number(actualHopperWeight.value || 0),
-                    operator: user?.value?.username || 'unknown'
+                    operator: currentOperator.value, operator2: cookOperator.value?.username || null
                 }
             }).catch(e => console.error('Failed to log step:', e));
         }
@@ -510,7 +582,7 @@ const confirmQcCheck = () => {
             brix_actual: Number(actualBrix.value),
             ph_target: Number(pendingQcStep.value.ph_sp || 0),
             ph_actual: Number(actualPh.value),
-            operator: user?.value?.username || 'unknown'
+            operator: currentOperator.value, operator2: cookOperator.value?.username || null
         }
     }).catch(e => console.error('Failed to save QC record:', e));
 
@@ -627,7 +699,7 @@ const confirmStepDone = () => {
         Confirm_Phase_ID: String(step.phase_number || ''),
         Confirm_Step_ID: Number(step.sub_step || 0),
         Batch_ID: selectedBatchId.value || '-',
-        operator: user?.value?.username || 'unknown',
+        operator: currentOperator.value, operator2: cookOperator.value?.username || null,
         timestamp: new Date().toISOString()
     }
     
@@ -870,6 +942,13 @@ const handleScannerInput = (e: KeyboardEvent) => {
 }
 
 onMounted(() => {
+    // Auto-fill pour operator from login user
+    if (user?.value) {
+        pourOperator.value = {
+            username: user.value.username || '',
+            full_name: (user.value as any).full_name || user.value.username || ''
+        }
+    }
     window.addEventListener('keypress', handleScannerInput)
     if (process.client) {
         // Reconnect MQTT if disconnected
@@ -1137,7 +1216,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <q-page class="q-pa-sm" style="height: calc(100vh - 56px); overflow: hidden;">
+  <q-page class="q-pa-sm" style="height: calc(100vh - 56px); overflow: hidden; display: flex; flex-direction: column;">
 
     <!-- ═══ PAGE HEADER ═══ -->
     <div class="bg-deep-purple-9 text-white q-pa-sm rounded-borders q-mb-sm shadow-2">
@@ -1238,8 +1317,66 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- ═══ OPERATOR SCAN BAR ═══ -->
+    <div class="row items-center no-wrap q-gutter-sm q-mb-xs" style="flex-shrink: 0; min-height: 38px;">
+
+      <!-- User 1: เท (Pour) -->
+      <div class="row items-center no-wrap q-gutter-xs">
+        <q-icon name="water_drop" color="blue-7" size="18px" />
+        <span class="op-label text-blue-9">🫗 เท:</span>
+        <div class="op-badge row items-center no-wrap q-gutter-xs" style="background:#e3f2fd; border:1px solid #90caf9; border-radius:20px; padding:3px 12px;">
+          <q-icon name="how_to_reg" color="blue-8" size="14px" />
+          <span class="op-name text-blue-10">{{ pourOperator?.full_name || user?.username || '-' }}</span>
+          <q-badge outline color="blue-7" style="font-size:10px;">@{{ pourOperator?.username || user?.username }}</q-badge>
+        </div>
+        <q-input
+          v-model="pourScanInput"
+          outlined dense bg-color="white"
+          placeholder="Scan QR to change..."
+          @keyup.enter="resolveUserScan(pourScanInput, pourOperator, pourScanLoading, true); pourScanInput=''"
+          :loading="pourScanLoading"
+          style="font-size:12px; width:185px;"
+        >
+          <template v-slot:prepend><q-icon name="qr_code_scanner" color="blue-5" size="xs" /></template>
+          <template v-slot:append>
+            <q-btn v-if="pourOperator?.username !== user?.username"
+              flat round dense icon="restart_alt" size="xs" color="blue-7"
+              @click="pourOperator = user?.value ? { username: user.value.username, full_name: (user.value as any).full_name || user.value.username } : null">
+              <q-tooltip>Reset to login user</q-tooltip>
+            </q-btn>
+          </template>
+        </q-input>
+      </div>
+
+      <q-separator vertical inset color="grey-4" style="height:24px; align-self:center;" />
+
+      <!-- User 2: ต้ม (Cook) -->
+      <div class="row items-center no-wrap q-gutter-xs">
+        <q-icon name="local_fire_department" color="orange-8" size="18px" />
+        <span class="op-label text-orange-9">🍳 ต้ม:</span>
+        <div v-if="cookOperator" class="op-badge row items-center no-wrap q-gutter-xs" style="background:#fff3e0; border:1px solid #ffcc80; border-radius:20px; padding:3px 12px;">
+          <q-icon name="how_to_reg" color="orange-8" size="14px" />
+          <span class="op-name text-orange-10">{{ cookOperator.full_name }}</span>
+          <q-badge outline color="orange-7" style="font-size:10px;">@{{ cookOperator.username }}</q-badge>
+          <q-btn flat round dense icon="close" size="xs" color="orange-7" @click="cookOperator = null"><q-tooltip>Clear Cook Operator</q-tooltip></q-btn>
+        </div>
+        <q-input
+          v-else
+          v-model="cookScanInput"
+          outlined dense bg-color="white"
+          placeholder="Scan QR ต้ม..."
+          @keyup.enter="resolveUserScan(cookScanInput, cookOperator, cookScanLoading, false); cookScanInput=''"
+          :loading="cookScanLoading"
+          style="font-size:12px; width:185px;"
+        >
+          <template v-slot:prepend><q-icon name="qr_code_scanner" color="orange-6" size="xs" /></template>
+        </q-input>
+      </div>
+
+    </div>
+
     <!-- ═══ PAGE LAYOUT ROW ═══ -->
-    <div class="row q-col-gutter-sm" style="flex: 1; min-height: 0;">
+    <div class="row q-col-gutter-sm" style="flex: 1; min-height: 0; overflow: hidden;">
       <!-- ═══ MAIN PANE: PRODUCTION CONTROL ═══ -->
       <div class="col-12" style="display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
 
@@ -1973,6 +2110,10 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.op-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+.op-badge { white-space: nowrap; }
+.op-name { font-size: 13px; font-weight: 700; }
+
 .heartbeat-icon {
   animation: heartbeat 1s ease-in-out infinite;
 }

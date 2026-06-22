@@ -7,7 +7,7 @@ import { generateQrDataUrl } from '~/composables/useQrCode'
 
 
 const $q = useQuasar()
-const { getAuthHeader, user } = useAuth()
+const { getAuthHeader, user, switchStationUser } = useAuth()
 const { t } = useI18n()
 
 // --- MQTT Integration ---
@@ -116,6 +116,94 @@ const boxScanInput = ref('')
 // Bag scan input (above bag list)
 const bagScanInput = ref('')
 const bagScanRef = ref<any>(null)
+
+// ── Inspector (User QR Scan) + Lot Scan ──────────────────────────────────
+const userScanInput = ref('')
+const scannedInspector = ref<{ username: string; full_name: string } | null>(null)
+const userScanLoading = ref(false)
+const lotScanInput = ref('')
+const scannedLot = ref('')
+
+/** Resolves scanned username against /users/ and sets scannedInspector */
+const onUserScanSubmit = async () => {
+  const val = userScanInput.value.trim()
+  if (!val) return
+  userScanLoading.value = true
+  userScanInput.value = ''   // clear immediately so scanner is ready for next
+  try {
+    const res = await $fetch<any[]>(`${appConfig.apiBaseUrl}/users/`, {
+      headers: getAuthHeader() as Record<string, string>
+    })
+    const found = res.find((u: any) => u.username.toLowerCase() === val.toLowerCase())
+    if (found) {
+      scannedInspector.value = { username: found.username, full_name: found.full_name || found.username }
+      // Switch active station user → updates top-right display across the app
+      switchStationUser(found)
+      playSound('success')
+      $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ Inspector: ${found.full_name || found.username}`, position: 'top-right', timeout: 2000 })
+    } else {
+      // User not found → alarm!
+      playSound('error')
+      setScanFeedback('error')
+      $q.notify({
+        type: 'negative',
+        icon: 'person_off',
+        message: `❌ User "${val}" not found`,
+        caption: 'QR Badge not registered in the system',
+        position: 'top',
+        timeout: 4000,
+        actions: [{ label: 'OK', color: 'white' }]
+      })
+    }
+  } catch (e) {
+    playSound('error')
+    $q.notify({ type: 'negative', icon: 'wifi_off', message: 'Cannot reach server to verify user', position: 'top', timeout: 3000 })
+  } finally {
+    userScanLoading.value = false
+  }
+}
+
+// Auto-submit user scan via debounce (handles scanners that don't send Enter)
+let _userScanDebounce: ReturnType<typeof setTimeout> | null = null
+watch(userScanInput, (val) => {
+  if (!val) return
+  if (_userScanDebounce) clearTimeout(_userScanDebounce)
+  _userScanDebounce = setTimeout(() => {
+    if (userScanInput.value.trim()) onUserScanSubmit()
+  }, 150)
+})
+
+const onLotScanSubmit = () => {
+  const val = lotScanInput.value.trim()
+  if (!val) return
+  scannedLot.value = val
+  lotScanInput.value = ''
+  $q.notify({ type: 'info', icon: 'inventory_2', message: `Lot locked: ${val}`, position: 'top', timeout: 1200 })
+}
+
+// Snapshot of the original session user (before any badge switch)
+const _sessionUser = import.meta.client
+    ? (() => { try { return JSON.parse(sessionStorage.getItem('_originalUser') || 'null') } catch { return null } })()
+    : null
+
+const clearInspector = () => {
+    // Restore original login user
+    if (_sessionUser) {
+        switchStationUser(_sessionUser)
+        scannedInspector.value = { username: _sessionUser.username, full_name: _sessionUser.full_name || _sessionUser.username }
+    } else {
+        scannedInspector.value = user.value ? {
+            username: user.value.username || '',
+            full_name: (user.value as any).full_name || user.value.username || ''
+        } : null
+    }
+}
+const clearLot = () => { scannedLot.value = '' }
+
+/** Active operator — prefers scanned inspector over logged-in user */
+const currentOperator = computed(() =>
+  scannedInspector.value?.username || currentOperator.value
+)
 
 
 
@@ -449,7 +537,7 @@ const saveSubBatch = async (sub: any) => {
         await $fetch(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/sub-batches`, {
             method: 'POST',
             headers: getAuthHeader() as Record<string, string>,
-            body: { ...sub, operator: sub.operator || user.value?.username || '' }
+            body: { ...sub, operator: sub.operator || currentOperator.value }
         })
         $q.notify({ type: 'positive', message: `Sub-batch ${sub.sub_run} saved`, position: 'top', timeout: 1000 })
     } catch(e: any) {
@@ -463,7 +551,7 @@ const addSubBatch = () => {
     const usedRuns = new Set(subBatches.value.map((s: any) => s.sub_run))
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
     const next = letters.find(r => !usedRuns.has(r)) || `Run-${subBatches.value.length + 1}`
-    subBatches.value.push({ sub_run: next, actual_volume: null, start_time: null, stop_time: null, remarks: '', operator: user.value?.username || '' })
+    subBatches.value.push({ sub_run: next, actual_volume: null, start_time: null, stop_time: null, remarks: '', operator: currentOperator.value })
 }
 
 const removeSubBatch = async (idx: number) => {
@@ -536,7 +624,7 @@ const quickCheckIngredient = async (ing: any) => {
             body: {
                 batch_id: selectedBatchId.value,
                 bag_barcode: ing.re_code,
-                operator: user.value?.username || 'Operator'
+                operator: currentOperator.value
             }
         })
         
@@ -599,7 +687,7 @@ const markAllWarehouse = async (group: any) => {
                 body: {
                     batch_id: selectedBatchId.value,
                     bag_barcode: ing.re_code,
-                    operator: user.value?.username || 'Operator'
+                    operator: currentOperator.value
                 }
             })
             // Update local state instantly
@@ -1079,7 +1167,7 @@ const verifyBatchBag = async (bagBarcode: string) => {
             body: {
                 batch_id: recheckBatchId.value,
                 bag_barcode: bagBarcode,
-                operator: user.value?.username || 'Operator'
+                operator: currentOperator.value
             }
         })
 
@@ -1527,7 +1615,7 @@ const verifyBag = async (bagBarcode: string) => {
             body: {
                 box_id: boxId.value,
                 bag_barcode: bagBarcode,
-                operator: user.value?.username || 'Operator'
+                operator: currentOperator.value
             }
         })
 
@@ -1818,7 +1906,45 @@ const printBatchLabelReport = async (batchId: string) => {
         .label-footer { padding: 3px 8px; background: #f9f9f9; border-top: 1px solid #eee; }
         .footer { border-top: 2px solid #1565c0; font-size: 9px; color: #999; padding: 6px 0; margin-top: 12px; display: flex; justify-content: space-between; }
         @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style></head><body>
+    
+/* Inspector + Lot Bar — compact inline */
+.inspector-login-badge {
+  background: #ede7f6;
+  border-radius: 20px;
+  padding: 3px 12px;
+  border: 1px solid #ce93d8;
+  white-space: nowrap;
+}
+.inspector-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6a1b9a;
+  margin-right: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.inspector-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a148c;
+}
+.lot-inline-section {
+  gap: 4px;
+  white-space: nowrap;
+}
+.lot-chip-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #e0f2f1;
+  border: 1px solid #80cbc4;
+  border-radius: 16px;
+  padding: 2px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #004d40;
+}
+</style></head><body>
     <div class="report-header">
         <div>
             <h1>🏷️ PreBatch Ingredient Labels</h1>
@@ -2074,14 +2200,39 @@ onBeforeRouteLeave((to, from, next) => {
 onMounted(() => {
     fetchPlansAndBatches()
     fetchAwaitingBatches()
-    
+
+    // Save original session user snapshot for restore-on-clear
+    if (import.meta.client && user.value) {
+        const existing = sessionStorage.getItem('_originalUser')
+        if (!existing) {
+            sessionStorage.setItem('_originalUser', JSON.stringify(user.value))
+        }
+    }
+    // Auto-fill inspector from logged-in user
+    if (user.value) {
+        scannedInspector.value = {
+            username: user.value.username || '',
+            full_name: (user.value as any).full_name || user.value.username || ''
+        }
+    }
+
     // Connect to MQTT and listen for barcodes
     connect()
     onMessage(handleMqttBarcode)
-    
+
     window.addEventListener('beforeunload', handleBeforeUnload)
     window.addEventListener('unload', handleUnload)
 })
+
+// Keep inspector in sync if user changes (re-login)
+watch(user, (newUser) => {
+    if (newUser && !scannedInspector.value) {
+        scannedInspector.value = {
+            username: newUser.username || '',
+            full_name: (newUser as any).full_name || newUser.username || ''
+        }
+    }
+}, { immediate: false })
 
 onUnmounted(() => {
     offMessage(handleMqttBarcode)
@@ -2147,6 +2298,77 @@ onUnmounted(() => {
       <q-btn flat round dense icon="print" color="blue-9" @click="printBatchIngredientReport" :disable="!selectedBatchInfo"><q-tooltip>Print Batch Ingredient Report</q-tooltip></q-btn>
       <q-btn flat round dense icon="assessment" color="blue-9" @click="showQCReportDialog = true"><q-tooltip>QC Report</q-tooltip></q-btn>
       <q-btn flat round dense icon="volume_up" color="blue-9" @click="showSoundSettings = true"><q-tooltip>{{ t('sound.title') }}</q-tooltip></q-btn>
+    </div>
+
+    <!-- ===== INSPECTOR + LOT SCAN BAR ===== -->
+    <div class="row items-center no-wrap q-gutter-sm q-mb-xs" style="flex-shrink: 0; min-height: 36px;">
+
+      <!-- Inspector: auto badge + override scan -->
+      <div class="row items-center no-wrap q-gutter-xs">
+        <q-icon name="badge" color="deep-purple-8" size="18px" />
+        <span class="inspector-label">Inspector:</span>
+
+        <!-- Active inspector badge -->
+        <div class="inspector-login-badge row items-center no-wrap q-gutter-xs">
+          <q-icon name="how_to_reg" color="deep-purple-8" size="14px" />
+          <span class="inspector-value">{{ scannedInspector?.full_name || user?.username || '-' }}</span>
+          <q-badge outline color="deep-purple-7" style="font-size: 10px;">
+            @{{ scannedInspector?.username || user?.username }}
+          </q-badge>
+        </div>
+
+        <!-- Scan override input -->
+        <q-input
+          v-model="userScanInput"
+          outlined dense
+          placeholder="Scan QR to change..."
+          @keyup.enter="onUserScanSubmit"
+          :loading="userScanLoading"
+          bg-color="white"
+          style="font-size: 12px; width: 190px;"
+        >
+          <template v-slot:prepend>
+            <q-icon name="qr_code_scanner" color="deep-purple-5" size="xs" />
+          </template>
+          <template v-slot:append>
+            <q-btn
+              v-if="scannedInspector?.username !== (user?.username)"
+              flat round dense icon="restart_alt" size="xs" color="deep-purple-7"
+              @click="clearInspector"
+            >
+              <q-tooltip>Reset to login user</q-tooltip>
+            </q-btn>
+          </template>
+        </q-input>
+      </div>
+
+      <q-separator vertical inset color="grey-4" style="height: 24px; align-self: center;" />
+
+      <!-- Lot Scan (compact inline) -->
+      <div class="row items-center no-wrap lot-inline-section">
+        <q-icon name="inventory_2" color="teal-8" size="18px" class="q-mr-xs" />
+        <span class="inspector-label">Lot:</span>
+        <div v-if="scannedLot" class="lot-chip-inline">
+          <q-icon name="qr_code" size="14px" />
+          <span>{{ scannedLot }}</span>
+          <q-btn flat round dense icon="close" size="xs" color="teal-9" @click="clearLot">
+            <q-tooltip>Clear Lot</q-tooltip>
+          </q-btn>
+        </div>
+        <q-input
+          v-else
+          v-model="lotScanInput"
+          outlined dense
+          placeholder="Scan Lot..."
+          @keyup.enter="onLotScanSubmit"
+          bg-color="white"
+          style="font-size: 12px; width: 180px;"
+        >
+          <template v-slot:prepend>
+            <q-icon name="qr_code_scanner" color="teal-7" size="xs" />
+          </template>
+        </q-input>
+      </div>
     </div>
 
       <!-- ===== UNIFIED 3-PANE LAYOUT ===== -->

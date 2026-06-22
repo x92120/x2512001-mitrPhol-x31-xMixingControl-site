@@ -39,6 +39,7 @@ class User(Base):
     department = Column(String(100))
     status = Column(Enum(UserStatus), default=UserStatus.Active)
     permissions = Column(JSON)
+    badge_pin_hash = Column(String(255), nullable=True)
     last_login = Column(DateTime)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), onupdate=func.now())

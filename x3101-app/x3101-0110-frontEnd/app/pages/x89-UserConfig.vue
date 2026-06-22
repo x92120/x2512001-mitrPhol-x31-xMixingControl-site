@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { useQuasar } from 'quasar'
 import { appConfig } from '~/appConfig/config'
 import { useAuth } from '~/composables/useAuth'
+import QRCode from 'qrcode'
 
 interface User {
   id?: number
@@ -16,6 +17,7 @@ interface User {
   last_login?: string
   password?: string
   new_password?: string
+  badge_pin?: string
 }
 
 const $q = useQuasar()
@@ -43,6 +45,99 @@ const newUser = ref<User>({
 })
 const searchQuery = ref('')
 const isLoading = ref(false)
+
+// QR Code
+const newUserQrDataUrl = ref<string>('')
+const selectedUserQrDataUrl = ref<string>('')
+
+const generateQr = async (username: string, target: 'new' | 'selected') => {
+  if (!username || username.trim() === '') {
+    if (target === 'new') newUserQrDataUrl.value = ''
+    else selectedUserQrDataUrl.value = ''
+    return
+  }
+  try {
+    const url = await QRCode.toDataURL(username.trim(), {
+      width: 200,
+      margin: 2,
+      color: { dark: '#1a237e', light: '#ffffff' },
+    })
+    if (target === 'new') newUserQrDataUrl.value = url
+    else selectedUserQrDataUrl.value = url
+  } catch (e) {
+    console.error('QR generation error:', e)
+  }
+}
+
+const printQr = (username: string, fullName: string, qrDataUrl: string) => {
+  if (!qrDataUrl) return
+  const win = window.open('', '_blank', 'width=400,height=520')
+  if (!win) return
+  win.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8" />
+      <title>QR Code - ${username}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          background: #f5f7ff;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100vh;
+        }
+        .card {
+          background: white;
+          border-radius: 16px;
+          padding: 32px 40px;
+          text-align: center;
+          box-shadow: 0 4px 24px rgba(26,35,126,0.15);
+          border-top: 6px solid #1a237e;
+        }
+        .logo-bar {
+          font-size: 13px;
+          color: #1a237e;
+          font-weight: 700;
+          letter-spacing: 2px;
+          margin-bottom: 20px;
+          text-transform: uppercase;
+        }
+        .qr-wrap {
+          background: #f0f4ff;
+          border-radius: 12px;
+          padding: 12px;
+          display: inline-block;
+          margin-bottom: 20px;
+        }
+        .qr-wrap img { display: block; width: 200px; height: 200px; }
+        .name { font-size: 18px; font-weight: 700; color: #1a237e; margin-bottom: 6px; }
+        .username { font-size: 14px; color: #555; background: #eef0ff; border-radius: 6px; padding: 4px 14px; display: inline-block; margin-bottom: 20px; }
+        .footer { font-size: 11px; color: #aaa; margin-top: 8px; }
+        @media print {
+          body { background: white; }
+          .card { box-shadow: none; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="logo-bar">xMixing System</div>
+        <div class="qr-wrap">
+          <img src="${qrDataUrl}" alt="QR Code" />
+        </div>
+        <div class="name">${fullName || username}</div>
+        <div class="username">@${username}</div>
+        <div class="footer">Scan to identify user &bull; xMixing v2.5</div>
+      </div>
+      <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); }<\/script>
+    </body>
+    </html>
+  `)
+  win.document.close()
+}
 
 // Users list
 const users = ref<User[]>([])
@@ -120,6 +215,9 @@ const saveUserChanges = async () => {
 
     if (selectedUser.value.new_password) {
       payload.password = selectedUser.value.new_password
+    }
+    if (selectedUser.value.badge_pin !== undefined) {
+      payload.badge_pin = selectedUser.value.badge_pin  // '' = clear PIN
     }
 
     const response = await fetch(`${appConfig.apiBaseUrl}/users/${selectedUser.value.id}`, {
@@ -207,6 +305,7 @@ const createUser = async () => {
 
 const closeCreateDialog = () => {
   isCreateDialogOpen.value = false
+  newUserQrDataUrl.value = ''
   newUser.value = {
     username: '',
     email: '',
@@ -218,6 +317,10 @@ const closeCreateDialog = () => {
     password: ''
   }
 }
+
+// Watch username changes to auto-generate QR
+watch(() => newUser.value.username, (val) => generateQr(val, 'new'))
+watch(() => selectedUser.value?.username, (val) => { if (val) generateQr(val, 'selected') })
 
 
 onMounted(() => {
@@ -376,7 +479,7 @@ const deleteUser = (user: User) => {
 
         <q-card-section class="q-pt-none q-pa-lg">
           <q-form @submit.prevent="createUser" class="q-gutter-md">
-             <q-input
+            <q-input
               filled
               v-model="newUser.username"
               label="Username *"
@@ -384,7 +487,25 @@ const deleteUser = (user: User) => {
               lazy-rules
               :rules="[ val => val && val.length > 0 || t('userConfig.pleaseType')]"
             />
-             <q-input
+
+            <!-- QR Code Preview (auto-generate from username) -->
+            <div v-if="newUserQrDataUrl" class="qr-preview-block">
+              <div class="qr-preview-label">QR Code Preview</div>
+              <div class="qr-preview-wrap">
+                <img :src="newUserQrDataUrl" alt="QR Code" class="qr-img" />
+                <div class="qr-username-badge">@{{ newUser.username }}</div>
+              </div>
+              <q-btn
+                icon="print"
+                label="Print QR"
+                color="indigo-8"
+                size="sm"
+                class="q-mt-sm full-width"
+                @click="printQr(newUser.username, newUser.full_name, newUserQrDataUrl)"
+              />
+            </div>
+
+            <q-input
               filled
               v-model="newUser.email"
               label="Email *"
@@ -405,13 +526,13 @@ const deleteUser = (user: User) => {
               v-model="newUser.full_name"
               label="Full Name"
             />
-             <q-select
+            <q-select
               filled
               v-model="newUser.role"
               :options="roles"
               label="Role"
             />
-             <q-input
+            <q-input
               filled
               v-model="newUser.department"
               label="Department"
@@ -455,10 +576,35 @@ const deleteUser = (user: User) => {
             <!-- Left Column: User Info -->
             <div class="col-12 col-md-6">
               <div class="text-subtitle2 text-weight-bold q-mb-md">{{ t('userConfig.userInfo') }}</div>
-              
+
               <div class="q-mb-md">
                 <div class="text-caption">{{ t('register.username') }}</div>
                 <q-input v-model="selectedUser.username" outlined dense />
+              </div>
+
+              <!-- QR Code Section in Manage Dialog -->
+              <div class="qr-manage-block q-mb-lg">
+                <div class="qr-manage-label">
+                  <q-icon name="qr_code_2" size="18px" class="q-mr-xs" />
+                  QR Code Badge
+                </div>
+                <div v-if="selectedUserQrDataUrl" class="qr-manage-inner">
+                  <img :src="selectedUserQrDataUrl" alt="QR" class="qr-manage-img" />
+                  <div class="qr-manage-name">{{ selectedUser.full_name || selectedUser.username }}</div>
+                  <div class="qr-manage-user">@{{ selectedUser.username }}</div>
+                  <q-btn
+                    icon="print"
+                    label="Print QR Badge"
+                    color="indigo-8"
+                    size="sm"
+                    class="q-mt-sm full-width"
+                    @click="printQr(selectedUser.username, selectedUser.full_name, selectedUserQrDataUrl)"
+                  />
+                </div>
+                <div v-else class="qr-manage-empty">
+                  <q-icon name="qr_code" size="40px" color="grey-4" />
+                  <div class="text-caption text-grey-5 q-mt-xs">Enter username to generate QR</div>
+                </div>
               </div>
 
               <div class="q-mb-md">
@@ -518,6 +664,43 @@ const deleteUser = (user: User) => {
                     </q-card-section>
                   </q-card>
                 </q-expansion-item>
+
+                <!-- Badge PIN for QR Login -->
+                <q-expansion-item
+                  icon="qr_code_scanner"
+                  label="Badge PIN (QR Login)"
+                  header-class="bg-deep-purple-1 text-deep-purple-9"
+                  expand-icon-class="text-deep-purple-7"
+                  default-closed
+                  class="q-mt-xs"
+                >
+                  <q-card>
+                    <q-card-section class="q-pa-sm">
+                      <q-banner dense class="bg-deep-purple-1 text-deep-purple-9 q-mb-sm rounded-borders" style="font-size: 12px;">
+                        <template v-slot:avatar><q-icon name="info" color="deep-purple-7" /></template>
+                        Set a 4-6 digit PIN for QR badge login on the Login page. Leave blank to keep current. Type a space to clear.
+                      </q-banner>
+                      <q-input 
+                        v-model="selectedUser.badge_pin" 
+                        outlined 
+                        dense 
+                        label="Badge PIN (4-6 digits)"
+                        type="password"
+                        maxlength="8"
+                        hint="e.g. 1234 — Used with QR badge scan on Login page"
+                        :rules="[v => !v || (v.length >= 4 && /^\d+$/.test(v)) || 'Must be 4-8 digits']"
+                      >
+                        <template v-slot:prepend><q-icon name="pin" color="deep-purple-7" /></template>
+                        <template v-slot:append>
+                          <q-btn v-if="selectedUser.badge_pin" flat round dense icon="clear" size="xs" color="grey-6"
+                            @click="selectedUser.badge_pin = ''" >
+                            <q-tooltip>Clear Badge PIN</q-tooltip>
+                          </q-btn>
+                        </template>
+                      </q-input>
+                    </q-card-section>
+                  </q-card>
+                </q-expansion-item>
               </div>
             </div>
 
@@ -565,5 +748,98 @@ const deleteUser = (user: User) => {
 <style scoped>
 :deep(.q-table__card) {
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+}
+
+/* QR Preview - Create Dialog */
+.qr-preview-block {
+  background: linear-gradient(135deg, #e8eaf6 0%, #ede7f6 100%);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  border: 1.5px dashed #7986cb;
+}
+.qr-preview-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #5c6bc0;
+  margin-bottom: 10px;
+}
+.qr-preview-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.qr-img {
+  width: 140px;
+  height: 140px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(63,81,181,0.18);
+  background: white;
+  padding: 6px;
+}
+.qr-username-badge {
+  font-size: 13px;
+  font-weight: 700;
+  color: #3f51b5;
+  background: white;
+  border-radius: 20px;
+  padding: 3px 14px;
+  letter-spacing: 0.5px;
+}
+
+/* QR Section - Manage Dialog */
+.qr-manage-block {
+  background: linear-gradient(135deg, #e8eaf6 0%, #f3e5f5 100%);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  border: 1.5px solid #9fa8da;
+}
+.qr-manage-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #5c6bc0;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qr-manage-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.qr-manage-img {
+  width: 160px;
+  height: 160px;
+  border-radius: 10px;
+  box-shadow: 0 2px 16px rgba(63,81,181,0.2);
+  background: white;
+  padding: 8px;
+}
+.qr-manage-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a237e;
+}
+.qr-manage-user {
+  font-size: 12px;
+  color: #5c6bc0;
+  background: white;
+  border-radius: 20px;
+  padding: 2px 12px;
+}
+.qr-manage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  opacity: 0.6;
 }
 </style>
