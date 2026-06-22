@@ -2124,13 +2124,14 @@ class StepLogRequest(BaseModel):
     operator: Optional[str] = "unknown"
 
 class QcRecordRequest(BaseModel):
-    batch_id: str
-    step_id: int
+    step_id: Optional[int] = None
+    phase_id: Optional[str] = None
     brix_target: Optional[float] = None
-    brix_actual: float
+    brix_actual: Optional[float] = None
     ph_target: Optional[float] = None
-    ph_actual: float
+    ph_actual: Optional[float] = None
     operator: Optional[str] = "unknown"
+
 
 @router.post("/production-batches/{batch_id_str}/log-step")
 def log_production_step(batch_id_str: str, log_data: StepLogRequest, db: Session = Depends(get_db)):
@@ -2229,8 +2230,18 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
     def fmt_ts(dt):
         return dt.isoformat() if dt else None
 
-    result_logs = []
+    # ── Dedup: keep only the LATEST log per (phase_id, step_id) ──────────────
+    # Multiple confirms (pulse repeat, auto-step overlap) create duplicate rows.
+    # We keep the last completed entry per step, maintaining chronological order.
+    seen: dict = {}
     for log in logs:
+        key = (str(log.phase_id or ''), log.step_id)
+        seen[key] = log  # overwrite → last one wins (logs already sorted by completed_at ASC)
+    deduped_logs = list(seen.values())  # dict preserves insertion order (Python 3.7+)
+
+    result_logs = []
+    for log in deduped_logs:
+
         pid = str(log.phase_id or '').strip()
         # Try all possible recipe matches (raw, normalized)
         recipe = (recipe_map.get((pid, log.step_id)) or

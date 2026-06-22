@@ -265,12 +265,31 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
         except Exception as user_err:
             logger.warning(f"Could not query latest active user: {user_err}")
 
-        # 6. Insert log into production_step_logs
+        # 6a. Read actual_weight from DB1517 (same source as x61-MixingControl UI display)
+        #     DB1513 end_weight and DB1517 actual_weight may differ — DB1517 is the ground truth.
+        actual_val = end_weight  # fallback: use handshake end_weight
+        try:
+            from plc_service import read_full_actuals
+            actuals = read_full_actuals(plant_id)
+            if actuals and actuals.get('steps'):
+                # Match by step_index (sequential 1-based same as step_no)
+                matched = next((s for s in actuals['steps'] if s.get('step_index') == step_no), None)
+                if matched and matched.get('actual_weight') is not None:
+                    actual_val = matched['actual_weight']
+                    logger.info(f"📊 Plant {plant_id} Step {step_no}: actual_weight from DB1517 = {actual_val} kg (end_weight DB1513 = {end_weight} kg)")
+        except Exception as db17_err:
+            logger.warning(f"Could not read DB1517 actuals for step {step_no}: {db17_err} — using end_weight fallback")
+
+        # 6b. Upsert log into production_step_logs (prevent duplicates from repeated confirms)
         db.execute(text("""
             INSERT INTO production_step_logs 
                 (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator)
             VALUES 
                 (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator)
+            ON DUPLICATE KEY UPDATE
+                actual_value = VALUES(actual_value),
+                completed_at = VALUES(completed_at),
+                operator     = VALUES(operator)
         """), {
             "batch_id": batch_id,
             "phase_id": phase_id,
@@ -278,12 +297,13 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
             "action_code": action_code,
             "re_code": re_code,
             "target_value": target_value,
-            "actual_value": end_weight,
+            "actual_value": actual_val,  # ← DB1517 actual_weight (matches x61 display)
             "completed_at": datetime.now(),
             "operator": operator
         })
         db.commit()
         logger.info(f"📝 Plant {plant_id} Step {step_no} logged to database (batch_id={batch_id}, operator={operator})")
+
 
         # 7. Auto-complete batch when last step is done
         total_steps = struct.unpack_from('>h', header, 46)[0] if header else 0
@@ -323,14 +343,10 @@ MQTT_PREFIX = _os.getenv("MQTT_TOPIC_PREFIX", "")  # e.g. "SIM/" for SIM mode, "
 
 
 def _on_step_cmd_message(client, userdata, message):
-    """Handle incoming step_cmd messages — log to database."""
+    """Handle incoming step_cmd and cmd messages."""
     try:
-        topic = message.topic  # e.g. "mixing/plant/1/step_cmd" or "sim/plant/1/step_cmd"
+        topic = message.topic  # e.g. "mixing/plant/1/step_cmd" or "mixing/plant/1/cmd"
         parts = topic.split("/")
-        # Support both formats:
-        #   mixing/plant/{N}/step_cmd  → parts[2] = plant_id
-        #   sim/plant/{N}/step_cmd     → parts[2] = plant_id
-        #   SIM/mixing/plant/{N}/...   → parts[3] = plant_id (legacy prefix style)
         plant_id = 1
         for i, part in enumerate(parts):
             if part == 'plant' and i + 1 < len(parts) and parts[i + 1].isdigit():
@@ -340,6 +356,32 @@ def _on_step_cmd_message(client, userdata, message):
         payload_str = message.payload.decode("utf-8", errors="replace")
         payload = json.loads(payload_str)
 
+        # ── Handle cmd topic (START / PAUSE / ABORT) ─────────────────────────
+        # Writes hmi_command to BOTH:
+        #   DB1511+44  (main PLC recipe header)
+        #   DB1510+0   (Control Equipment PLC via PUT-GET)
+        cmd = str(payload.get("command") or "").strip().upper()
+        if cmd in ("START", "PAUSE", "ABORT"):
+            cmd_map = {"START": 1, "PAUSE": 2, "ABORT": 0}
+            hmi_val = cmd_map[cmd]
+            next_val = 1 if cmd == "START" else 0
+
+            # Write DB1511+44
+            db1511 = get_db_number('full_recipe', plant_id)
+            ok1 = plc.db_write(db1511, 44, struct.pack('>h', hmi_val))
+
+            # Write DB1510+0
+            db1510 = get_db_number('step_cmd', plant_id)
+            ok2 = plc.db_write(db1510, 0, struct.pack('>hh', hmi_val, next_val))
+
+            logger.info(
+                f"[CMD] Plant {plant_id} | {cmd} → hmi_command={hmi_val} "
+                f"| DB{db1511}+44={'OK' if ok1 else 'FAIL'} "
+                f"| DB{db1510}+0={'OK' if ok2 else 'FAIL'}"
+            )
+            return
+
+        # ── Handle step_cmd topic (log step details to database) ─────────────
         batch_id  = str(payload.get("Batch_ID") or "").strip()
         phase_id  = str(payload.get("Phase_ID") or payload.get("Confirm_Phase") or "").strip()
         step_id   = int(payload.get("Step_ID") or payload.get("Confirm_Step") or 0)
@@ -367,7 +409,7 @@ def _on_step_cmd_message(client, userdata, message):
         )
 
     except Exception as e:
-        logger.error(f"Error handling step_cmd message: {e}")
+        logger.error(f"Error handling step_cmd/cmd message: {e}")
 
 
 def _sync_log_step_cmd(
@@ -441,14 +483,16 @@ def _start_mqtt_step_cmd_subscriber():
                 import os as _os
                 _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "").strip("/")
                 if _prefix.upper() == "SIM":
-                    # SIM mode: frontend publishes to sim/plant/N/step_cmd
-                    topic = "sim/plant/+/step_cmd"
+                    topics = [("sim/plant/+/step_cmd", 1), ("sim/plant/+/cmd", 1)]
                 else:
-                    # Production mode: standard mixing/plant/N/step_cmd
                     prefix_part = f"{_prefix}/" if _prefix else ""
-                    topic = f"{prefix_part}mixing/plant/+/step_cmd"
-                c.subscribe(topic, qos=1)
-                logger.info(f"📡 step_cmd MQTT subscriber connected → subscribed to '{topic}'")
+                    topics = [
+                        (f"{prefix_part}mixing/plant/+/step_cmd", 1),
+                        (f"{prefix_part}mixing/plant/+/cmd", 1),
+                    ]
+                c.subscribe(topics)
+                topic_names = [t[0] for t in topics]
+                logger.info(f"📡 step_cmd/cmd MQTT subscriber connected → {topic_names}")
             else:
                 logger.error(f"step_cmd MQTT subscriber connect failed: rc={rc}")
 
@@ -460,11 +504,106 @@ def _start_mqtt_step_cmd_subscriber():
         logger.error(f"step_cmd MQTT subscriber error: {e}")
 
 
+# ─── MQTT MIX-xx-PUT Subscriber (App → DB1510 Interlock) ─────────────────────
+# Frontend sends hmi_command and next_step_cmd every 2 seconds via heartbeat.
+# This subscriber receives them and writes hmi_command directly to DB1510
+# so that PLC can read the interlock state from the Data Block.
+#
+# DB1510 Layout (write target):
+#   +0  hmi_command  Int(2)   — 1=Run, 2=HOLD (app not ready), 0=Idle
+#   +2  next_step_cmd Int(2)  — 1=Allow advance, 0=Block
+
+_put_subscriber_thread: Optional[threading.Thread] = None
+_put_sub_client: Optional[any] = None
+
+
+def _on_put_message(client, userdata, message):
+    """Receive MIX-xx-PUT from frontend and write hmi_command to both:
+      - DB1511 offset +44  (HMI_Command in recipe header — main PLC reads this)
+      - DB1510 offset +0   (Control Equipment PLC reads via PUT-GET)
+
+    DB1511 Header:  +44 HMI_Command Int(2)
+    DB1510 Layout:   +0 HMI_Command Int(2), +2 next_step_cmd Int(2)
+    """
+    try:
+        topic = message.topic
+        # RabbitMQ MQTT plugin converts '/' to '.' in routing keys.
+        # "MIX-01-PUT" may arrive as ".MIX-01-PUT" (leading dot) — strip it.
+        topic_base = topic.split('/')[-1] if '/' in topic else topic
+        topic_base = topic_base.lstrip('.').lstrip('/')  # ← strip leading . or /
+        if not (topic_base.startswith('MIX-') and topic_base.endswith('-PUT')):
+            return
+
+        parts = topic.replace('/', '-').split('-')
+        plant_id = 1
+        for part in parts:
+            if part.isdigit() and len(part) <= 2:
+                plant_id = int(part)
+                break
+
+        payload_str = message.payload.decode('utf-8', errors='replace')
+        payload = json.loads(payload_str)
+
+        hmi_command   = int(payload.get('hmi_command',   1))
+        next_step_cmd = int(payload.get('next_step_cmd', 0))
+
+        # 1. Write to DB1511 offset +44 (main PLC — recipe header HMI_Command)
+        db1511 = get_db_number('full_recipe', plant_id)
+        ok1 = plc.db_write(db1511, 44, struct.pack('>h', hmi_command))
+
+        # 2. ALSO write to DB1510 offset +0 (Control Equipment PLC via PUT-GET)
+        #    Layout: +0 HMI_Command(Int16), +2 next_step_cmd(Int16)
+        db1510 = get_db_number('step_cmd', plant_id)
+        ok2 = plc.db_write(db1510, 0, struct.pack('>hh', hmi_command, next_step_cmd))
+
+        logger.info(
+            f"[PUT] Plant {plant_id} | hmi_command={hmi_command} next_step_cmd={next_step_cmd} "
+            f"| DB{db1511}+44={'OK' if ok1 else 'FAIL'} "
+            f"| DB{db1510}+0={'OK' if ok2 else 'FAIL'}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error handling MIX-PUT message: {e}")
+
+
+def _start_mqtt_put_subscriber():
+    """Start background MQTT client subscribing to MIX-xx-PUT heartbeat topics."""
+    global _put_sub_client
+    try:
+        import random, string
+        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        client = mqtt_client.Client(client_id=f"xmixing-put-sub-{suffix}", clean_session=True)
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
+        client.on_message = _on_put_message
+
+        def on_connect(c, userdata, flags, rc):
+            if rc == 0:
+                import os as _os
+                _prefix = _os.getenv('MQTT_TOPIC_PREFIX', '').strip('/')
+                # MIX-xx-PUT uses dash separators, not slash — must subscribe broadly
+                # and filter in _on_put_message by topic name
+                if _prefix:
+                    topic = f"{_prefix}/#"
+                else:
+                    topic = "#"
+                c.subscribe(topic, qos=0)
+                logger.info(f"📡 MIX-PUT subscriber connected → subscribed to '{topic}' (filtering MIX-*-PUT)")
+            else:
+                logger.error(f"MIX-PUT subscriber connect failed: rc={rc}")
+
+        client.on_connect = on_connect
+        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+        _put_sub_client = client
+        client.loop_forever()
+    except Exception as e:
+        logger.error(f"MIX-PUT subscriber error: {e}")
+
+
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 def start_handshake_worker():
-    """Start the background handshake polling task and MQTT step_cmd subscriber."""
-    global _task, _mqtt_subscriber_thread
+    """Start the background handshake polling task and MQTT subscribers."""
+    global _task, _mqtt_subscriber_thread, _put_subscriber_thread
     if _task is not None and not _task.done():
         logger.info("Handshake worker is already running")
         return
@@ -473,7 +612,7 @@ def start_handshake_worker():
     _task = loop.create_task(_poll_handshake_loop())
     logger.info("🚀 Handshake worker task created")
 
-    # Start MQTT step_cmd subscriber in a background daemon thread
+    # Start MQTT step_cmd subscriber (logs step commands to DB)
     if _mqtt_subscriber_thread is None or not _mqtt_subscriber_thread.is_alive():
         _mqtt_subscriber_thread = threading.Thread(
             target=_start_mqtt_step_cmd_subscriber,
@@ -483,10 +622,20 @@ def start_handshake_worker():
         _mqtt_subscriber_thread.start()
         logger.info("🚀 MQTT step_cmd subscriber thread started")
 
+    # Start MQTT MIX-PUT subscriber (writes hmi_command to DB1510 for PLC interlock)
+    if _put_subscriber_thread is None or not _put_subscriber_thread.is_alive():
+        _put_subscriber_thread = threading.Thread(
+            target=_start_mqtt_put_subscriber,
+            daemon=True,
+            name="mqtt-put-sub"
+        )
+        _put_subscriber_thread.start()
+        logger.info("🚀 MQTT MIX-PUT subscriber thread started (interlock → DB1510)")
+
 
 def stop_handshake_worker():
-    """Stop the background handshake polling task and MQTT subscriber."""
-    global _running, _task, _mqtt_sub_client
+    """Stop the background handshake polling task and MQTT subscribers."""
+    global _running, _task, _mqtt_sub_client, _put_sub_client
     _running = False
     if _task:
         _task.cancel()
@@ -497,4 +646,10 @@ def stop_handshake_worker():
         except Exception:
             pass
         _mqtt_sub_client = None
+    if _put_sub_client:
+        try:
+            _put_sub_client.disconnect()
+        except Exception:
+            pass
+        _put_sub_client = None
     logger.info("Handshake worker stop requested")

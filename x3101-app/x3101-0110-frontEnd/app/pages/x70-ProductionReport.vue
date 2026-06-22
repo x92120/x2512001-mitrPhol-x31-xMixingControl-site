@@ -24,7 +24,8 @@ const subBatches    = ref<any[]>([])
 const search       = ref('')
 const statusFilter = ref('All')
 const page         = ref(1)
-const rowsPerPage  = ref(20)
+const rowsPerPage  = ref(50)
+const recentOnly   = ref(true)   // default: show only last 90 days to reduce noise
 
 const statusOptions = ['All', 'Done', 'In-Progress', 'Prepared', 'Created', 'Cancelled', 'Hold']
 const statusColor: Record<string, string> = {
@@ -36,6 +37,14 @@ const statusColor: Record<string, string> = {
 // ── Computed ─────────────────────────────────────────────
 const filteredBatches = computed(() => {
   let r = batches.value
+  // Date filter: show only recent 90 days unless user toggles off
+  if (recentOnly.value) {
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    r = r.filter(b => {
+      const d = new Date(b.updated_at || b.created_at || 0)
+      return d >= cutoff
+    })
+  }
   if (statusFilter.value !== 'All') r = r.filter(b => b.status === statusFilter.value)
   if (search.value.trim()) {
     const q = search.value.toLowerCase()
@@ -45,7 +54,14 @@ const filteredBatches = computed(() => {
       (b.plan_id || '').toLowerCase().includes(q)
     )
   }
-  return r
+  // Sort: In-Progress first, then by updated_at desc
+  return r.slice().sort((a, b) => {
+    const aActive = a.status === 'In-Progress' ? 0 : 1
+    const bActive = b.status === 'In-Progress' ? 0 : 1
+    if (aActive !== bActive) return aActive - bActive
+    return new Date(b.updated_at || b.created_at || 0).getTime() -
+           new Date(a.updated_at || a.created_at || 0).getTime()
+  })
 })
 
 const totalPages    = computed(() => Math.ceil(filteredBatches.value.length / rowsPerPage.value))
@@ -512,6 +528,14 @@ onMounted(async () => {
         :options="statusOptions.map(s => ({ label: s, value: s }))"
         dense unelevated toggle-color="indigo-7" color="white" text-color="grey-7"
         rounded size="sm" class="filter-tog" />
+      <!-- ── Recent toggle button ──────────────────────────── -->
+      <q-btn :label="recentOnly ? 'Last 90d' : 'All Time'" dense unelevated
+        :color="recentOnly ? 'indigo-7' : 'grey-5'"
+        :text-color="recentOnly ? 'white' : 'grey-9'"
+        icon="date_range" size="sm" class="q-ml-xs"
+        @click="recentOnly = !recentOnly; page = 1">
+        <q-tooltip>{{ recentOnly ? 'Showing last 90 days — click to show all' : 'Showing all time — click to filter to last 90 days' }}</q-tooltip>
+      </q-btn>
       <div class="text-caption text-grey-6 q-ml-xs">{{ filteredBatches.length }} batches</div>
     </div>
 
@@ -552,8 +576,8 @@ onMounted(async () => {
         <!-- Pagination -->
         <div class="rpt-list-footer row items-center justify-between q-px-sm">
           <q-pagination v-if="totalPages > 1" v-model="page" :max="totalPages"
-            direction-links flat color="indigo-7" size="sm" />
-          <q-select v-model="rowsPerPage" :options="[20, 50, 100]" dense borderless
+            direction-links flat color="indigo-7" size="sm" :max-pages="7" boundary-numbers />
+          <q-select v-model="rowsPerPage" :options="[50, 100, 200, 500]" dense borderless
             label="Rows" style="width:80px" emit-value map-options />
         </div>
       </div>

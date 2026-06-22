@@ -75,6 +75,11 @@ const skuSteps = ref<any[]>([])
 const loading = ref(false)
 const batchRunning = ref(false)
 const pendingWeightApproval = ref(false)   // set when PLC step-done fires but weight is still out of tolerance
+// plcHmiCommand: tracks the desired HMI state sent to DB1510
+//   0 = Idle/Abort (batch not started or killed)
+//   1 = Run (batch running, all conditions green)
+//   2 = Hold (PAUSE pressed, or app conditions not met)
+const plcHmiCommand = ref(0)  // start as 0 (idle) until operator clicks START
 const dbPhaseMap = ref<Record<string, string>>({})
 
 // ── PLC Handshake Verification ──
@@ -264,11 +269,23 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
         })
         
         if (data && data.success && data.target && data.target.steps) {
+            // Build a lookup map from DB1517: step_index (1-based seq) → actual row
+            // DB1517 skips steps where step_idx=0, so direct [idx] mapping is WRONG.
+            // Must match by step_index === s.seq to get the right actual row.
+            const actualBySeq: Record<number, any> = {}
+            if (data.actual?.steps) {
+                for (const a of data.actual.steps) {
+                    const si = a.step_index
+                    if (si && si > 0) actualBySeq[si] = a
+                }
+            }
+
             // Map the PLC DB1511 step struct to the Vue UI expected fields
             const mappedSteps = data.target.steps.map((s: any, idx: number) => {
-                const act = data.actual?.steps?.[idx] || {}
+                const seq = s.seq || (idx + 1)
+                const act = actualBySeq[seq] || {}   // ← match by seq, not by array index
                 return {
-                    id: s.seq || (idx + 1), // Prevent undefined === undefined bug
+                    id: seq, // Prevent undefined === undefined bug
                     phase_number: 'p' + String(s.phase_no).padStart(3, '0'),
                     phase_id: s.phase_id,
                     sub_step: s.sub_step,
@@ -282,7 +299,7 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
                     agitator_rpm: s.agitator_sp,
                     high_shear_rpm: s.highshear_sp,
                     step_time: s.step_time,
-                    // DB1517 Actuals
+                    // DB1517 Actuals — now correctly matched by step_index (seq)
                     actual_volume: act.actual_weight != null && act.actual_weight > 0 ? act.actual_weight : null,
                     actual_temp: act.actual_temp != null && act.actual_temp > 0 ? act.actual_temp : null,
                     actual_agitator: act.actual_agitator != null && act.actual_agitator > 0 ? act.actual_agitator : null,
@@ -293,7 +310,46 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
                 }
             })
             skuSteps.value = mappedSteps
-            console.log('[PLC Sync] Loaded UI from DB1511 and DB1517:', skuSteps.value)
+            console.log('[PLC Sync] actualBySeq:', actualBySeq, '| mapped steps:', skuSteps.value.map((s: any) => ({ seq: s.id, act: s.actual_volume })))
+
+            // ── Merge brix_sp/ph_sp from SKU DB (not in PLC DB1511) ──────────────
+            // PLC stores temp/agitator/weight but NOT Brix/pH setpoints.
+            // Fetch them from the MySQL sku_steps table and merge by phase+sub_step.
+            if (skuId) {
+                try {
+                    const skuData = await $fetch<any>(
+                        `${remoteApiBaseUrl}/sku-steps/?sku_id=${encodeURIComponent(skuId)}&limit=200`,
+                        { headers: getAuthHeader() as Record<string, string> }
+                    )
+                    const dbSteps: any[] = Array.isArray(skuData) ? skuData : (skuData?.sku_steps || [])
+
+                    // Build lookup: "p010__10" → { brix_sp, ph_sp, operation_brix_record, operation_ph_record }
+                    const brixPhMap: Record<string, any> = {}
+                    for (const ds of dbSteps) {
+                        // DB stores 'p0080', PLC step uses 'p080' — normalize by removing ONE leading zero
+                        const pnum = String(ds.phase_number || '').replace(/^p0/, 'p')  // p0080 → p080
+                        const key = `${pnum}__${ds.sub_step}`
+                        brixPhMap[key] = { brix_sp: ds.brix_sp, ph_sp: ds.ph_sp,
+                                           operation_brix_record: ds.operation_brix_record,
+                                           operation_ph_record: ds.operation_ph_record }
+                    }
+                    skuSteps.value = skuSteps.value.map((s: any) => {
+                        const key = `${s.phase_number}__${s.sub_step}`
+                        const extra = brixPhMap[key] || {}
+                        return { ...s, ...extra }  // merge brix_sp/ph_sp into step
+                    })
+                    const stepKeysSample = skuSteps.value.slice(0, 5).map((s: any) => `${s.phase_number}__${s.sub_step}`)
+                    console.log('[brixPh] brixPhMap keys:', Object.keys(brixPhMap).join(', '))
+                    console.log('[brixPh] step keys (sample):', stepKeysSample.join(', '))
+                    console.log('[brixPh] p080 brix_sp check:', skuSteps.value.find((s: any) => s.phase_number === 'p080')?.brix_sp)
+
+                } catch (e) {
+                    console.warn('[fetchSkuSteps] Could not fetch brix/pH from SKU DB:', e)
+                }
+            }
+
+
+
         } else {
             skuSteps.value = []
         }
@@ -450,14 +506,19 @@ const currentStepIndex = computed(() => {
     const currentSeq = Number(plantData.value.Current_Step || plantData.value.current_step || 0)
 
     // Guard: only trust MQTT Phase_ID/Step_ID if PLC Batch_ID matches selected batch
-    // After soft-reset, PLC batch_id = '-' → skip to Current_Step fallback
     const plcBatchId = String(plantData.value.Batch_ID || plantData.value.batch_id || '').replace(/\0/g, '').trim()
     const mqttBatchOk = selectedBatchId.value && plcBatchId && plcBatchId !== '-' && plcBatchId !== '0'
         && plcBatchId === selectedBatchId.value
 
+    // App override: P30 scan complete — hold UI at the next phase until PLC catches up
+    // Cleared in watch(Phase_ID) ONLY when mqttBatchOk is confirmed and PLC phase >= override phase
+    if (appOverrideStepIndex.value >= 0) {
+        return appOverrideStepIndex.value  // pure read — never mutate here
+    }
+
+    // Primary: Phase_ID + Step_ID from MQTT (most accurate, requires Batch_ID match)
     if (mqttBatchOk && pPhase && pStep && skuSteps.value.length > 0) {
         const rawPhase = String(pPhase).replace(/\0/g, '').trim()
-        // MQTT may send a long Phase_ID like "p020-x1010-Heating" — extract just the short code "p020"
         const cleanPPhase = rawPhase.match(/^(p\d+)/i)?.[1]?.toLowerCase() || rawPhase.toLowerCase()
         const idx = skuSteps.value.findIndex(s => {
             const cleanSPhase = String(s.phase_number || s.phase).trim().toLowerCase()
@@ -466,12 +527,10 @@ const currentStepIndex = computed(() => {
         if (idx !== -1) return idx
     }
 
-    // Fallback to Current_Step (1-based index from PLC telemetry DB1512)
-    if (currentSeq > 0 && skuSteps.value.length > 0) {
-        const idx = currentSeq - 1
-        if (idx < skuSteps.value.length) return idx
-    }
-
+    // NOTE: Current_Step (1-based seq) fallback is intentionally removed here because
+    // Current_Step from PLC is a sequential counter that does NOT map directly to
+    // skuSteps array index — using it causes wrong step highlights (e.g. seq=20 → index=19=RO-Water).
+    // localStepIndex is always the safe fallback.
     return localStepIndex.value
 })
 
@@ -504,6 +563,10 @@ const isPhaseExpanded = (phase: string) => {
 const qcDialog = ref(false)
 const pendingQcStep = ref<any | null>(null)
 const localStepIndex = ref(0)
+// When app auto-advances (e.g. P30 scan complete), override the PLC-reported step
+// so the UI highlights the correct next step immediately.
+// Reset to -1 when PLC MQTT catches up naturally.
+const appOverrideStepIndex = ref(-1)
 const qcSaving   = ref(false)  // REQ-8: loading state for QC API save
 
 // ── Confirm Start Production Dialog ──
@@ -525,7 +588,7 @@ const buildCurrentStepPayload = () => {
         SKU_Name: batchInfo.value?.sku_name || '-',
         Phase_ID: String(s.phase_number || ''),
         Step_ID: Number(s.sub_step || 0),
-        Step_Time_SP: Number(s.step_time || 0) * 60,
+        Step_Time_SP: Number(s.step_time || 0),
         Step_Status: 1,
         Material_ID: s.mat_sap_code || '',
         Re_Code_ID: s.re_code || '',
@@ -558,13 +621,14 @@ const copyPayloadToClipboard = () => {
 
 const confirmStartProduction = () => {
     startConfirmed.value = true
-    batchRunning.value = true      // ← CRITICAL: enables STEP_COMPLETE handler (was missing!)
+    batchRunning.value = true      // ← CRITICAL: enables STEP_COMPLETE handler
+    plcHmiCommand.value = 1        // ← Set HMI Command = 1 (Run) immediately
     confirmStartDialog.value = false
 
     const plantId = activePlantId.value || '1'
     const topic = simCmdTopic(plantId, 'cmd')
-    
-    // Send final start=1 command to PLC via MQTT
+
+    // Send START command to PLC via MQTT (interlock signal)
     publishMessage(topic, {
         command: 'START',
         start: 1,
@@ -573,7 +637,16 @@ const confirmStartProduction = () => {
         timestamp: new Date().toISOString()
     })
 
-    // Send Batch number to PLC (DB5001, dbb24 String [20])
+    // ── CRITICAL FIX: sendStepToPLC writes HMI_Command=1 + step setpoints ──
+    // Without this, DB1510 HMI_Command stays at 0 and PLC remains in Stand-By.
+    // Must call AFTER publishMessage so the START interlock reaches DB1510 first.
+    localStepIndex.value = currentStepIndex.value >= skuSteps.value.length ? 0 : currentStepIndex.value
+    setTimeout(() => {
+        sendStepToPLC(localStepIndex.value)
+        console.log('[ConfirmStart] sendStepToPLC sent at index', localStepIndex.value, 'HMI_Command=1')
+    }, 300)
+
+    // Send Batch number to PLC (DB5001)
     const db5001Payload = {
         Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
         Plan_ID: batchInfo.value?.plan_id || '-',
@@ -581,15 +654,14 @@ const confirmStartProduction = () => {
         SKU_Name: batchInfo.value?.sku_name || '-',
         Phase_ID: '-',
         Step_ID: 0,
-        Address: "DB5001,S24.20", // Correct S7-comm string syntax
+        Address: "DB5001,S24.20",
         Value: selectedBatchId.value || '',
         datatype: "String [20]",
         timestamp: new Date().toISOString()
     }
     const writeTopic = simCmdTopic(plantId, 'write')
-    // The S7-comm node expects a raw string payload to write into the DB, not a JSON object
     publishMessage(writeTopic, selectedBatchId.value || '')
-    
+
     lastPlcPayload.value = db5001Payload
     plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic: writeTopic, payload: db5001Payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
@@ -598,12 +670,13 @@ const confirmStartProduction = () => {
         type: 'positive',
         icon: 'rocket_launch',
         message: '🚀 Production STARTED!',
-        caption: `Batch: ${selectedBatchId.value} is now active`,
+        caption: `Batch: ${selectedBatchId.value} — HMI Command = 1 (Run)`,
         position: 'center',
         timeout: 3000,
         classes: 'text-h6 shadow-10'
     })
 }
+
 
 const cancelStartProduction = () => {
     confirmStartDialog.value = false
@@ -725,6 +798,7 @@ const confirmQcCheck = async () => {
 
     // REQ-8: Save to production_qc_records via API
     qcSaving.value = true
+    let qcSaveOk = false
     try {
         const step = pendingQcStep.value
         await $fetch<any>(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/qc-record`, {
@@ -732,29 +806,49 @@ const confirmQcCheck = async () => {
             headers: getAuthHeader() as Record<string, string>,
             body: {
                 step_id: step?.sub_step ?? null,
-                brix_target: step?.brix_sp ? Number(step.brix_sp) : null,
+                brix_target: parseSP(step?.brix_sp) > 0 ? parseSP(step.brix_sp) : null,
                 brix_actual: actualBrix.value !== '' ? Number(actualBrix.value) : null,
-                ph_target: step?.ph_sp ? Number(step.ph_sp) : null,
-                ph_actual: actualPh.value !== '' ? Number(actualPh.value) : null,
+                ph_target:   parseSP(step?.ph_sp) > 0 ? parseSP(step.ph_sp) : null,
+                ph_actual:   actualPh.value !== '' ? Number(actualPh.value) : null,
                 operator: user.value?.username || 'operator'
             }
         })
         $q.notify({ type: 'positive', message: '✅ QC Data Saved!', icon: 'check_circle', timeout: 2000 })
+        qcSaveOk = true
     } catch (e: any) {
         console.error('[QC] Save failed:', e)
-        $q.notify({ type: 'negative', message: `QC save failed: ${e?.data?.detail || e.message}` })
+        // e.data may be a Pydantic validation error object or array — extract readable message
+        const detail = e?.data?.detail
+        const errMsg = Array.isArray(detail)
+            ? detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join(', ')
+            : (typeof detail === 'string' ? detail : (e.message || 'Unknown error'))
+        $q.notify({ type: 'negative', message: `QC save failed: ${errMsg}`, timeout: 5000 })
         // Don't block production even if save fails — just log it
     } finally {
         qcSaving.value = false
     }
-    
-    // Reset QC form (actualBrix/actualPh are ref<string|number> — reset to '')
+
+    // ── "Confirm & Continue" = QC recorded + step confirmed ──────────────────
+    // Close dialog FIRST, then advance step with current actualBrix/actualPh still set.
+    // skipToleranceCheck=true because QC dialog IS the interlock gate for Brix/pH steps.
+    const stepToConfirm = pendingQcStep.value
+    qcDialog.value = false
+    pendingQcStep.value = null
+    batchRunning.value = true
+    if (plcHmiCommand.value === 0) plcHmiCommand.value = 2  // ensure HOLD not Abort
+
+    if (stepToConfirm) {
+        // Advance step — skip tolerance checks (weight was already confirmed before QC dialog)
+        confirmStepFromRow(stepToConfirm, true)  // true = skipToleranceCheck
+    }
+
+    // Reset QC values after step has been advanced
     actualBrix.value = ''
     actualPh.value   = ''
-    qcDialog.value = false;
-    pendingQcStep.value = null;
-    batchRunning.value = true;
+
+
     
+
     // Resume after QC (display only — PLC drives itself)
     if (localStepIndex.value < skuSteps.value.length) {
         // [PLC-DRIVE MODE] App does not send step cmd back — PLC fires next step itself
@@ -784,7 +878,7 @@ const sendStepToPLC = (index: number) => {
         Step_ID: Number(s.sub_step || 0),
         
         // --- SETPOINTS ---
-        Step_Time_SP: Number(s.step_time || 0) * 60, // Conv to seconds
+        Step_Time_SP: Number(s.step_time || 0), // Conv to seconds
         Step_Status: 1, // 1=Active
         Material_ID: s.mat_sap_code || '',
         Re_Code_ID: s.re_code || '',
@@ -884,6 +978,21 @@ const downloadRecipeToPlc = async (batchId: string) => {
 
 // ── PLC Commands ──
 const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
+    // PAUSE and ABORT are safety-critical — always publish interlock signal
+    // even if PLC is offline (backend will write to DB1510 regardless)
+    if (cmd === 'ABORT') {
+        batchRunning.value = false
+        plcHmiCommand.value = 0   // ← Abort/Idle
+        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
+        return
+    } else if (cmd === 'PAUSE') {
+        batchRunning.value = false
+        plcHmiCommand.value = 2   // ← Hold/Pause
+        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'PAUSE' })
+        return
+    }
+
+    // START and NEXT_STEP require PLC to be online
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline! Cannot send command.', position: 'top' })
         return
@@ -895,6 +1004,7 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
             return
         }
         batchRunning.value = true
+        plcHmiCommand.value = 1   // ← Run
         // Resume from where we were (PLC feedback), or start from 0
         localStepIndex.value = currentStepIndex.value >= skuSteps.value.length ? 0 : currentStepIndex.value
         
@@ -911,23 +1021,14 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
             Batch_ID: selectedBatchId.value || '-'
         })
         return
-    } else if (cmd === 'ABORT') {
-        batchRunning.value = false
-        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
-        return
     } else if (cmd === 'NEXT_STEP') {
         batchRunning.value = true
+        // Index advance only — plcHmiCommand pulse handled by caller (confirmStepFromRow)
         localStepIndex.value = currentStepIndex.value + 1
-        if(localStepIndex.value < skuSteps.value.length) {
-            sendStepToPLC(localStepIndex.value)
-        }
-        return
-    } else if (cmd === 'PAUSE') {
-        batchRunning.value = false
-        publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'PAUSE' })
         return
     }
 }
+
 
 const killBatch = () => {
     $q.dialog({
@@ -1073,7 +1174,29 @@ const isWeightInTolerance = (step: any, actualWeight: number) => {
 
 // ── Process Interlock: ALL setpoints must be green before step can advance ──
 // Returns { ok: boolean, failed: string[] } — failed lists what's out of range.
+// ── Brix/pH SP parser — handles both "65" (number) and "65-67" (range string) ──
+const parseSP = (val: any): number => {
+    if (!val && val !== 0) return 0
+    const s = String(val).trim()
+    if (s.includes('-') && s.split('-').length === 2) {
+        const parts = s.split('-').map(Number)
+        if (!isNaN(parts[0]) && !isNaN(parts[1])) return (parts[0] + parts[1]) / 2  // midpoint
+    }
+    const n = Number(s)
+    return isNaN(n) ? 0 : n
+}
+// Display: show original range string if range, else formatted number, '-' if empty
+const formatSP = (val: any, decimals = 2): string => {
+    if (!val && val !== 0) return '-'
+    const s = String(val).trim()
+    if (!s || s === '0') return '-'
+    if (s.includes('-')) return s  // show range as-is e.g. "65-67"
+    const n = Number(s)
+    return isNaN(n) ? s : n.toFixed(decimals)
+}
+
 const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
+
     const failed: string[] = []
 
     // 1. Temperature ±5°C (only if SP is set)
@@ -1103,28 +1226,48 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
         }
     }
 
-    // 4. Brix ±5% of SP (only if SP is set)
-    const brixSP = Number(step.brix_sp || 0)
-    if (brixSP > 0) {
+    // 4. Brix — manual lab input, only check if step requires QC Brix record
+    //    operation_brix_record=1 → lab must input actualBrix before confirm
+    if (step.operation_brix_record && parseSP(step.brix_sp) > 0) {
+        const brixSP  = parseSP(step.brix_sp)
         const brixTol = brixSP * 0.05
         const brixAct = Number(actualBrix.value || 0)
-        if (brixAct <= 0 || Math.abs(brixAct - brixSP) > brixTol) {
-            failed.push(`Brix: ${brixAct > 0 ? brixAct.toFixed(2) : '?'} ≠ SP ${brixSP.toFixed(2)} (±5%)`)
+        if (brixAct <= 0) {
+            failed.push(`Brix: not recorded — lab must enter Brix before confirming`)
+        } else if (Math.abs(brixAct - brixSP) > brixTol) {
+            failed.push(`Brix: ${brixAct.toFixed(2)} ≠ SP ${formatSP(step.brix_sp)} (±5%)`)
         }
     }
 
-    // 5. pH ±0.3 of SP (only if SP is set)
-    const phSP = Number(step.ph_sp || 0)
-    if (phSP > 0) {
+    // 5. pH — manual lab input, only check if step requires QC pH record
+    //    operation_ph_record=1 → lab must input actualPh before confirm
+    if (step.operation_ph_record && parseSP(step.ph_sp) > 0) {
+        const phSP  = parseSP(step.ph_sp)
         const phTol = 0.3
         const phAct = Number(actualPh.value || 0)
-        if (phAct <= 0 || Math.abs(phAct - phSP) > phTol) {
-            failed.push(`pH: ${phAct > 0 ? phAct.toFixed(2) : '?'} ≠ SP ${phSP.toFixed(2)} (±${phTol})`)
+        if (phAct <= 0) {
+            failed.push(`pH: not recorded — lab must enter pH before confirming`)
+        } else if (Math.abs(phAct - phSP) > phTol) {
+            failed.push(`pH: ${phAct.toFixed(2)} ≠ SP ${formatSP(step.ph_sp)} (±${phTol})`)
+        }
+    }
+
+    // 6. Timer — if step has a time setpoint, elapsed must reach it before confirming
+    //    step_time is in SECONDS (DB) — compare directly with currentElapsed (also seconds from PLC)
+    const stepTimeSec = Number(step.step_time || 0)
+    if (stepTimeSec > 0) {
+        const elapsed = currentElapsed.value   // seconds from PLC
+        if (elapsed < stepTimeSec) {
+            const remaining = stepTimeSec - elapsed
+            const remMin = Math.floor(remaining / 60)
+            const remSec = Math.floor(remaining % 60)
+            failed.push(`Timer: ${formatDuration(elapsed)} / ${formatDuration(stepTimeSec)} (${remMin}m ${remSec}s remaining)`)
         }
     }
 
     return { ok: failed.length === 0, failed }
 }
+
 
 const getStepLiveWeight = (step: any) => {
     if (!step) return 0
@@ -1174,26 +1317,32 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         }
     }
 
-    // ── Case 2: Manual add steps — check live hopper/tank weight ────────────────
-    const hasScanConfirmed = scannedVol != null
-    const isWater = rc.toLowerCase().includes('water')
-    if (!skipToleranceCheck && !hasScanConfirmed && !isWater && (aCode.startsWith('2') || aCode.startsWith('3'))) {
+    // ── Weight Check: ALL steps with require > 0 ────────────────────────────────
+    // Applies to 1x (LS/RO Batching), 2x/3x (manual add) — any step with a target weight.
+    // SPP/FH scan steps use scannedVol (already checked in Case 1 above).
+    if (!skipToleranceCheck) {
         const requiredWeight = productionRequire(step)
         if (requiredWeight > 0) {
-            const actualWeight = getStepLiveWeight(step)
-            if (actualWeight > 0 && !isWeightInTolerance(step, actualWeight)) {
-                $q.notify({ 
-                    type: 'negative', 
-                    message: '⚠️ Weight out of tolerance!', 
-                    caption: `Req: ${requiredWeight.toFixed(2)} | Act: ${actualWeight.toFixed(2)}. Adjust weight or use Override.`, 
-                    position: 'center',
+            const liveWt = scannedVolumeMap.value[rc] != null
+                ? scannedVolumeMap.value[rc]   // scanned vol takes priority
+                : getStepLiveWeight(step)       // tank/hopper scale
+            if (liveWt > 0 && !isWeightInTolerance(step, liveWt)) {
+                const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
+                const tolLow  = Number(step.low_tol  || (requiredWeight * 0.02))
+                $q.notify({
+                    type: 'negative',
                     icon: 'scale',
-                    timeout: 4000
+                    message: '⚠️ Weight (Require) not in range — cannot confirm',
+                    caption: `Req: ${requiredWeight.toFixed(2)} kg | Act: ${liveWt.toFixed(2)} kg | Range: ${(requiredWeight - tolLow).toFixed(2)}–${(requiredWeight + tolHigh).toFixed(2)} kg`,
+                    position: 'center',
+                    timeout: 0,
+                    actions: [{ label: 'OK', color: 'white' }]
                 })
-                return // BLOCK ADVANCE — require is not green
+                return  // BLOCK ADVANCE — Require not green
             }
         }
     }
+
     
     // ── Process Interlock: Temp / Agitator / HighShear / Brix / pH ────────────
     if (!skipToleranceCheck) {
@@ -1223,7 +1372,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Cmd_StartTimer: step.step_time ? 1 : 0,
         HMI_Command: 1, // 1=START (Resume), 2 was incorrectly pausing the PLC
         // --- Setpoints ---
-        Step_Time_SP: Number(step.step_time || 0) * 60,
+        Step_Time_SP: Number(step.step_time || 0),
         Step_Status: 1,
         Material_ID: step.mat_sap_code || '',
         Re_Code_ID: step.re_code || '',
@@ -1238,11 +1387,20 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     
     publishMessage(topic, payload)
     
+    // ── Pulse HMI=1 for 3s so backend writes 1 to DB1511+44 and DB1510+0 ──
+    // After 3s, reset to HOLD(2) = PLC resting state until next confirm.
+    plcHmiCommand.value = 1
+    setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
+    
+    // Advance local step index
+    localStepIndex.value = currentStepIndex.value + 1
+    
     plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
     
     $q.notify({ type: 'positive', message: `Confirmed Step ${step.sub_step}`, position: 'top', timeout: 1500 })
 }
+
 
 // ── Manual Override ──
 const manualPassDialog = ref(false)
@@ -1384,6 +1542,33 @@ watch(currentStepIndex, (newIdx) => {
     }
 }, { immediate: true })
 
+// Clear appOverrideStepIndex once PLC MQTT telemetry confirms it has reached or passed
+// the overridden phase. Requires mqttBatchOk to prevent false clears when Batch_ID
+// doesn't match (which would snap back to the wrong step via localStepIndex fallback).
+watch(() => ({
+    phase: plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id,
+    batchId: plantData.value.Batch_ID || plantData.value.batch_id || ''
+}), ({ phase: plcPhaseRaw, batchId }) => {
+    if (appOverrideStepIndex.value < 0) return  // nothing to clear
+
+    // Require Batch_ID to match before trusting PLC phase data
+    const plcBatchId = String(batchId).replace(/\0/g, '').trim()
+    const batchOk = selectedBatchId.value && plcBatchId && plcBatchId !== '-' && plcBatchId !== '0'
+        && plcBatchId === selectedBatchId.value
+    if (!batchOk) return  // keep override until Batch_ID is confirmed
+
+    const overridePhase = skuSteps.value[appOverrideStepIndex.value]?.phase_number
+    if (!overridePhase) return
+    const plcPhase = String(plcPhaseRaw || '').replace(/\0/g, '').trim().toLowerCase().match(/^(p\d+)/i)?.[1]?.toLowerCase()
+    const plcNum = plcPhase ? parseInt(plcPhase.replace(/\D/g, ''), 10) : 0
+    const overrideNum = parseInt(overridePhase.replace(/\D/g, ''), 10)
+    if (plcNum > 0 && plcNum >= overrideNum) {
+        appOverrideStepIndex.value = -1
+    }
+}, { deep: true })
+
+
+
 // ── Production Weights from Batch Data ──
 // Prebatch items contain the actual production weights (required_volume)
 // which are already calculated for the specific batch size.
@@ -1391,6 +1576,40 @@ const prebatchWeightMap = ref<Record<string, number>>({})
 const prebatchIdMap = ref<Record<string, string>>({})
 const prebatchWhMap = ref<Record<string, string>>({})
 const scannedVolumeMap = ref<Record<string, number>>({}) // volume confirmed from QR scan per re_code
+
+// ── App → PLC Interlock: isAppReady ───────────────────────────────────────
+// Returns true only when operator-side conditions are met.
+// Heartbeat sends hmi_command=2 (HOLD) while false.
+//
+// ⚠️ IMPORTANT: Process parameters (Temp / Agitator / HighShear) are controlled
+// BY the PLC AFTER it receives HMI_Command=1. We must NOT block HMI=1 waiting
+// for those params — that creates a deadlock (PLC can't ramp agitator without Run).
+// isStepAllGreen() is kept for UI indicators + confirm warnings, NOT for this interlock.
+const isAppReady = computed(() => {
+    if (!batchRunning.value) return true  // batch not started → don't block PLC
+    const step = currentStep.value
+    if (!step) return true               // no active step → don't block
+
+    const aCode = String(step.action_code || '')
+    const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
+    const isManualScanStep = (aCode.startsWith('2') || aCode.startsWith('3')) && hasReCode
+
+    // Only block for manual scan steps where operator hasn't scanned yet.
+    // Weight check also only relevant here (after scan, before confirm).
+    if (isManualScanStep) {
+        const isScanned = scannedVolumeMap.value[step.re_code] != null
+        if (!isScanned) return false   // ← HOLD: scan not done yet
+
+        // Weight in tolerance after scan
+        const liveWt = getStepLiveWeight(step)
+        if (productionRequire(step) > 0 && !isWeightInTolerance(step, liveWt)) return false
+    }
+
+    // ✅ All operator-side conditions met — PLC may run.
+    // Process params (temp, agitator) are PLC's responsibility after HMI=1.
+    return true
+})
+
 
 const fetchPrebatchWeights = async (batchId: string) => {
     try {
@@ -1505,6 +1724,9 @@ const restoreBatchFromPlc = async (batchId: string) => {
         
         startConfirmed.value = true
         batchRunning.value = true
+        // When restoring a running batch, default HMI to HOLD(2) not Abort(0).
+        // Operator must press Confirm to send 1 (advance) or Pause/Start to reset.
+        if (plcHmiCommand.value === 0) plcHmiCommand.value = 2
 
         // Strategy: use target.active_step from DB1511 as primary source (most reliable — it's
         // what the PLC actually has as its running step, not the last completed step).
@@ -1729,13 +1951,14 @@ const handleScan = (scannedText: string) => {
             const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
 
             if (allScanned) {
-                // All p030 scanned → advance directly to first step of p040
+                // All p030 scanned → override UI to show first step of p040 immediately
                 const lastP30Idx = skuSteps.value.reduce((last: number, s: any, i: number) =>
                     (s.phase_number || '').toLowerCase().includes('p030') ? i : last, stepIdx)
                 const nextIdx = lastP30Idx + 1
                 localStepIndex.value = nextIdx
+                appOverrideStepIndex.value = nextIdx  // ← force UI past PLC P30 telemetry
 
-                // Auto-expand p040 phase and scroll to it
+                // Auto-expand the next phase and scroll after DOM update
                 if (nextIdx < skuSteps.value.length) {
                     const nextStep = skuSteps.value[nextIdx]
                     if (nextStep) {
@@ -1745,16 +1968,18 @@ const handleScan = (scannedText: string) => {
                             type: 'positive', icon: 'rocket_launch',
                             message: '🎉 P30 สแกนครบ! → ข้ามไป P40',
                             caption: `Phase ${nextPhase} Step ${nextStep.sub_step} - กรุณาดำเนินการต่อ`,
-                            position: 'center', timeout: 3000
+                            position: 'center', timeout: 3500
                         })
-                        nextTick(() => {
+                        // Wait 2 ticks: 1st for reactive update, 2nd for DOM render
+                        ;(async () => {
+                            await nextTick()
+                            await nextTick()
                             const el = document.querySelector('.active-step')
                             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                        })
+                        })()
                     }
                 }
                 // [PLC-DRIVE MODE] PLC handles p030→p040 transition autonomously
-                // sendCommand('NEXT_STEP') removed — avoid overwriting localStepIndex
             } else if (stepIdx >= 0) {
                 // Advance localStepIndex to next step so UI moves forward
                 // Even if this isn't the "current" PLC step — frontend tracks independently for p030
@@ -1999,17 +2224,19 @@ watch(() => plantData.value.PLC_State, async (newVal, oldVal) => {
     }
 })
 
-// ── NEW Auto Step Logic based on Green State (Current_Step) ──
+// ── AUTO STEP: triggered by PLC Current_Step change ──
+// Current_Step is a counter that increments by 1 (or a bit toggle) each time PLC finishes a step.
+// Protocol: ANY change in value = "step done" signal from PLC.
+// Do NOT use even/odd check — counter goes 1→2→3→4... missing every alternate step.
 watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
     // Only auto-step if batch is actually running
     if (!batchRunning.value) return;
-    // [PLC-DRIVE MODE] Fully disabled — return early
-    return;
-    
-    // [PLC-DRIVE MODE] Auto-step via even Current_Step DISABLED
-    // FC1517 now uses sequential counter: step done → Current_Step+1 → always even after odd!
-    // This was causing double-trigger: User trigger step1 → PLC Current_Step=2(even) → auto fire
-    // if (newVal && oldVal && newVal !== oldVal && newVal > 0 && newVal % 2 === 0) {
+
+    // Guard: value must actually change (not just re-render)
+    // Any change (bit toggle 0→1 or counter 1→2→3...) = PLC step done
+    if (newVal === undefined || newVal === null) return;
+    if (newVal === oldVal) return;
+
         setTimeout(async () => {
             const step = currentStep.value
             if (!step) return
@@ -2022,32 +2249,25 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
                 return
             }
             
-            // Check weight tolerance
-            const liveWt = getStepLiveWeight(step)
-            if (productionRequire(step) > 0 && !isWeightInTolerance(step, liveWt)) {
-                console.log('Auto-Step BLOCKED: Weight out of tolerance — setting pendingWeightApproval')
-                pendingWeightApproval.value = true
-                $q.notify({
-                    type: 'warning', icon: 'scale',
-                    message: '⚠️ Weight out of tolerance — Auto-Step pending',
-                    caption: `Adjust weight to target. System will auto-step once weight is OK. Req: ${productionRequire(step).toFixed(3)} kg | Act: ${liveWt.toFixed(3)} kg`,
-                    position: 'center', timeout: 0,
-                    actions: [{ label: 'Dismiss', color: 'white' }]
-                })
-                return
-            }
-
-            // Check all process parameters (Temp / Agitator / HighShear / Brix / pH)
-            const { ok: procOk, failed: procFailed } = isStepAllGreen(step)
-            if (!procOk) {
-                console.log('Auto-Step BLOCKED: Process params out of range', procFailed)
-                $q.notify({
-                    type: 'warning', icon: 'thermostat',
-                    message: '⚠️ Process not ready — Auto-Step holding',
-                    caption: procFailed.join(' | '),
-                    position: 'top', timeout: 5000
-                })
-                return
+            // For MANUAL SCAN steps (2x/3x): check weight tolerance before auto-stepping.
+            // Process steps (1x = LS, heating) must NOT be blocked by weight:
+            //   - Scale reads CUR.STEP WT (tray weight), not batch total
+            //   - Agitator vibrates platform → weight reading unreliable
+            const isManualScanAutoStep = (aCode.startsWith('2') || aCode.startsWith('3')) && hasReCode
+            if (isManualScanAutoStep) {
+                const liveWt = getStepLiveWeight(step)
+                if (productionRequire(step) > 0 && !isWeightInTolerance(step, liveWt)) {
+                    console.log('Auto-Step BLOCKED: Weight out of tolerance — setting pendingWeightApproval')
+                    pendingWeightApproval.value = true
+                    $q.notify({
+                        type: 'warning', icon: 'scale',
+                        message: '⚠️ Weight out of tolerance — Auto-Step pending',
+                        caption: `Adjust weight to target. System will auto-step once weight is OK. Req: ${productionRequire(step).toFixed(3)} kg | Act: ${liveWt.toFixed(3)} kg`,
+                        position: 'center', timeout: 0,
+                        actions: [{ label: 'Dismiss', color: 'white' }]
+                    })
+                    return
+                }
             }
             
             pendingWeightApproval.value = false
@@ -2079,11 +2299,16 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
                 }, 2000)
             } else {
                 $q.notify({ type: 'positive', message: `PLC Finished Phase (State ${newVal}) - Auto Stepping`, position: 'top', timeout: 2000 })
+                // Pulse HMI=1 for 3s, send next step, advance index
+                plcHmiCommand.value = 1
+                setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
+                const nextIdx = currentStepIndex.value + 1
+                if (nextIdx < skuSteps.value.length) sendStepToPLC(nextIdx)
                 await sendCommand('NEXT_STEP')
             }
+
             
         }, 1000)
-    // } ← closing brace of disabled if(newVal % 2 === 0) block
 })
 
 // ── Weight Recovery Watcher: auto-step when weight comes back into tolerance ──
@@ -2173,7 +2398,7 @@ onMounted(async () => {
                     // Step-level execution parameters using exact DB column names
                     sub_step: Number(s.sub_step || 0),
                     action_code: Number(s.action_code || 0),
-                    step_time: Number(s.step_time || 0) * 60,
+                    step_time: Number(s.step_time || 0),
                     material_code: String(s.mat_sap_code || '').substring(0, 20),
                     re_code: String(s.re_code || '').substring(0, 20),
                     require: productionRequire(s),
@@ -2182,8 +2407,14 @@ onMounted(async () => {
                     high_shear_rpm: Number(s.high_shear_rpm || 0),
                     ph_sp: Number(s.ph_sp || 0),
                     brix_sp: Number(s.brix_sp || 0),
-                    hmi_command: 1,
-                    next_step_cmd: 0
+                    // ── Interlock signals → DB1510/DB1511 via backend snap7 ──
+                    // HMI Command design (PULSE):
+                    //   0 = Abort   (ABORT button only)
+                    //   1 = Confirm pulse (3s, sent after all checks pass in confirmStepFromRow)
+                    //   2 = HOLD    (default resting state — PLC waits between steps)
+                    // Heartbeat relays plcHmiCommand directly — no override.
+                    hmi_command: plcHmiCommand.value,
+                    next_step_cmd: plcHmiCommand.value === 1 ? 1 : 0
                 })
                 // Store last sent payload for handshake comparison
                 lastSentPayload.value = {
@@ -2467,8 +2698,109 @@ onUnmounted(() => {
               No details available for this SKU
             </div>
             
+            <!-- ── Brix / pH Actual Input Bar ────────────────────────────────── -->
+            <div v-if="startConfirmed && skuSteps.length > 0"
+                 class="row items-center q-px-sm q-py-xs q-mb-xs q-gutter-x-md"
+                 style="background: linear-gradient(90deg, #1a237e 0%, #283593 100%); border-radius: 8px; border: 1px solid #3949ab;">
+
+              <!-- Brix Section -->
+              <div class="row items-center q-gutter-x-sm">
+                <q-icon name="opacity" color="cyan-3" size="18px" />
+                <div>
+                  <div class="text-caption text-cyan-2" style="font-size: 11px; letter-spacing: 1px;">BRIX</div>
+                  <div class="text-caption text-cyan-4" style="font-size: 10px;">
+                    SP: <strong>{{ currentStep?.brix_sp || skuSteps.find((s:any) => s.brix_sp)?.brix_sp || '—' }}</strong>
+                  </div>
+                </div>
+                <q-input
+                  v-model="actualBrix"
+                  dense outlined type="number" step="0.01"
+                  placeholder="กรอก Brix"
+                  style="max-width: 100px; background: rgba(255,255,255,0.12); border-radius: 6px;"
+                  input-class="text-weight-bold text-white text-center"
+                  dark
+                  :color="actualBrix && currentStep?.brix_sp
+                    ? (Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'green-4' : 'red-4')
+                    : 'cyan-3'"
+                >
+                  <template #append>
+                    <q-icon
+                      v-if="actualBrix && currentStep?.brix_sp"
+                      :name="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'check_circle' : 'cancel'"
+                      :color="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'green-4' : 'red-4'"
+                      size="18px"
+                    />
+                  </template>
+                </q-input>
+                <div v-if="actualBrix && currentStep?.brix_sp" class="text-caption" style="font-size: 11px;"
+                     :class="Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? 'text-green-3' : 'text-red-3'">
+                  {{ Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) <= Number(currentStep.brix_sp) * 0.05 ? '✓ IN RANGE' : '✗ OUT' }}
+                </div>
+                <q-btn v-if="actualBrix" flat dense icon="clear" color="red-3" size="xs" @click="actualBrix = ''" />
+              </div>
+
+              <q-separator vertical dark style="opacity: 0.3;" />
+
+              <!-- pH Section -->
+              <div class="row items-center q-gutter-x-sm">
+                <q-icon name="science" color="amber-3" size="18px" />
+                <div>
+                  <div class="text-caption text-amber-2" style="font-size: 11px; letter-spacing: 1px;">pH</div>
+                  <div class="text-caption text-amber-4" style="font-size: 10px;">
+                    SP: <strong>{{ currentStep?.ph_sp || skuSteps.find((s:any) => s.ph_sp)?.ph_sp || '—' }}</strong>
+                  </div>
+                </div>
+                <q-input
+                  v-model="actualPh"
+                  dense outlined type="number" step="0.01"
+                  placeholder="กรอก pH"
+                  style="max-width: 100px; background: rgba(255,255,255,0.12); border-radius: 6px;"
+                  input-class="text-weight-bold text-white text-center"
+                  dark
+                  :color="actualPh && currentStep?.ph_sp
+                    ? (Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'green-4' : 'red-4')
+                    : 'amber-3'"
+                >
+                  <template #append>
+                    <q-icon
+                      v-if="actualPh && currentStep?.ph_sp"
+                      :name="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'check_circle' : 'cancel'"
+                      :color="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'green-4' : 'red-4'"
+                      size="18px"
+                    />
+                  </template>
+                </q-input>
+                <div v-if="actualPh && currentStep?.ph_sp" class="text-caption" style="font-size: 11px;"
+                     :class="Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? 'text-green-3' : 'text-red-3'">
+                  {{ Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) <= 0.3 ? '✓ IN RANGE' : '✗ OUT' }}
+                </div>
+                <q-btn v-if="actualPh" flat dense icon="clear" color="red-3" size="xs" @click="actualPh = ''" />
+              </div>
+
+              <q-separator vertical dark style="opacity: 0.3;" />
+
+              <!-- Quick status summary -->
+              <div class="row items-center q-gutter-x-xs">
+                <q-chip
+                  v-if="actualBrix || actualPh"
+                  dense
+                  :color="(actualBrix && currentStep?.brix_sp && Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) > Number(currentStep.brix_sp)*0.05)
+                    || (actualPh && currentStep?.ph_sp && Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) > 0.3)
+                    ? 'red-8' : 'green-8'"
+                  text-color="white" icon="analytics" size="sm"
+                >
+                  {{ (actualBrix && currentStep?.brix_sp && Math.abs(Number(actualBrix) - Number(currentStep.brix_sp)) > Number(currentStep.brix_sp)*0.05)
+                    || (actualPh && currentStep?.ph_sp && Math.abs(Number(actualPh) - Number(currentStep.ph_sp)) > 0.3)
+                    ? 'QC FAIL' : 'QC PASS' }}
+                </q-chip>
+                <div class="text-grey-4 text-caption" style="font-size: 10px;" v-if="!actualBrix && !actualPh">กรอกค่า Brix / pH เพื่อตรวจสอบ</div>
+              </div>
+            </div>
+            <!-- ── End Brix/pH Bar ─────────────────────────────────────────── -->
+
             <div v-if="skuStepsByPhase.length > 0" class="scroll" style="flex: 1; min-height: 0;">
               <q-markup-table flat bordered dense separator="cell" style="font-size: 16px;" class="full-width production-table sticky-header-table">
+
               <thead class="bg-red-5 text-white">
                 <tr>
                   <th class="text-center text-weight-bold" style="width: 50px;">Phase</th>
@@ -2582,10 +2914,10 @@ onUnmounted(() => {
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) && step.brix_sp">
                           <span class="act-num text-deep-orange-8" style="font-weight:800;">{{ actualBrix ? Number(actualBrix).toFixed(2) : '-' }}</span>
                           <span class="slash">/</span>
-                          <span class="req-num">{{ step.brix_sp ? Number(step.brix_sp).toFixed(2) : '-' }}</span>
+                          <span class="req-num">{{ formatSP(step.brix_sp) }}</span>
                         </template>
                         <template v-else>
-                          <span class="act-num" style="color: #e65100;">{{ step.actual_brix != null ? Number(step.actual_brix).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ step.brix_sp ? Number(step.brix_sp).toFixed(2) : '-' }}</span>
+                          <span class="act-num" style="color: #e65100;">{{ step.actual_brix != null ? Number(step.actual_brix).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ formatSP(step.brix_sp) }}</span>
                         </template>
                       </td>
                       <!-- pH -->
@@ -2593,27 +2925,27 @@ onUnmounted(() => {
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) && step.ph_sp">
                           <span class="act-num text-purple-8" style="font-weight:800;">{{ actualPh ? Number(actualPh).toFixed(2) : '-' }}</span>
                           <span class="slash">/</span>
-                          <span class="req-num">{{ step.ph_sp ? Number(step.ph_sp).toFixed(2) : '-' }}</span>
+                          <span class="req-num">{{ formatSP(step.ph_sp) }}</span>
                         </template>
                         <template v-else>
-                          <span class="act-num" style="color: #7b1fa2;">{{ step.actual_ph != null ? Number(step.actual_ph).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ step.ph_sp ? Number(step.ph_sp).toFixed(2) : '-' }}</span>
+                          <span class="act-num" style="color: #7b1fa2;">{{ step.actual_ph != null ? Number(step.actual_ph).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ formatSP(step.ph_sp) }}</span>
                         </template>
                       </td>
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
                            <span class="act-num text-deep-purple">{{ formatDuration(currentElapsed) }}</span>
                            <span class="slash">/</span>
-                           <span class="req-num">{{ step.step_time ? `${step.step_time}:00` : '-' }}</span>
+                           <span class="req-num">{{ step.step_time ? formatDuration(Number(step.step_time)) : '-' }}</span>
                         </template>
                         <template v-else-if="step.stamp_time">
                            <span class="act-num text-grey-8">{{ formatDuration(step.duration_sec) }}</span>
                            <span class="slash">/</span>
-                           <span class="req-num">{{ step.step_time ? `${step.step_time}:00` : '-' }}</span>
+                           <span class="req-num">{{ step.step_time ? formatDuration(Number(step.step_time)) : '-' }}</span>
                         </template>
                         <template v-else>
                            <span class="act-num">-</span>
                            <span class="slash">/</span>
-                           <span class="req-num">{{ step.step_time ? `${step.step_time}:00` : '-' }}</span>
+                           <span class="req-num">{{ step.step_time ? formatDuration(Number(step.step_time)) : '-' }}</span>
                         </template>
                       </td>
                       <td class="text-center">{{ step.stamp_time || '-' }}</td>
