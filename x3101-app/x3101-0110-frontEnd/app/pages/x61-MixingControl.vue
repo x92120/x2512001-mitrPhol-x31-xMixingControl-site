@@ -1480,12 +1480,10 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     plcHmiCommand.value = 1
     setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
     
-    // Advance local step index (Auto Next) ONLY if Software Interlock is passed
-    if (!isInterlockFailed) {
-        localStepIndex.value = currentStepIndex.value + 1
-    } else {
-        console.log(`[Confirm] Step ${step.sub_step} confirmed with active software interlock. Auto-advance bypassed.`)
-    }
+    // DO NOT optimistically advance localStepIndex here.
+    // The UI must wait for the PLC status telemetry (MQTT) to update and change currentStepIndex,
+    // which will then update localStepIndex via the watch(currentStepIndex) observer.
+    console.log(`[Confirm] Step ${step.sub_step} confirmed. Waiting for PLC telemetry to advance.`)
     
     plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
@@ -1664,6 +1662,8 @@ watch(currentStepIndex, (newIdx, oldIdx) => {
     // Skip if no data loaded yet (fires immediately on mount when skuSteps is empty)
     if (skuSteps.value.length === 0) return
     if (newIdx < skuSteps.value.length) {
+        // Sync localStepIndex with the active step index driven by PLC telemetry
+        localStepIndex.value = newIdx
         const step = skuSteps.value[newIdx]
         if (step) expandedPhases.value[step.phase_number || '0'] = true
         if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
