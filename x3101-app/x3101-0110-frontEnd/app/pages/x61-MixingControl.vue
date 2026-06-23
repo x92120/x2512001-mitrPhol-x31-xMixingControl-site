@@ -1432,19 +1432,20 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
 
     
     // ── Process Interlock: Temp / Agitator / HighShear / Brix / pH ────────────
+    let isInterlockFailed = false
     if (!skipToleranceCheck) {
         const { ok, failed } = isStepAllGreen(step)
         if (!ok) {
+            isInterlockFailed = true
             $q.notify({
-                type: 'negative',
-                icon: 'lock',
-                message: '⛔ Process not ready — parameters out of range',
-                caption: failed.join(' | '),
+                type: 'warning',
+                icon: 'warning',
+                message: '⚠️ Process parameters out of tolerance (Software Interlock)',
+                caption: failed.join(' | ') + ' — Confirmed step without Auto Next.',
                 position: 'center',
-                timeout: 0,
+                timeout: 5000,
                 actions: [{ label: 'OK', color: 'white' }]
             })
-            return  // BLOCK ADVANCE
         }
     }
     
@@ -1479,8 +1480,12 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     plcHmiCommand.value = 1
     setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
     
-    // Advance local step index
-    localStepIndex.value = currentStepIndex.value + 1
+    // Advance local step index (Auto Next) ONLY if Software Interlock is passed
+    if (!isInterlockFailed) {
+        localStepIndex.value = currentStepIndex.value + 1
+    } else {
+        console.log(`[Confirm] Step ${step.sub_step} confirmed with active software interlock. Auto-advance bypassed.`)
+    }
     
     plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
