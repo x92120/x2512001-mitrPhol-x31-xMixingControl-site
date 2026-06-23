@@ -467,15 +467,19 @@ const fetchStampTimes = async (batchId: string) => {
         // cross-phase contamination (many phases share the same sub_step number)
         const stampByKey: Record<string, string> = {}    // `${phase_id}__${step_id}` → latest ts
         const actualByKey: Record<string, number | null> = {}  // same key → actual_value (weight)
+        const normPnum = (s: string) => s ? s.replace(/^(p)(0+)/, (_: any, p: string) => p) : s
 
         for (const log of logs) {
             const ts = log.completed_at
             if (!ts) continue
-            const sid = Number(log.step_id)
+            const sid = Number(log.sub_step != null ? log.sub_step : log.step_id)
+            if (isNaN(sid)) continue
+            
             // Index by both the stored phase_id AND the phase_number format (p010-style)
             const keys = [
-                `${log.phase_id || ''}__${sid}`,          // e.g. A1010__10
-                `${log.phase_number || ''}__${sid}`        // e.g. p010__10 (legacy)
+                `${log.phase_id || ''}__${sid}`,          // e.g. A1010__10 or p010__10
+                `${log.phase_number || ''}__${sid}`,        // e.g. p010__10
+                `${normPnum(log.phase_id || '')}__${sid}` // e.g. p10__10
             ]
             for (const k of keys) {
                 if (!k || k.startsWith('__') || k.startsWith('undefined__')) continue
@@ -489,14 +493,11 @@ const fetchStampTimes = async (batchId: string) => {
         }
 
         // Merge into skuSteps — match by phase_id (from PLC) or phase_number
-        // KEY FIX: log stores 'p010' but step.phase_number is 'p0010'
-        // Normalize by removing extra leading zeros: p0010 → p010
-        const normPnum = (s: string) => s ? s.replace(/^(p)(0+)/, (_: any, p: string) => p) : s
         skuSteps.value = skuSteps.value.map(step => {
             const sid = step.sub_step
             const key1 = `${step.phase_id || ''}__${sid}`              // "A1010__10"
-            const key2 = `${step.phase_number || ''}__${sid}`          // "p0010__10" (raw)
-            const key2n = `${normPnum(step.phase_number || '')}__${sid}` // "p010__10" (normalized)
+            const key2 = `${step.phase_number || ''}__${sid}`          // "p010__10" (raw)
+            const key2n = `${normPnum(step.phase_number || '')}__${sid}` // "p10__10" (normalized)
             const ts = stampByKey[key1] || stampByKey[key2] || stampByKey[key2n]
             if (ts) {
                 const d = new Date(ts)
