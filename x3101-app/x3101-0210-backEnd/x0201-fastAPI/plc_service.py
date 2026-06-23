@@ -253,7 +253,7 @@ def write_full_recipe_to_plc(
     payload = serialize_full_recipe(
         batch_id=batch_id,
         sku_id=sku_id,
-        hmi_command=1,   # START
+        hmi_command=2,   # HOLD — wait for heartbeat pulse (1) from frontend before running
         total_steps=total,
         active_step=1,   # Start at first step
         steps=steps

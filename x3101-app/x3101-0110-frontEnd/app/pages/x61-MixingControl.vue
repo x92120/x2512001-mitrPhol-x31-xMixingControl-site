@@ -477,15 +477,18 @@ const fetchStampTimes = async (batchId: string) => {
         }
 
         // Merge into skuSteps — match by phase_id (from PLC) or phase_number
-        // Never fall back to step_id-only: multiple phases share the same sub_step numbers
+        // KEY FIX: log stores 'p010' but step.phase_number is 'p0010'
+        // Normalize by removing extra leading zeros: p0010 → p010
+        const normPnum = (s: string) => s ? s.replace(/^(p)(0+)/, (_: any, p: string) => p) : s
         skuSteps.value = skuSteps.value.map(step => {
             const sid = step.sub_step
-            const key1 = `${step.phase_id || ''}__${sid}`      // e.g. A1010__10
-            const key2 = `${step.phase_number || ''}__${sid}`  // e.g. p010__10
-            const ts = stampByKey[key1] || stampByKey[key2]
+            const key1 = `${step.phase_id || ''}__${sid}`              // "A1010__10"
+            const key2 = `${step.phase_number || ''}__${sid}`          // "p0010__10" (raw)
+            const key2n = `${normPnum(step.phase_number || '')}__${sid}` // "p010__10" (normalized)
+            const ts = stampByKey[key1] || stampByKey[key2] || stampByKey[key2n]
             if (ts) {
                 const d = new Date(ts)
-                const matchKey = stampByKey[key1] ? key1 : key2
+                const matchKey = stampByKey[key1] ? key1 : (stampByKey[key2] ? key2 : key2n)
                 const logActual = actualByKey[matchKey]
                 return {
                     ...step,
@@ -580,7 +583,6 @@ const totalSteps = computed(() => skuSteps.value.length)
 const currentStepIndex = computed(() => {
     const pPhase = plantData.value.Phase_ID || plantData.value.Phase_id || plantData.value.phase_id
     const pStep = Number(plantData.value.Step_ID || plantData.value.Step_id || plantData.value.step_id || 0)
-    const currentSeq = Number(plantData.value.Current_Step || plantData.value.current_step || 0)
 
     // Guard: only trust MQTT Phase_ID/Step_ID if PLC Batch_ID matches selected batch
     const plcBatchId = String(plantData.value.Batch_ID || plantData.value.batch_id || '').replace(/\0/g, '').trim()
@@ -593,15 +595,21 @@ const currentStepIndex = computed(() => {
         return appOverrideStepIndex.value  // pure read — never mutate here
     }
 
-    // Primary: Phase_ID + Step_ID from MQTT (most accurate, requires Batch_ID match)
+    // Primary: Phase_ID + Step_ID from MQTT — but NEVER go backwards from localStepIndex.
+    // MQTT shows the LAST CONFIRMED step (e.g. p010/10), not the next PENDING step.
+    // localStepIndex is advanced by confirmStepFromRow after each confirmation.
+    // → Use Math.max so UI always shows the furthest step the operator has reached.
     if (mqttBatchOk && pPhase && pStep && skuSteps.value.length > 0) {
         const rawPhase = String(pPhase).replace(/\0/g, '').trim()
         const cleanPPhase = rawPhase.match(/^(p\d+)/i)?.[1]?.toLowerCase() || rawPhase.toLowerCase()
-        const idx = skuSteps.value.findIndex(s => {
+        const mqttIdx = skuSteps.value.findIndex(s => {
             const cleanSPhase = String(s.phase_number || s.phase).trim().toLowerCase()
             return cleanSPhase === cleanPPhase && Number(s.sub_step) === pStep
         })
-        if (idx !== -1) return idx
+        if (mqttIdx !== -1) {
+            // Take the HIGHER of MQTT index and localStepIndex — UI must not step backwards
+            return Math.max(mqttIdx, localStepIndex.value)
+        }
     }
 
     // NOTE: Current_Step (1-based seq) fallback is intentionally removed here because
@@ -700,6 +708,7 @@ const confirmStartProduction = () => {
     startConfirmed.value = true
     batchRunning.value = true      // ← CRITICAL: enables STEP_COMPLETE handler
     plcHmiCommand.value = 1        // ← Set HMI Command = 1 (Run) immediately
+    setTimeout(() => { plcHmiCommand.value = 2 }, 3000)  // ← Reset to HOLD(2) after 3s pulse
     confirmStartDialog.value = false
 
     const plantId = activePlantId.value || '1'
@@ -1082,6 +1091,7 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
         }
         batchRunning.value = true
         plcHmiCommand.value = 1   // ← Run
+        setTimeout(() => { plcHmiCommand.value = 2 }, 3000)  // ← Reset to HOLD(2) after 3s pulse
         // Resume from where we were (PLC feedback), or start from 0
         localStepIndex.value = currentStepIndex.value >= skuSteps.value.length ? 0 : currentStepIndex.value
         
@@ -1604,20 +1614,69 @@ const formatDuration = (sec: number) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-// Ensure active step expands
-watch(currentStepIndex, (newIdx) => {
+// Scroll active step row into view within the Quasar scroll container
+const stepTableScroll = ref<HTMLElement | null>(null)
+
+const scrollToActiveStep = async () => {
+    // Wait 2 ticks for Vue reactive + DOM render to complete
+    await nextTick()
+    await nextTick()
+    const el = document.querySelector('.active-step') as HTMLElement | null
+    if (!el) {
+        // Retry once more after short delay in case data is still rendering
+        setTimeout(async () => {
+            await nextTick()
+            const el2 = document.querySelector('.active-step') as HTMLElement | null
+            if (el2) doScroll(el2)
+        }, 500)
+        return
+    }
+    doScroll(el)
+}
+
+const doScroll = (el: HTMLElement) => {
+    const cont = stepTableScroll.value || (el.closest('.scroll') as HTMLElement)
+    if (cont && cont.scrollHeight > cont.clientHeight) {
+        // Use getBoundingClientRect — correctly relative to viewport regardless of offsetParent chain
+        const containerRect = cont.getBoundingClientRect()
+        const elRect = el.getBoundingClientRect()
+        // Position of element relative to the top of the scroll container
+        const relTop = elRect.top - containerRect.top
+        // Desired scrollTop to center the active row
+        const newScrollTop = cont.scrollTop + relTop - cont.clientHeight / 2 + elRect.height / 2
+        cont.scrollTop = Math.max(0, newScrollTop)
+        console.log('[Scroll] ✅ scrollTop set to:', Math.max(0, newScrollTop),
+            '| relTop:', relTop, '| cont.scrollTop was:', cont.scrollTop,
+            '| scrollHeight:', cont.scrollHeight, '| clientHeight:', cont.clientHeight)
+    } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        console.log('[Scroll] fallback scrollIntoView — no overflow')
+    }
+}
+
+// Ensure active step expands and scrolls into view when currentStepIndex changes
+watch(currentStepIndex, (newIdx, oldIdx) => {
+    // Skip if no data loaded yet (fires immediately on mount when skuSteps is empty)
+    if (skuSteps.value.length === 0) return
     if (newIdx < skuSteps.value.length) {
         const step = skuSteps.value[newIdx]
-        if (step) {
-            const phase = step.phase_number || '0'
-            expandedPhases.value[phase] = true
-        }
-        nextTick(() => {
-            const el = document.querySelector('.active-step')
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        })
+        if (step) expandedPhases.value[step.phase_number || '0'] = true
+        if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
     }
 }, { immediate: true })
+
+// Trigger scroll when skuSteps first loads (restore case where currentStepIndex
+// stays at the same value so watch above doesn't fire again)
+watch(() => skuSteps.value.length, (newLen, oldLen) => {
+    if (newLen > 0 && oldLen === 0) {
+        const idx = currentStepIndex.value
+        if (idx < newLen) {
+            const step = skuSteps.value[idx]
+            if (step) expandedPhases.value[step.phase_number || '0'] = true
+        }
+        scrollToActiveStep()
+    }
+})
 
 // Clear appOverrideStepIndex once PLC MQTT telemetry confirms it has reached or passed
 // the overridden phase. Requires mqttBatchOk to prevent false clears when Batch_ID
@@ -1869,10 +1928,63 @@ const restoreBatchFromPlc = async (batchId: string) => {
             }
         }
 
+        // QUATERNARY: production_step_logs from MySQL (survives PLC reset — most reliable source)
+        // Find the last completed step from DB logs, then advance to next pending step.
+        // This handles PLC reset scenarios where all PLC data sources show wrong seq.
+        if (restoredIdx === -1 || restoredIdx === 0) {
+            try {
+                const remoteApiBaseUrl = appConfig.apiBaseUrl
+                const logsData = await $fetch<any>(
+                    `${remoteApiBaseUrl}/production-batches/${batchId}/logs`,
+                    { headers: getAuthHeader() as Record<string, string> }
+                )
+                const logs: any[] = Array.isArray(logsData) ? logsData : (logsData?.logs || [])
+                if (logs.length > 0 && skuSteps.value.length > 0) {
+                    // Find the last completed step log (highest completed_at)
+                    const sorted = [...logs].sort((a, b) =>
+                        new Date(b.completed_at || 0).getTime() - new Date(a.completed_at || 0).getTime()
+                    )
+                    // Build set of completed (phase_id, step_id) combos — normalized phase key
+                    const normP = (s: string) => s ? s.replace(/^(p)(0+)/, (_: any, p: string) => p) : s
+                    // Find the LAST step in skuSteps order that has a completed log
+                    let lastCompletedSkuIdx = -1
+                    for (let i = skuSteps.value.length - 1; i >= 0; i--) {
+                        const s = skuSteps.value[i]
+                        const pn = normP(s.phase_number || '')
+                        const matched = logs.find(lg => {
+                            const lp = normP(String(lg.phase_id || ''))
+                            return lp === pn && Number(lg.step_id) === Number(s.sub_step)
+                        })
+                        if (matched) {
+                            lastCompletedSkuIdx = i
+                            break
+                        }
+                    }
+                    if (lastCompletedSkuIdx !== -1) {
+                        const nextIdx = lastCompletedSkuIdx + 1
+                        // Only update if this gives a HIGHER index than current (never go backwards)
+                        if (nextIdx > restoredIdx && nextIdx < skuSteps.value.length) {
+                            restoredIdx = nextIdx
+                            const lc = skuSteps.value[lastCompletedSkuIdx]
+                            console.log(`[Restore] ✅ QUATERNARY: DB logs last completed (${lc?.phase_number}/${lc?.sub_step}) → next index ${restoredIdx}`)
+                        } else if (nextIdx >= skuSteps.value.length) {
+                            restoredIdx = skuSteps.value.length - 1
+                            console.log(`[Restore] ✅ QUATERNARY: All steps completed → last index ${restoredIdx}`)
+                        }
+                    }
+                }
+            } catch (logErr) {
+                console.warn('[Restore] QUATERNARY: Could not fetch step logs:', logErr)
+            }
+        }
+
         if (restoredIdx !== -1) {
             localStepIndex.value = restoredIdx
             const restoredStep = skuSteps.value[restoredIdx]
             if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
+            // Scroll after DOM update — use 600ms to wait for all async renders (brix/pH fetch etc)
+            await nextTick()
+            setTimeout(() => scrollToActiveStep(), 600)
         } else {
             console.warn('[Restore] ⚠️ Could not determine current step from any source. Defaulting to step 0.')
         }
@@ -2050,9 +2162,7 @@ const handleScan = (scannedText: string) => {
                         // Wait 2 ticks: 1st for reactive update, 2nd for DOM render
                         ;(async () => {
                             await nextTick()
-                            await nextTick()
-                            const el = document.querySelector('.active-step')
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                            scrollToActiveStep()
                         })()
                     }
                 }
@@ -2496,9 +2606,11 @@ onMounted(async () => {
                     //   0 = Abort   (ABORT button only)
                     //   1 = Confirm pulse (3s, sent after all checks pass in confirmStepFromRow)
                     //   2 = HOLD    (default resting state — PLC waits between steps)
-                    // Heartbeat relays plcHmiCommand directly — no override.
-                    hmi_command: plcHmiCommand.value,
-                    next_step_cmd: plcHmiCommand.value === 1 ? 1 : 0
+                    // Safety: if software interlock is active (isAppReady=false),
+                    // always send HOLD(2) to PLC — never let hmi=1 stay when blocked.
+                    // ABORT(0) is always honoured immediately.
+                    hmi_command: plcHmiCommand.value === 0 ? 0 : (!isAppReady.value ? 2 : plcHmiCommand.value),
+                    next_step_cmd: plcHmiCommand.value === 1 && isAppReady.value ? 1 : 0
                 })
                 // Store last sent payload for handshake comparison
                 lastSentPayload.value = {
@@ -2813,7 +2925,7 @@ onUnmounted(() => {
             
 
 
-            <div v-if="skuStepsByPhase.length > 0" class="scroll" style="flex: 1; min-height: 0;">
+            <div v-if="skuStepsByPhase.length > 0" ref="stepTableScroll" class="scroll" style="flex: 1; min-height: 0;">
               <q-markup-table flat bordered dense separator="cell" style="font-size: 16px;" class="full-width production-table sticky-header-table">
 
               <thead class="bg-red-5 text-white">

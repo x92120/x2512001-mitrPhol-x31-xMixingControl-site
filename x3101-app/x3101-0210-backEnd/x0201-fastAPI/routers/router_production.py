@@ -2232,10 +2232,17 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
 
     # ── Dedup: keep only the LATEST log per (phase_id, step_id) ──────────────
     # Multiple confirms (pulse repeat, auto-step overlap) create duplicate rows.
-    # We keep the last completed entry per step, maintaining chronological order.
+    # Guard: if phase_id is empty, use the DB row id as tiebreaker so we don't
+    # accidentally merge steps from different phases that share the same sub_step number.
     seen: dict = {}
     for log in logs:
-        key = (str(log.phase_id or ''), log.step_id)
+        pid = str(log.phase_id or '').strip()
+        # Use phase_id+step_id when phase_id is populated; fall back to log.id when empty
+        if pid:
+            key = (pid, log.step_id)
+        else:
+            # No phase_id → cannot safely dedup across phases; keep all entries by unique id
+            key = (f"__nophase_{log.id}", log.step_id)
         seen[key] = log  # overwrite → last one wins (logs already sorted by completed_at ASC)
     deduped_logs = list(seen.values())  # dict preserves insertion order (Python 3.7+)
 
