@@ -1465,8 +1465,14 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     currentStepBypassed.value = skipToleranceCheck || isInterlockFailed
     
     const { ok: interlocksOk } = isStepAllGreen(step)
-    const allGreen = currentStepBypassed.value || (interlocksOk && isAppReady.value)
-    const immediateHmiCommand = allGreen ? 4 : 2
+    const naturalGreen = interlocksOk && isAppReady.value
+    
+    let immediateHmiCommand = 2
+    if (currentStepBypassed.value) {
+        immediateHmiCommand = 5
+    } else if (naturalGreen) {
+        immediateHmiCommand = 4
+    }
     
     const topic = simCmdTopic(activePlantId.value, 'step_cmd')
     const payload = {
@@ -2631,15 +2637,31 @@ onMounted(async () => {
                     ph_sp: Number(s.ph_sp || 0),
                     brix_sp: Number(s.brix_sp || 0),
                     // ── Interlock signals → DB1510/DB1511 via backend snap7 ──
-                    // HMI Command design (PULSE):
+                    // HMI Command design:
                     //   0 = Abort   (ABORT button only)
-                    //   1 = Confirm pulse (3s, sent after all checks pass in confirmStepFromRow)
+                    //   1 = Confirm pulse (3s, sent on step advance to start next step)
                     //   2 = HOLD    (default resting state — PLC waits between steps)
-                    // Safety: if software interlock is active (isAppReady=false),
-                    // always send HOLD(2) to PLC — never let hmi=1 stay when blocked.
-                    // ABORT(0) is always honoured immediately.
-                    hmi_command: plcHmiCommand.value === 0 ? 0 : (!isAppReady.value ? 2 : plcHmiCommand.value),
-                    next_step_cmd: plcHmiCommand.value === 1 && isAppReady.value ? 1 : 0
+                    //   4 = Step complete (sent when confirmed AND all interlocks are green naturally)
+                    //   5 = Bypass/Force complete (sent when confirmed AND bypassed/forced next step)
+                    hmi_command: (() => {
+                        const { ok: interlocksOk } = isStepAllGreen(s)
+                        const naturalGreen = interlocksOk && isAppReady.value
+                        if (plcHmiCommand.value === 0) return 0
+                        if (hasConfirmedCurrentStep.value) {
+                            if (currentStepBypassed.value) return 5
+                            if (naturalGreen) return 4
+                        }
+                        if (plcHmiCommand.value === 1) return 1
+                        return plcHmiCommand.value || 2
+                    })(),
+                    next_step_cmd: (() => {
+                        const { ok: interlocksOk } = isStepAllGreen(s)
+                        const naturalGreen = interlocksOk && isAppReady.value
+                        if (plcHmiCommand.value === 0) return 0
+                        if (hasConfirmedCurrentStep.value && (currentStepBypassed.value || naturalGreen)) return 1
+                        if (plcHmiCommand.value === 1 && (currentStepBypassed.value || naturalGreen)) return 1
+                        return 0
+                    })()
                 })
                 // Store last sent payload for handshake comparison
                 lastSentPayload.value = {
