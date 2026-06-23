@@ -77,13 +77,55 @@ async def _poll_handshake_loop(interval: float = 1.0):
                 if hs is None:
                     continue  # PLC not connected or DB read failed
 
-                # Detect batch change → reset step tracker so step 1 of new batch is not skipped
+                # Detect batch change or PLC reset
                 _hdr = plc.db_read(get_db_number('full_recipe', plant_id), 0, 20)
-                _cur_bid = unpack_s7_string(_hdr, 0, 20).strip() if _hdr else ""
-                if _cur_bid and _cur_bid not in ("-", "") and _cur_bid != _last_batch_id[plant_id]:
-                    logger.info(f"🔄 Plant {plant_id} batch changed: {_last_batch_id[plant_id]!r} → {_cur_bid!r} | resetting step tracker")
-                    _last_finished_step[plant_id] = -1
-                    _last_batch_id[plant_id] = _cur_bid
+                if _hdr is not None:
+                    _cur_bid = unpack_s7_string(_hdr, 0, 20).strip()
+                    # 1. Detect if PLC batch was cleared/reset (cur_bid is empty/hyphen but last_batch_id was a valid batch)
+                    if _cur_bid in ("-", "") and _last_batch_id[plant_id] and _last_batch_id[plant_id] not in ("-", ""):
+                        old_bid = _last_batch_id[plant_id]
+                        logger.info(f"🔄 Plant {plant_id} PLC batch cleared/reset (Batch_ID in PLC is {_cur_bid!r})")
+                        from sqlalchemy import text
+                        db_session = SessionLocal()
+                        try:
+                            # Check status of this batch in database
+                            batch_row = db_session.execute(text("""
+                                SELECT status FROM production_batches 
+                                WHERE batch_id = :batch_id LIMIT 1
+                            """), {"batch_id": old_bid}).fetchone()
+                            
+                            # ONLY auto-clear/reset if the batch was In-Progress (not Done / completed)
+                            if batch_row and batch_row[0] == 'In-Progress':
+                                logger.info(f"🗑️ [Auto-Reset] Active batch {old_bid} was reset via PLC/HMI. Clearing DB logs and resetting status to Pending.")
+                                # Delete production_step_logs
+                                db_session.execute(text("""
+                                    DELETE FROM production_step_logs WHERE batch_id = :batch_id
+                                """), {"batch_id": old_bid})
+                                # Reset batch status to Pending
+                                db_session.execute(text("""
+                                    UPDATE production_batches 
+                                    SET status = 'Pending', updated_at = NOW() 
+                                    WHERE batch_id = :batch_id
+                                """), {"batch_id": old_bid})
+                                db_session.commit()
+                        except Exception as reset_db_err:
+                            logger.error(f"Failed to auto-reset batch {old_bid} in DB: {reset_db_err}")
+                            db_session.rollback()
+                        finally:
+                            db_session.close()
+                        
+                        # Reset handshake tracking states
+                        _last_finished_step[plant_id] = -1
+                        _last_batch_id[plant_id] = ""
+
+                    # 2. Detect batch changed (cur_bid is a valid new batch)
+                    elif _cur_bid and _cur_bid not in ("-", "") and _cur_bid != _last_batch_id[plant_id]:
+                        logger.info(f"🔄 Plant {plant_id} batch changed: {_last_batch_id[plant_id]!r} → {_cur_bid!r} | resetting step tracker")
+                        _last_finished_step[plant_id] = -1
+                        _last_batch_id[plant_id] = _cur_bid
+                else:
+                    # If _hdr is None (read failed / disconnected), do not treat as reset or change
+                    pass
 
                 if hs["step_complete"] and hs["finished_step"] != _last_finished_step[plant_id]:
                     step_no = hs["finished_step"]

@@ -461,8 +461,6 @@ const fetchStampTimes = async (batchId: string) => {
             headers: getAuthHeader() as Record<string, string>
         })
         const logs: any[] = res?.logs || []
-        if (!logs.length) return
-
         // Build lookup: MUST match by phase_id + step_id to avoid
         // cross-phase contamination (many phases share the same sub_step number)
         const stampByKey: Record<string, string> = {}    // `${phase_id}__${step_id}` → latest ts
@@ -514,8 +512,13 @@ const fetchStampTimes = async (batchId: string) => {
                     // PLC DB15x7 is cleared on reset; DB logs survive reset.
                     actual_volume: (logActual != null && logActual > 0) ? logActual : step.actual_volume,
                 }
+            } else {
+                // If there's no log entry for this step, clear any stamped completion values
+                return {
+                    ...step,
+                    stamp_time: undefined
+                }
             }
-            return step
         })
         console.log('[StampTime] Keys in DB:', Object.keys(stampByKey), '| Actuals:', actualByKey)
     } catch (e) {
@@ -2041,11 +2044,47 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
-watch([plcActiveBatchId, () => loading.value], ([plcBatchId, newLoading]) => {
-    if (!selectedBatchId.value && !newLoading) {
+watch([plcActiveBatchId, () => loading.value], async ([plcBatchId, newLoading]) => {
+    if (newLoading) return
+    
+    if (!selectedBatchId.value) {
         if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
             console.log('Detected active batch on PLC, restoring:', plcBatchId)
             restoreBatchFromPlc(plcBatchId)
+        }
+    } else {
+        // If a batch is currently selected, but PLC active batch ID has changed or been cleared
+        if (plcBatchId !== selectedBatchId.value) {
+            console.log(`PLC active batch ID (${plcBatchId}) differs from selected (${selectedBatchId.value})`)
+            // Fetch status of the selected batch from DB to see if it was reset
+            try {
+                const remoteApiBaseUrl = appConfig.apiBaseUrl
+                const batch = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/${selectedBatchId.value}`, {
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                if (batch && (batch.status === 'Pending' || plcBatchId === '-' || plcBatchId === '')) {
+                    $q.notify({
+                        type: 'warning',
+                        message: 'PLC batch was cleared or reset. Returning to production check screen.',
+                        position: 'top'
+                    })
+                    // Clear local states
+                    localStepIndex.value = 0
+                    batchRunning.value = false
+                    batchInfo.value = null
+                    selectedBatchId.value = null
+                    selectedSkuId.value = null
+                    skuSteps.value = []
+                    startConfirmed.value = false
+                    
+                    // Remove query parameters and redirect
+                    const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query
+                    router.replace({ query: newQuery })
+                    router.push('/x60-CheckForProduction')
+                }
+            } catch (err) {
+                console.warn('Failed to fetch batch status in watch:', err)
+            }
         }
     }
 }, { immediate: true })
