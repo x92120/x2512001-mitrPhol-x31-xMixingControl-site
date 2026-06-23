@@ -460,6 +460,7 @@ def _on_step_cmd_message(client, userdata, message):
 
         # Log to database synchronously (this runs in a thread, so sync DB is fine)
         _sync_log_step_cmd(
+            plant_id=plant_id,
             batch_id=batch_id,
             phase_id=phase_id,
             step_id=step_id,
@@ -473,6 +474,7 @@ def _on_step_cmd_message(client, userdata, message):
 
 
 def _sync_log_step_cmd(
+    plant_id: int,
     batch_id: str,
     phase_id: str,
     step_id: int,
@@ -511,6 +513,19 @@ def _sync_log_step_cmd(
             except Exception:
                 pass
 
+        # 3. Read actual weight from DB1517/27/37 if available, otherwise fallback to target_value
+        actual_val = target_value
+        try:
+            from plc_service import read_full_actuals
+            actuals = read_full_actuals(plant_id)
+            if actuals and actuals.get('steps'):
+                matched = next((s for s in actuals['steps'] if s.get('step_index') == step_id), None)
+                if matched and matched.get('actual_weight') is not None:
+                    actual_val = matched['actual_weight']
+                    logger.info(f"📊 Command log Plant {plant_id} Step {step_id}: using actual_weight from DB1517 = {actual_val} kg")
+        except Exception as e:
+            logger.warning(f"Could not read actuals for command log: {e}")
+
         db.execute(text("""
             INSERT INTO production_step_logs
                 (batch_id, phase_id, step_id, action_code, re_code,
@@ -518,6 +533,11 @@ def _sync_log_step_cmd(
             VALUES
                 (:batch_id, :phase_id, :step_id, :action_code, :re_code,
                  :target_value, :actual_value, :completed_at, :operator, :operator2)
+            ON DUPLICATE KEY UPDATE
+                actual_value = VALUES(actual_value),
+                completed_at = VALUES(completed_at),
+                operator     = VALUES(operator),
+                operator2    = VALUES(operator2)
         """), {
             "batch_id":    batch_id,
             "phase_id":    phase_id,
@@ -525,7 +545,7 @@ def _sync_log_step_cmd(
             "action_code": action_code,
             "re_code":     re_code,
             "target_value": target_value,
-            "actual_value": target_value,  # will be overwritten by handshake log on completion
+            "actual_value": actual_val,
             "completed_at": datetime.now(),
             "operator":    scan_user,
             "operator2":   active_user,
