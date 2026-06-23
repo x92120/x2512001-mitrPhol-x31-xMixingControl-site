@@ -519,12 +519,31 @@ def _sync_log_step_cmd(
             from plc_service import read_full_actuals
             actuals = read_full_actuals(plant_id)
             if actuals and actuals.get('steps'):
-                matched = next((s for s in actuals['steps'] if s.get('step_index') == step_id), None)
+                import re
+                phase_num_val = None
+                try:
+                    digits = re.findall(r'\d+', phase_id)
+                    if digits:
+                        val = int(digits[0])
+                        if val >= 100:
+                            phase_num_val = val // 100
+                        else:
+                            phase_num_val = val
+                except Exception:
+                    pass
+
+                matched = None
+                if phase_num_val is not None:
+                    matched = next((s for s in actuals['steps'] if s.get('sub_step') == step_id and s.get('phase_number') == phase_num_val), None)
+                if not matched:
+                    matched = next((s for s in actuals['steps'] if s.get('sub_step') == step_id), None)
+
                 if matched and matched.get('actual_weight') is not None:
                     actual_val = matched['actual_weight']
-                    logger.info(f"📊 Command log Plant {plant_id} Step {step_id}: using actual_weight from DB1517 = {actual_val} kg")
+                    logger.info(f"📊 Command log Plant {plant_id} Phase {phase_id} Step {step_id}: using actual_weight from DB1517 = {actual_val} kg")
         except Exception as e:
             logger.warning(f"Could not read actuals for command log: {e}")
+
 
         db.execute(text("""
             INSERT INTO production_step_logs
