@@ -310,24 +310,54 @@ def send_step_command(command: DB1510StepCommand, db: Session = Depends(get_db))
     # Log step to database for Production Report traceability
     try:
         from sqlalchemy import text as _text
+        
+        # 1. Fetch latest active operator
+        active_user = "operator"
+        try:
+            user_row = db.execute(_text("""
+                SELECT username FROM users
+                WHERE status = 'Active' AND last_login IS NOT NULL
+                ORDER BY last_login DESC LIMIT 1
+            """)).fetchone()
+            if user_row:
+                active_user = user_row[0]
+        except Exception:
+            pass
+
+        # 2. Query prebatch_items for recheck_by if re_code exists
+        scan_user = active_user
+        re_code = str(getattr(command, "Re_Code_ID", "") or "").strip()
+        batch_id = getattr(command, "Batch_ID", "") or ""
+        if re_code and batch_id:
+            try:
+                row_item = db.execute(_text("""
+                    SELECT recheck_by FROM prebatch_items
+                    WHERE batch_id = :batch_id AND re_code = :re_code LIMIT 1
+                """), {"batch_id": batch_id, "re_code": re_code}).fetchone()
+                if row_item and row_item[0]:
+                    scan_user = row_item[0]
+            except Exception:
+                pass
+
         db.execute(_text("""
             INSERT INTO production_step_logs 
-                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator)
+                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator, operator2)
             VALUES 
-                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator)
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator, :operator2)
         """), {
-            "batch_id": getattr(command, "Batch_ID", "") or "",
+            "batch_id": batch_id,
             "phase_id": str(getattr(command, "Phase_ID", "") or ""),
             "step_id": int(getattr(command, "Step_ID", 0) or 0),
             "action_code": str(getattr(command, "HMI_Command", "") or ""),
-            "re_code": str(getattr(command, "Re_Code_ID", "") or ""),
+            "re_code": re_code,
             "target_value": float(getattr(command, "Req_Qty", 0) or 0),
             "actual_value": float(getattr(command, "Req_Qty", 0) or 0),
             "completed_at": datetime.now(),
-            "operator": "operator",
+            "operator": scan_user,
+            "operator2": active_user,
         })
         db.commit()
-        logger.info(f"Step log saved for batch={command.Batch_ID} phase={getattr(command, 'Phase_ID', '')} step={command.Step_ID}")
+        logger.info(f"Step log saved for batch={command.Batch_ID} phase={getattr(command, 'Phase_ID', '')} step={command.Step_ID} operator={scan_user} operator2={active_user}")
     except Exception as log_err:
         logger.warning(f"Could not save step log: {log_err}")
         db.rollback()

@@ -254,7 +254,7 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
                 logger.error(f"PLC read fallback failed: {plc_err}")
 
         # 5. Fetch the latest active logged-in operator from App
-        operator = "System"
+        active_user = "System"
         try:
             user_row = db.execute(text("""
                 SELECT username FROM users 
@@ -262,10 +262,24 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
                 ORDER BY last_login DESC LIMIT 1
             """)).fetchone()
             if user_row:
-                operator = user_row[0]
-                logger.info(f"Logged step operator assigned to latest login user: {operator}")
+                active_user = user_row[0]
+                logger.info(f"Logged step operator2 assigned to latest login user: {active_user}")
         except Exception as user_err:
             logger.warning(f"Could not query latest active user: {user_err}")
+
+        # Fetch recheck_by from prebatch_items for the scan user (operator)
+        scan_user = active_user
+        if re_code and batch_id:
+            try:
+                row_item = db.execute(text("""
+                    SELECT recheck_by FROM prebatch_items
+                    WHERE batch_id = :batch_id AND re_code = :re_code LIMIT 1
+                """), {"batch_id": batch_id, "re_code": re_code}).fetchone()
+                if row_item and row_item[0]:
+                    scan_user = row_item[0]
+                    logger.info(f"Logged step operator (scan) retrieved from prebatch_items: {scan_user}")
+            except Exception as e:
+                logger.warning(f"Could not query recheck_by from prebatch_items: {e}")
 
         # 6a. Read actual_weight from DB1517 (same source as x61-MixingControl UI display)
         #     DB1513 end_weight and DB1517 actual_weight may differ — DB1517 is the ground truth.
@@ -285,13 +299,14 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
         # 6b. Upsert log into production_step_logs (prevent duplicates from repeated confirms)
         db.execute(text("""
             INSERT INTO production_step_logs 
-                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator)
+                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator, operator2)
             VALUES 
-                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator)
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator, :operator2)
             ON DUPLICATE KEY UPDATE
                 actual_value = VALUES(actual_value),
                 completed_at = VALUES(completed_at),
-                operator     = VALUES(operator)
+                operator     = VALUES(operator),
+                operator2    = VALUES(operator2)
         """), {
             "batch_id": batch_id,
             "phase_id": phase_id,
@@ -301,10 +316,11 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
             "target_value": target_value,
             "actual_value": actual_val,  # ← DB1517 actual_weight (matches x61 display)
             "completed_at": datetime.now(),
-            "operator": operator
+            "operator": scan_user,
+            "operator2": active_user
         })
         db.commit()
-        logger.info(f"📝 Plant {plant_id} Step {step_no} logged to database (batch_id={batch_id}, operator={operator})")
+        logger.info(f"📝 Plant {plant_id} Step {step_no} logged to database (batch_id={batch_id}, operator={scan_user}, operator2={active_user})")
 
 
         # 7. Auto-complete batch when last step is done
@@ -427,8 +443,8 @@ def _sync_log_step_cmd(
     try:
         from sqlalchemy import text
 
-        # Fetch latest active operator
-        operator = "operator"
+        # 1. Fetch latest active operator
+        active_user = "operator"
         try:
             user_row = db.execute(text("""
                 SELECT username FROM users
@@ -436,17 +452,30 @@ def _sync_log_step_cmd(
                 ORDER BY last_login DESC LIMIT 1
             """)).fetchone()
             if user_row:
-                operator = user_row[0]
+                active_user = user_row[0]
         except Exception:
             pass
+
+        # 2. Query prebatch_items for recheck_by if re_code exists
+        scan_user = active_user
+        if re_code and batch_id:
+            try:
+                row_item = db.execute(text("""
+                    SELECT recheck_by FROM prebatch_items
+                    WHERE batch_id = :batch_id AND re_code = :re_code LIMIT 1
+                """), {"batch_id": batch_id, "re_code": re_code}).fetchone()
+                if row_item and row_item[0]:
+                    scan_user = row_item[0]
+            except Exception:
+                pass
 
         db.execute(text("""
             INSERT INTO production_step_logs
                 (batch_id, phase_id, step_id, action_code, re_code,
-                 target_value, actual_value, completed_at, operator)
+                 target_value, actual_value, completed_at, operator, operator2)
             VALUES
                 (:batch_id, :phase_id, :step_id, :action_code, :re_code,
-                 :target_value, :actual_value, :completed_at, :operator)
+                 :target_value, :actual_value, :completed_at, :operator, :operator2)
         """), {
             "batch_id":    batch_id,
             "phase_id":    phase_id,
@@ -456,12 +485,13 @@ def _sync_log_step_cmd(
             "target_value": target_value,
             "actual_value": target_value,  # will be overwritten by handshake log on completion
             "completed_at": datetime.now(),
-            "operator":    operator,
+            "operator":    scan_user,
+            "operator2":   active_user,
         })
         db.commit()
         logger.info(
             f"📝 step_cmd logged — batch={batch_id} phase={phase_id} "
-            f"step={step_id} re_code={re_code} operator={operator}"
+            f"step={step_id} re_code={re_code} operator={scan_user} operator2={active_user}"
         )
     except Exception as e:
         db.rollback()

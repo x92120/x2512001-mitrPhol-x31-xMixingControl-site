@@ -321,6 +321,7 @@ class ProductionStepLog(Base):
     actual_value = Column(Float)
     completed_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     operator = Column(String(50))
+    operator2 = Column(String(50))
 
 class ProductionQcRecord(Base):
     __tablename__ = "production_qc_records"

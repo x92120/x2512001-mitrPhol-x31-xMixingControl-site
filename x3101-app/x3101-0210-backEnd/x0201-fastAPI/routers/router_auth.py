@@ -145,3 +145,19 @@ def badge_login(request: schemas.BadgeLoginRequest, db: Session = Depends(get_db
             "permissions": db_user.permissions or []
         }
     }
+
+
+@router.post("/switch-operator/{username}")
+def switch_operator(username: str, db: Session = Depends(get_db)):
+    """Update last_login of a user when switching operators on the front-end."""
+    db_user = crud.get_user_by_username(db, username=username)
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    try:
+        db_user.last_login = datetime.now()
+        db.commit()
+        logger.info(f"Operator switched to: {username} (updated last_login)")
+        return {"status": "success", "username": username}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

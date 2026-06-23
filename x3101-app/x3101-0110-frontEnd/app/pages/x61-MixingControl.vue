@@ -101,7 +101,17 @@ async function resolveOperatorScan(
         const found = res.find((u: any) => u.username.toLowerCase() === val.toLowerCase())
         if (found) {
             targetRef.value = { username: found.username, full_name: found.full_name || found.username }
-            if (isPrimary) switchStationUser(found)
+            if (isPrimary) {
+                switchStationUser(found)
+                try {
+                    await $fetch(`${appConfig.apiBaseUrl}/auth/switch-operator/${found.username}`, {
+                        method: 'POST',
+                        headers: getAuthHeader() as Record<string, string>
+                    })
+                } catch (e) {
+                    console.error('Failed to sync switched operator to backend:', e)
+                }
+            }
             // success beep
             try {
                 const ctx = new AudioContext()

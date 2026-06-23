@@ -248,7 +248,7 @@ const reportData_computed = computed(() => {
   return {
     date_no:        first ? fmtDate(first) : '—',
     operation_time: opTime,
-    operator:       done[0]?.operator || '—'
+    operator:       done[0]?.operator2 || done[0]?.operator || '—'
   }
 })
 

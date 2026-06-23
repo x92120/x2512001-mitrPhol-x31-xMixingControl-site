@@ -2122,6 +2122,7 @@ class StepLogRequest(BaseModel):
     target_value: Optional[float] = None
     actual_value: Optional[float] = None
     operator: Optional[str] = "unknown"
+    operator2: Optional[str] = None
 
 class QcRecordRequest(BaseModel):
     step_id: Optional[int] = None
@@ -2145,7 +2146,8 @@ def log_production_step(batch_id_str: str, log_data: StepLogRequest, db: Session
             re_code=log_data.re_code,
             target_value=log_data.target_value,
             actual_value=log_data.actual_value,
-            operator=log_data.operator
+            operator=log_data.operator,
+            operator2=log_data.operator2
         )
         db.add(new_log)
         db.commit()
@@ -2276,7 +2278,7 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "high_tol":           recipe.high_tol       if recipe else None,
             "completed_at":       fmt_ts(log.completed_at),
             "operator":           log.operator,
-            "operator2":          None,
+            "operator2":          log.operator2,
         })
 
     return {
