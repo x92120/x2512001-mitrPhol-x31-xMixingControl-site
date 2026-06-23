@@ -1462,7 +1462,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     }
     
     hasConfirmedCurrentStep.value = true
-    currentStepBypassed.value = skipToleranceCheck || isInterlockFailed
+    currentStepBypassed.value = skipToleranceCheck
     
     const { ok: interlocksOk } = isStepAllGreen(step)
     const naturalGreen = interlocksOk && isAppReady.value
@@ -1472,6 +1472,8 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         immediateHmiCommand = 5
     } else if (naturalGreen) {
         immediateHmiCommand = 4
+    } else {
+        immediateHmiCommand = 1
     }
     
     const topic = simCmdTopic(activePlantId.value, 'step_cmd')
@@ -1501,6 +1503,13 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     publishMessage(topic, payload)
     
     plcHmiCommand.value = immediateHmiCommand
+    if (immediateHmiCommand === 1) {
+        setTimeout(() => {
+            if (plcHmiCommand.value === 1) {
+                plcHmiCommand.value = 2
+            }
+        }, 3000)
+    }
     
     // DO NOT optimistically advance localStepIndex here.
     // The UI must wait for the PLC status telemetry (MQTT) to update and change currentStepIndex,
