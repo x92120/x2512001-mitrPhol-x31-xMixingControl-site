@@ -167,6 +167,8 @@ const pendingWeightApproval = ref(false)   // set when PLC step-done fires but w
 //   1 = Run (batch running, all conditions green)
 //   2 = Hold (PAUSE pressed, or app conditions not met)
 const plcHmiCommand = ref(0)  // start as 0 (idle) until operator clicks START
+const hasConfirmedCurrentStep = ref(false)
+const currentStepBypassed = ref(false)
 const dbPhaseMap = ref<Record<string, string>>({})
 
 // ── PLC Handshake Verification ──
@@ -1459,6 +1461,13 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         }
     }
     
+    hasConfirmedCurrentStep.value = true
+    currentStepBypassed.value = skipToleranceCheck || isInterlockFailed
+    
+    const { ok: interlocksOk } = isStepAllGreen(step)
+    const allGreen = currentStepBypassed.value || (interlocksOk && isAppReady.value)
+    const immediateHmiCommand = allGreen ? 4 : 2
+    
     const topic = simCmdTopic(activePlantId.value, 'step_cmd')
     const payload = {
         Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
@@ -1468,7 +1477,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Confirm_Phase: String(step.phase_number || ''),
         Confirm_Step: Number(step.sub_step || 0),
         Cmd_StartTimer: step.step_time ? 1 : 0,
-        HMI_Command: 1, // 1=START (Resume), 2 was incorrectly pausing the PLC
+        HMI_Command: immediateHmiCommand,
         // --- Setpoints ---
         Step_Time_SP: Number(step.step_time || 0),
         Step_Status: 1,
@@ -1485,10 +1494,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
     
     publishMessage(topic, payload)
     
-    // ── Pulse HMI=1 for 3s so backend writes 1 to DB1511+44 and DB1510+0 ──
-    // After 3s, reset to HOLD(2) = PLC resting state until next confirm.
-    plcHmiCommand.value = 1
-    setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
+    plcHmiCommand.value = immediateHmiCommand
     
     // DO NOT optimistically advance localStepIndex here.
     // The UI must wait for the PLC status telemetry (MQTT) to update and change currentStepIndex,
@@ -1677,6 +1683,14 @@ watch(currentStepIndex, (newIdx, oldIdx) => {
         const step = skuSteps.value[newIdx]
         if (step) expandedPhases.value[step.phase_number || '0'] = true
         if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
+        
+        // Reset confirm/bypass flags and pulse run command (1) for 3 seconds when step index advances
+        if (oldIdx !== undefined && newIdx > oldIdx) {
+            plcHmiCommand.value = 1
+            setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
+            hasConfirmedCurrentStep.value = false
+            currentStepBypassed.value = false
+        }
     }
 }, { immediate: true })
 
