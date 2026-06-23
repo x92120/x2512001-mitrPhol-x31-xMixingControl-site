@@ -1380,27 +1380,29 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         return
     }
     
+    let isInterlockFailed = false
     const aCode = String(step.action_code || '')
     const rc = (step.re_code || '').trim()
 
     // ── Case 1: SPP/FH — volume confirmed from QR scan ──────────────────────────
     // Even though we trust the QR label, the scanned volume must still be within
-    // tolerance. If not green → block advance (use Manual Override to bypass).
+    // tolerance. If not green, set isInterlockFailed = true but allow confirmation.
     const scannedVol = scannedVolumeMap.value[rc]
     if (scannedVol != null && (aCode.startsWith('2') || aCode.startsWith('3'))) {
         const requiredWeight = productionRequire(step)
         if (requiredWeight > 0 && !isWeightInTolerance(step, scannedVol)) {
             const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
             const tolLow  = Number(step.low_tol  || (requiredWeight * 0.02))
+            isInterlockFailed = true
             $q.notify({
-                type: 'negative',
-                message: '⚠️ Scanned volume out of tolerance!',
-                caption: `Req: ${requiredWeight.toFixed(3)} kg | Scanned: ${scannedVol.toFixed(3)} kg | Range: ${(requiredWeight - tolLow).toFixed(3)}–${(requiredWeight + tolHigh).toFixed(3)} kg. Use Override to bypass.`,
-                position: 'center',
+                type: 'warning',
                 icon: 'scale',
-                timeout: 6000
+                message: '⚠️ Scanned volume out of tolerance!',
+                caption: `Req: ${requiredWeight.toFixed(3)} kg | Scanned: ${scannedVol.toFixed(3)} kg | Range: ${(requiredWeight - tolLow).toFixed(3)}–${(requiredWeight + tolHigh).toFixed(3)} kg — Confirmed without Auto Next.`,
+                position: 'center',
+                timeout: 5000,
+                actions: [{ label: 'OK', color: 'white' }]
             })
-            return // BLOCK ADVANCE — require is not green
         }
     }
 
@@ -1416,23 +1418,21 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
             if (liveWt > 0 && !isWeightInTolerance(step, liveWt)) {
                 const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
                 const tolLow  = Number(step.low_tol  || (requiredWeight * 0.02))
+                isInterlockFailed = true
                 $q.notify({
-                    type: 'negative',
+                    type: 'warning',
                     icon: 'scale',
-                    message: '⚠️ Weight (Require) not in range — cannot confirm',
-                    caption: `Req: ${requiredWeight.toFixed(2)} kg | Act: ${liveWt.toFixed(2)} kg | Range: ${(requiredWeight - tolLow).toFixed(2)}–${(requiredWeight + tolHigh).toFixed(2)} kg`,
+                    message: '⚠️ Weight (Require) not in range!',
+                    caption: `Req: ${requiredWeight.toFixed(2)} kg | Act: ${liveWt.toFixed(2)} kg | Range: ${(requiredWeight - tolLow).toFixed(2)}–${(requiredWeight + tolHigh).toFixed(2)} kg — Confirmed without Auto Next.`,
                     position: 'center',
-                    timeout: 0,
+                    timeout: 5000,
                     actions: [{ label: 'OK', color: 'white' }]
                 })
-                return  // BLOCK ADVANCE — Require not green
             }
         }
     }
 
-    
     // ── Process Interlock: Temp / Agitator / HighShear / Brix / pH ────────────
-    let isInterlockFailed = false
     if (!skipToleranceCheck) {
         const { ok, failed } = isStepAllGreen(step)
         if (!ok) {
