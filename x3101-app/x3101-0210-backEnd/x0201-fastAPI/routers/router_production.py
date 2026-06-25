@@ -1178,10 +1178,24 @@ def get_items_for_ingredient(plan_id: str, re_code: str, db: Session = Depends(g
 
 @router.get("/prebatch-items/by-batch/{batch_id}")
 def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
-    """Get all items for a batch — single query."""
+    """Get all items for a batch — single query.
+    If item.wh is null, falls back to the Ingredient table's warehouse field.
+    """
     items = db.query(models.PreBatchItem).filter(
         models.PreBatchItem.batch_id == batch_id
     ).all()
+
+    # Build fallback WH map from Ingredient table for items missing wh
+    missing_re_codes = [item.re_code for item in items if not item.wh and item.re_code]
+    ingredient_wh_map: dict = {}
+    if missing_re_codes:
+        ings = db.query(models.Ingredient).filter(
+            models.Ingredient.re_code.in_(missing_re_codes)
+        ).all()
+        for ing in ings:
+            if ing.re_code and ing.warehouse:
+                ingredient_wh_map[ing.re_code.strip()] = ing.warehouse.strip().upper()
+
     return [{
         "id": item.id,
         "batch_db_id": item.batch_db_id,
@@ -1191,7 +1205,8 @@ def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
         "ingredient_name": item.ingredient_name,
         "required_volume": item.required_volume,
         "total_packaged": round(float(item.net_volume or 0), 4),
-        "wh": item.wh,
+        # Fallback: use Ingredient.warehouse if item.wh is null
+        "wh": item.wh or ingredient_wh_map.get((item.re_code or '').strip(), None),
         "status": item.status,
         "packing_status": item.packing_status or 0,
         "batch_record_id": item.batch_record_id,

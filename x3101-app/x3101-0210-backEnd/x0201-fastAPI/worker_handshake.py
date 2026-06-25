@@ -18,6 +18,7 @@ import asyncio
 import logging
 import struct
 import threading
+import time
 from datetime import datetime
 from typing import Optional, Dict
 
@@ -176,6 +177,81 @@ async def _poll_handshake_loop(interval: float = 1.0):
         await asyncio.sleep(interval)
 
     logger.info("🛑 Handshake worker stopped")
+
+
+def check_and_complete_batch(db: Session, batch_id: str):
+    """
+    Checks if the last step in the SKU steps for this batch is logged.
+    If so, updates the batch status to 'Done' and done = True.
+    """
+    try:
+        from sqlalchemy import text
+        import re
+
+        # 1. Fetch batch info
+        batch = db.execute(text("""
+            SELECT sku_id, status FROM production_batches 
+            WHERE batch_id = :bid LIMIT 1
+        """), {"bid": batch_id}).fetchone()
+        if not batch or batch[1] != 'In-Progress':
+            return False
+
+        sku_id = batch[0]
+        # 2. Fetch recipe steps
+        steps = db.execute(text("""
+            SELECT phase_number, sub_step, phase_id FROM sku_steps WHERE sku_id = :sku_id
+        """), {"sku_id": sku_id}).fetchall()
+        if not steps:
+            return False
+
+        # 3. Sort recipe steps to identify the last one
+        steps_list = [dict(s._mapping) for s in steps]
+        sorted_steps = sorted(steps_list, key=lambda s: (
+            int(re.sub(r'^[a-zA-Z]+', '', str(s["phase_number"] or '0').strip()) or 0),
+            s["sub_step"] or 0
+        ))
+        if not sorted_steps:
+            return False
+
+        last_step = sorted_steps[-1]
+        pnum = last_step["phase_number"]
+        pid = last_step["phase_id"]
+        sub = last_step["sub_step"]
+
+        # Normalize phase ID for matching
+        def norm_pnum(s: str) -> str:
+            return re.sub(r'^(p)(0+)', lambda m: m.group(1), s) if s else s
+
+        pnorm = norm_pnum(pnum)
+
+        # 4. Check if this last step is logged in production_step_logs
+        log = db.execute(text("""
+            SELECT id FROM production_step_logs 
+            WHERE batch_id = :bid 
+              AND step_id = :sub
+              AND (phase_id = :pid OR phase_id = :pnum OR phase_id = :pnorm)
+            LIMIT 1
+        """), {
+            "bid": batch_id,
+            "sub": sub,
+            "pid": pid,
+            "pnum": pnum,
+            "pnorm": pnorm
+        }).fetchone()
+
+        if log:
+            result = db.execute(text("""
+                UPDATE production_batches
+                SET status = 'Done', done = 1, updated_at = NOW()
+                WHERE batch_id = :batch_id AND status = 'In-Progress'
+            """), {"batch_id": batch_id})
+            db.commit()
+            if result.rowcount > 0:
+                logger.info(f"🏁 Batch {batch_id} auto-completed → Done (detected last step log)")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to check batch completion for {batch_id}: {e}")
+    return False
 
 
 async def _log_step_completion(
@@ -366,22 +442,7 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
 
 
         # 7. Auto-complete batch when last step is done
-        total_steps = struct.unpack_from('>h', header, 46)[0] if header else 0
-        if total_steps > 0 and step_no >= total_steps:
-            try:
-                result = db.execute(text("""
-                    UPDATE production_batches
-                    SET status = 'Done', updated_at = NOW()
-                    WHERE batch_id = :batch_id AND status = 'In-Progress'
-                """), {"batch_id": batch_id})
-                db.commit()
-                if result.rowcount > 0:
-                    logger.info(f"🏁 Batch {batch_id} auto-completed → Done ({step_no}/{total_steps} steps)")
-                else:
-                    logger.info(f"ℹ️ Batch {batch_id} last step done but status was not In-Progress")
-            except Exception as done_err:
-                logger.error(f"Failed to auto-complete batch {batch_id}: {done_err}")
-                db.rollback()
+        check_and_complete_batch(db, batch_id)
     except Exception as e:
         db.rollback()
         logger.error(f"Could not log step {step_no} to DB: {e}")
@@ -430,14 +491,15 @@ def _on_step_cmd_message(client, userdata, message):
             db1511 = get_db_number('full_recipe', plant_id)
             ok1 = plc.db_write(db1511, 44, struct.pack('>h', hmi_val))
 
-            # Write DB1510+0
+            # Write DB1510+22 (HMI_Command offset in step_cmd DB)
+            # DB1510 layout: +0=Batch_ID(String[20]=22bytes), +22=HMI_Command(Int2), +24=Step_No(Int2)
             db1510 = get_db_number('step_cmd', plant_id)
-            ok2 = plc.db_write(db1510, 0, struct.pack('>hh', hmi_val, next_val))
+            ok2 = plc.db_write(db1510, 22, struct.pack('>h', hmi_val))
 
             logger.info(
                 f"[CMD] Plant {plant_id} | {cmd} → hmi_command={hmi_val} "
                 f"| DB{db1511}+44={'OK' if ok1 else 'FAIL'} "
-                f"| DB{db1510}+0={'OK' if ok2 else 'FAIL'}"
+                f"| DB{db1510}+22={'OK' if ok2 else 'FAIL'}"
             )
             return
 
@@ -458,6 +520,14 @@ def _on_step_cmd_message(client, userdata, message):
             f"| Phase={phase_id} | Step={step_id} | re_code={re_code} | qty={target_val}"
         )
 
+        # Extract Actual_Qty from payload if provided
+        actual_qty_val = payload.get("Actual_Qty")
+        if actual_qty_val is not None:
+            try:
+                actual_qty_val = float(actual_qty_val)
+            except Exception:
+                actual_qty_val = None
+
         # Log to database synchronously (this runs in a thread, so sync DB is fine)
         _sync_log_step_cmd(
             plant_id=plant_id,
@@ -467,6 +537,7 @@ def _on_step_cmd_message(client, userdata, message):
             action_code=action_code,
             re_code=re_code,
             target_value=target_val,
+            actual_value=actual_qty_val,
         )
 
     except Exception as e:
@@ -481,6 +552,7 @@ def _sync_log_step_cmd(
     action_code: str,
     re_code: str,
     target_value: float,
+    actual_value: float = None,
 ):
     """Write operator step command to production_step_logs."""
     db: Session = SessionLocal()
@@ -513,9 +585,12 @@ def _sync_log_step_cmd(
             except Exception:
                 pass
 
-        # 3. Read actual weight from DB1517/27/37 if available, otherwise fallback to target_value
-        actual_val = target_value
+        # 3. Read actual weight from payload, DB1517/27/37 if available, otherwise fallback to target_value
+        actual_val = actual_value if actual_value is not None else target_value
         try:
+            if actual_value is not None:
+                # If actual_value is explicitly passed, skip PLC DB1517 reading
+                raise ValueError("Actual value provided via payload")
             from plc_service import read_full_actuals
             actuals = read_full_actuals(plant_id)
             if actuals and actuals.get('steps'):
@@ -574,6 +649,7 @@ def _sync_log_step_cmd(
             f"📝 step_cmd logged — batch={batch_id} phase={phase_id} "
             f"step={step_id} re_code={re_code} operator={scan_user} operator2={active_user}"
         )
+        check_and_complete_batch(db, batch_id)
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to log step_cmd to DB: {e}")
@@ -582,39 +658,59 @@ def _sync_log_step_cmd(
 
 
 def _start_mqtt_step_cmd_subscriber():
-    """Start a background MQTT client that subscribes to all plant step_cmd topics."""
-    global _mqtt_sub_client
-    try:
-        import random, string
-        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        client = mqtt_client.Client(client_id=f"xmixing-step-cmd-{suffix}", clean_session=True)
-        client.username_pw_set(MQTT_USER, MQTT_PASS)
-        client.on_message = _on_step_cmd_message
+    """Start a background MQTT client that subscribes to all plant step_cmd topics.
+    Retries automatically every 5s if broker is not reachable at startup.
+    Uses connect_async + loop_start to avoid thread hanging on slow CONNACK.
+    """
+    global _mqtt_sub_client, _running
+    retry_delay = 5
+    while _running:
+        client = None
+        try:
+            import random, string
+            suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            client = mqtt_client.Client(client_id=f"xmixing-step-cmd-{suffix}", clean_session=True)
+            client.username_pw_set(MQTT_USER, MQTT_PASS)
+            client.on_message = _on_step_cmd_message
 
-        def on_connect(c, userdata, flags, rc):
-            if rc == 0:
-                import os as _os
-                _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "").strip("/")
-                if _prefix.upper() == "SIM":
-                    topics = [("sim/plant/+/step_cmd", 1), ("sim/plant/+/cmd", 1)]
+            def on_connect(c, userdata, flags, rc):
+                if rc == 0:
+                    import os as _os
+                    _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "").strip("/")
+                    if _prefix.upper() == "SIM":
+                        topics = [("sim/plant/+/step_cmd", 1), ("sim/plant/+/cmd", 1)]
+                    else:
+                        prefix_part = f"{_prefix}/" if _prefix else ""
+                        topics = [
+                            (f"{prefix_part}mixing/plant/+/step_cmd", 1),
+                            (f"{prefix_part}mixing/plant/+/cmd", 1),
+                        ]
+                    c.subscribe(topics)
+                    topic_names = [t[0] for t in topics]
+                    logger.info(f"📡 step_cmd/cmd MQTT subscriber connected → {topic_names}")
                 else:
-                    prefix_part = f"{_prefix}/" if _prefix else ""
-                    topics = [
-                        (f"{prefix_part}mixing/plant/+/step_cmd", 1),
-                        (f"{prefix_part}mixing/plant/+/cmd", 1),
-                    ]
-                c.subscribe(topics)
-                topic_names = [t[0] for t in topics]
-                logger.info(f"📡 step_cmd/cmd MQTT subscriber connected → {topic_names}")
-            else:
-                logger.error(f"step_cmd MQTT subscriber connect failed: rc={rc}")
+                    logger.error(f"step_cmd MQTT subscriber connect failed: rc={rc}")
 
-        client.on_connect = on_connect
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-        _mqtt_sub_client = client
-        client.loop_forever()
-    except Exception as e:
-        logger.error(f"step_cmd MQTT subscriber error: {e}")
+            def on_disconnect(c, userdata, rc):
+                logger.warning(f"step_cmd MQTT subscriber disconnected (rc={rc})")
+
+            client.on_connect = on_connect
+            client.on_disconnect = on_disconnect
+            logger.info(f"step_cmd MQTT subscriber: connecting to {MQTT_HOST}:{MQTT_PORT}...")
+            client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
+            client.loop_start()  # Non-blocking network loop
+            _mqtt_sub_client = client
+            # Keep thread alive, checking if still running every second
+            while _running:
+                time.sleep(1)
+            client.loop_stop()
+        except Exception as e:
+            logger.error(f"step_cmd MQTT subscriber error: {e}. Retrying in {retry_delay}s...")
+            if client:
+                try: client.loop_stop()
+                except: pass
+        if _running:
+            time.sleep(retry_delay)
 
 
 # ─── MQTT MIX-xx-PUT Subscriber (App → DB1510 Interlock) ─────────────────────
@@ -623,8 +719,9 @@ def _start_mqtt_step_cmd_subscriber():
 # so that PLC can read the interlock state from the Data Block.
 #
 # DB1510 Layout (write target):
-#   +0  hmi_command  Int(2)   — 1=Run, 2=HOLD (app not ready), 0=Idle
-#   +2  next_step_cmd Int(2)  — 1=Allow advance, 0=Block
+#   +0   Batch_ID      String[20](22) — DO NOT OVERWRITE!
+#   +22  HMI_Command   Int(2)   — 1=Run, 2=HOLD (app not ready), 0=Idle
+#   +24  Step_No       Int(2)   — current step number
 
 _put_subscriber_thread: Optional[threading.Thread] = None
 _put_sub_client: Optional[any] = None
@@ -633,10 +730,11 @@ _put_sub_client: Optional[any] = None
 def _on_put_message(client, userdata, message):
     """Receive MIX-xx-PUT from frontend and write hmi_command to both:
       - DB1511 offset +44  (HMI_Command in recipe header — main PLC reads this)
-      - DB1510 offset +0   (Control Equipment PLC reads via PUT-GET)
+      - DB1510 offset +22  (Control Equipment PLC reads via PUT-GET)
 
     DB1511 Header:  +44 HMI_Command Int(2)
-    DB1510 Layout:   +0 HMI_Command Int(2), +2 next_step_cmd Int(2)
+    DB1510 Layout:  +0=Batch_ID(String[20]=22bytes), +22=HMI_Command Int(2), +24=Step_No Int(2)
+    IMPORTANT: DB1510+0 is Batch_ID — writing there corrupts the string field!
     """
     try:
         topic = message.topic
@@ -664,15 +762,16 @@ def _on_put_message(client, userdata, message):
         db1511 = get_db_number('full_recipe', plant_id)
         ok1 = plc.db_write(db1511, 44, struct.pack('>h', hmi_command))
 
-        # 2. ALSO write to DB1510 offset +0 (Control Equipment PLC via PUT-GET)
-        #    Layout: +0 HMI_Command(Int16), +2 next_step_cmd(Int16)
+        # 2. ALSO write to DB1510 offset +22 (Control Equipment PLC via PUT-GET)
+        #    DB1510 layout: +0=Batch_ID(String[20]=22bytes), +22=HMI_Command(Int16), +24=Step_No(Int16)
+        #    NOTE: Do NOT write at +0 — that overwrites the Batch_ID S7 string field!
         db1510 = get_db_number('step_cmd', plant_id)
-        ok2 = plc.db_write(db1510, 0, struct.pack('>hh', hmi_command, next_step_cmd))
+        ok2 = plc.db_write(db1510, 22, struct.pack('>h', hmi_command))
 
         logger.info(
             f"[PUT] Plant {plant_id} | hmi_command={hmi_command} next_step_cmd={next_step_cmd} "
             f"| DB{db1511}+44={'OK' if ok1 else 'FAIL'} "
-            f"| DB{db1510}+0={'OK' if ok2 else 'FAIL'}"
+            f"| DB{db1510}+22={'OK' if ok2 else 'FAIL'}"
         )
 
     except Exception as e:
@@ -680,46 +779,69 @@ def _on_put_message(client, userdata, message):
 
 
 def _start_mqtt_put_subscriber():
-    """Start background MQTT client subscribing to MIX-xx-PUT heartbeat topics."""
-    global _put_sub_client
-    try:
-        import random, string
-        suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        client = mqtt_client.Client(client_id=f"xmixing-put-sub-{suffix}", clean_session=True)
-        client.username_pw_set(MQTT_USER, MQTT_PASS)
-        client.on_message = _on_put_message
+    """Start background MQTT client subscribing to MIX-xx-PUT heartbeat topics.
+    Retries automatically every 5s if broker is not reachable at startup.
+    Uses connect_async + loop_start to avoid thread hanging on slow CONNACK.
+    """
+    global _put_sub_client, _running
+    retry_delay = 5
+    while _running:
+        client = None
+        try:
+            import random, string
+            suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+            client = mqtt_client.Client(client_id=f"xmixing-put-sub-{suffix}", clean_session=True)
+            client.username_pw_set(MQTT_USER, MQTT_PASS)
+            client.on_message = _on_put_message
 
-        def on_connect(c, userdata, flags, rc):
-            if rc == 0:
-                import os as _os
-                _prefix = _os.getenv('MQTT_TOPIC_PREFIX', '').strip('/')
-                # MIX-xx-PUT uses dash separators, not slash — must subscribe broadly
-                # and filter in _on_put_message by topic name
-                if _prefix:
-                    topic = f"{_prefix}/#"
+            def on_connect(c, userdata, flags, rc):
+                if rc == 0:
+                    import os as _os
+                    _prefix = _os.getenv('MQTT_TOPIC_PREFIX', '').strip('/')
+                    if _prefix:
+                        topic = f"{_prefix}/#"
+                    else:
+                        topic = "#"
+                    c.subscribe(topic, qos=0)
+                    logger.info(f"📡 MIX-PUT subscriber connected → subscribed to '{topic}' (filtering MIX-*-PUT)")
                 else:
-                    topic = "#"
-                c.subscribe(topic, qos=0)
-                logger.info(f"📡 MIX-PUT subscriber connected → subscribed to '{topic}' (filtering MIX-*-PUT)")
-            else:
-                logger.error(f"MIX-PUT subscriber connect failed: rc={rc}")
+                    logger.error(f"MIX-PUT subscriber connect failed: rc={rc}")
 
-        client.on_connect = on_connect
-        client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
-        _put_sub_client = client
-        client.loop_forever()
-    except Exception as e:
-        logger.error(f"MIX-PUT subscriber error: {e}")
+            def on_disconnect(c, userdata, rc):
+                logger.warning(f"MIX-PUT subscriber disconnected (rc={rc})")
+
+            client.on_connect = on_connect
+            client.on_disconnect = on_disconnect
+            logger.info(f"MIX-PUT subscriber: connecting to {MQTT_HOST}:{MQTT_PORT}...")
+            client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
+            client.loop_start()  # Non-blocking network loop
+            _put_sub_client = client
+            # Keep thread alive, checking if still running every second
+            while _running:
+                time.sleep(1)
+            client.loop_stop()
+        except Exception as e:
+            logger.error(f"MIX-PUT subscriber error: {e}. Retrying in {retry_delay}s...")
+            if client:
+                try: client.loop_stop()
+                except: pass
+        if _running:
+            time.sleep(retry_delay)
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 def start_handshake_worker():
     """Start the background handshake polling task and MQTT subscribers."""
-    global _task, _mqtt_subscriber_thread, _put_subscriber_thread
+    global _task, _mqtt_subscriber_thread, _put_subscriber_thread, _running
     if _task is not None and not _task.done():
         logger.info("Handshake worker is already running")
         return
+
+    # ⚠️ Set _running=True BEFORE starting threads.
+    # Subscriber threads check `while _running` — if False they exit immediately.
+    # _poll_handshake_loop also sets this, but threads may start before the coroutine runs.
+    _running = True
 
     loop = asyncio.get_event_loop()
     _task = loop.create_task(_poll_handshake_loop())

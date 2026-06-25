@@ -358,6 +358,12 @@ def send_step_command(command: DB1510StepCommand, db: Session = Depends(get_db))
         })
         db.commit()
         logger.info(f"Step log saved for batch={command.Batch_ID} phase={getattr(command, 'Phase_ID', '')} step={command.Step_ID} operator={scan_user} operator2={active_user}")
+        
+        try:
+            from worker_handshake import check_and_complete_batch
+            check_and_complete_batch(db, batch_id)
+        except Exception as complete_err:
+            logger.warning(f"Could not check batch completion in step command: {complete_err}")
     except Exception as log_err:
         logger.warning(f"Could not save step log: {log_err}")
         db.rollback()

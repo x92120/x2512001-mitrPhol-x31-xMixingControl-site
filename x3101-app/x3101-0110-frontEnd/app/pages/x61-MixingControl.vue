@@ -490,6 +490,19 @@ const fetchStampTimes = async (batchId: string) => {
             }
         }
 
+        // Build QC records map
+        const qcByStep: Record<number, { brix?: number | null, ph?: number | null }> = {}
+        const qcRecords = res?.qc_records || []
+        for (const qc of qcRecords) {
+            const sid = Number(qc.step_id)
+            if (!isNaN(sid)) {
+                qcByStep[sid] = {
+                    brix: qc.brix_actual,
+                    ph: qc.ph_actual
+                }
+            }
+        }
+
         // Merge into skuSteps — match by phase_id (from PLC) or phase_number
         skuSteps.value = skuSteps.value.map(step => {
             const sid = step.sub_step
@@ -497,6 +510,9 @@ const fetchStampTimes = async (batchId: string) => {
             const key2 = `${step.phase_number || ''}__${sid}`          // "p010__10" (raw)
             const key2n = `${normPnum(step.phase_number || '')}__${sid}` // "p10__10" (normalized)
             const ts = stampByKey[key1] || stampByKey[key2] || stampByKey[key2n]
+            
+            const qc = qcByStep[sid] || {}
+            
             if (ts) {
                 const d = new Date(ts)
                 const matchKey = stampByKey[key1] ? key1 : (stampByKey[key2] ? key2 : key2n)
@@ -510,7 +526,9 @@ const fetchStampTimes = async (batchId: string) => {
                     }),
                     // Merge actual_value from DB logs — this is the persistent source of truth.
                     // PLC DB15x7 is cleared on reset; DB logs survive reset.
-                    actual_volume: (logActual != null && logActual > 0) ? logActual : step.actual_volume,
+                    actual_volume: logActual != null ? logActual : step.actual_volume,
+                    actual_brix: qc.brix !== undefined ? qc.brix : step.actual_brix,
+                    actual_ph: qc.ph !== undefined ? qc.ph : step.actual_ph,
                 }
             } else {
                 // If there's no log entry for this step, clear any stamped completion values
@@ -1126,8 +1144,13 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
         return
     } else if (cmd === 'NEXT_STEP') {
         batchRunning.value = true
-        // Index advance only — plcHmiCommand pulse handled by caller (confirmStepFromRow)
-        localStepIndex.value = currentStepIndex.value + 1
+        // If we are already ahead (e.g. from P30 override), do not snap back
+        if (localStepIndex.value <= currentStepIndex.value) {
+            localStepIndex.value = currentStepIndex.value + 1
+        }
+        if (isPlcConnected.value && localStepIndex.value < skuSteps.value.length) {
+            sendStepToPLC(localStepIndex.value)
+        }
         return
     }
 }
@@ -1275,6 +1298,24 @@ const isWeightInTolerance = (step: any, actualWeight: number) => {
     return actualWeight >= minW && actualWeight <= maxW
 }
 
+const getStepLiveWeight = (step: any) => {
+    if (!step) return 0
+    
+    // 1. If we have a scanned volume from the QR label, ALWAYS use it!
+    const rc = String(step.re_code || '').trim()
+    if (scannedVolumeMap.value[rc] != null) {
+        return scannedVolumeMap.value[rc]
+    }
+    
+    // 2. Fallback to live PLC scales
+    const whType = prebatchWhMap.value[step.re_code] || ''
+    if (whType === 'SPP' || whType === 'FH') {
+        return actualHopperWeight.value
+    } else {
+        return actualTankWeight.value
+    }
+}
+
 // ── Process Interlock: ALL setpoints must be green before step can advance ──
 // Returns { ok: boolean, failed: string[] } — failed lists what's out of range.
 // ── Brix/pH SP parser — handles both "65" (number) and "65-67" (range string) ──
@@ -1368,26 +1409,55 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
         }
     }
 
-    return { ok: failed.length === 0, failed }
-}
-
-
-const getStepLiveWeight = (step: any) => {
-    if (!step) return 0
-    
-    // 1. If we have a scanned volume from the QR label, ALWAYS use it!
-    const rc = String(step.re_code || '').trim()
-    if (scannedVolumeMap.value[rc] != null) {
-        return scannedVolumeMap.value[rc]
-    }
-    
-    // 2. Fallback to live PLC scales
-    const whType = prebatchWhMap.value[step.re_code] || ''
-    if (whType === 'SPP' || whType === 'FH') {
-        return actualHopperWeight.value
+    // 7. QR Scan Requirement check
+    const isFree = isFreeScanPhase(step.phase_number)
+    const hasScanSteps = skuSteps.value.some((s: any) =>
+        s.phase_number === step.phase_number &&
+        (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+        s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+        (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+    )
+    if (isFree && hasScanSteps) {
+        // FREE-SCAN Phase: all SPP/FH manual scan steps in this phase_number must be scanned
+        const matchedPhase = step.phase_number
+        const allFreeScan = skuSteps.value.filter((s: any) =>
+            s.phase_number === matchedPhase &&
+            (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+            s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+            (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+        )
+        const scannedCount = allFreeScan.filter((s: any) => {
+            return (scannedVolumeMap.value[s.re_code] != null) || (s.stamp_time != null && s.stamp_time !== '-')
+        }).length
+        if (scannedCount < allFreeScan.length) {
+            failed.push(`${matchedPhase} QR: only ${scannedCount}/${allFreeScan.length} ingredients scanned`)
+        }
     } else {
-        return actualTankWeight.value
+        // Standard steps: Require this specific step's ingredient to be scanned (if manual SPP/FH)
+        const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
+        if (hasReCode) {
+            const whType = prebatchWhMap.value[step.re_code] || ''
+            if (whType === 'SPP' || whType === 'FH') {
+                const isScanned = (scannedVolumeMap.value[step.re_code] != null) || (step.stamp_time != null && step.stamp_time !== '-')
+                if (!isScanned) {
+                    failed.push(`Barcode: Ingredient ${step.re_code} must be scanned`)
+                }
+            }
+        }
     }
+
+    // 8. Weight (Require) tolerance check
+    const requiredWeight = productionRequire(step)
+    if (requiredWeight > 0) {
+        const liveWt = getStepLiveWeight(step)
+        if (liveWt <= 0 || !isWeightInTolerance(step, liveWt)) {
+            const tolHigh = Number(step.high_tol || (requiredWeight * 0.02))
+            const tolLow  = Number(step.low_tol  || (requiredWeight * 0.02))
+            failed.push(`Weight: ${liveWt.toFixed(2)} kg ≠ SP ${requiredWeight.toFixed(2)} kg (range: ${(requiredWeight - tolLow).toFixed(2)}–${(requiredWeight + tolHigh).toFixed(2)})`)
+        }
+    }
+
+    return { ok: failed.length === 0, failed }
 }
 
 const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
@@ -2076,6 +2146,7 @@ watch([plcActiveBatchId, () => loading.value], async ([plcBatchId, newLoading]) 
                     selectedSkuId.value = null
                     skuSteps.value = []
                     startConfirmed.value = false
+                 scannedVolumeMap.value = {}
                     
                     // Remove query parameters and redirect
                     const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query
@@ -2159,6 +2230,14 @@ let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 const scanBuffer = ref('')
 let scanTimeout: any = null
 
+const isFreeScanPhase = (phaseNumber: any) => {
+    if (!phaseNumber) return false
+    const norm = String(phaseNumber).toLowerCase().replace(/[^0-9]/g, '')
+    const num = parseInt(norm, 10)
+    if (isNaN(num)) return false
+    return num >= 30 && num <= 49
+}
+
 const handleScan = (scannedText: string) => {
     // ── Parse QR JSON — strip newlines/CR that scanners may inject mid-data ──
     const cleanText = scannedText.replace(/[\r\n]/g, '').trim()
@@ -2173,12 +2252,18 @@ const handleScan = (scannedText: string) => {
 
     let matchedStep: any = null
 
-    // ── p030 FREE-SCAN: any p030 ingredient can be scanned in any order ─────────
+    // ── FREE-SCAN: any ingredient in a free-scan phase can be scanned in any order ─────────
     // Uses localStepIndex to advance the UI — works even when PLC is OFFLINE.
-    // When ALL p030 steps scanned, a single NEXT_STEP is sent to PLC (best-effort).
+    // Groups by phase_number — ALL SPP/FH scan steps must be scanned before advancing.
     for (const step of skuSteps.value) {
-        const isP30 = (step.phase_number || '').toLowerCase().includes('p030')
-        if (!isP30) continue
+        const isFree = isFreeScanPhase(step.phase_number)
+        const hasScanSteps = skuSteps.value.some((s: any) =>
+            s.phase_number === step.phase_number &&
+            (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+            s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+            (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+        )
+        if (!(isFree && hasScanSteps)) continue
         const aCode = String(step.action_code || '')
         if (!aCode.startsWith('2') && !aCode.startsWith('3')) continue
 
@@ -2189,10 +2274,11 @@ const handleScan = (scannedText: string) => {
 
         if (isExactMatch || isNameMatch) {
             const rawVol = qrData?.r ?? qrData?.n ?? null
+            const matchedPhase = step.phase_number
             if (rawVol == null) {
                 $q.notify({
                     type: 'warning', icon: 'qr_code',
-                    message: `p030 Scan — no volume: ${step.re_code}`,
+                    message: `${matchedPhase} Scan — no volume: ${step.re_code}`,
                     caption: 'Scan again slowly to capture the volume field.',
                     position: 'top', timeout: 4000
                 })
@@ -2204,18 +2290,52 @@ const handleScan = (scannedText: string) => {
             prebatchWeightMap.value = { ...prebatchWeightMap.value, [step.re_code]: scannedVol }
             scannedVolumeMap.value  = { ...scannedVolumeMap.value,  [step.re_code]: scannedVol }
 
-            // 2. All p030 ingredient steps in this recipe
-            const allP30Steps = skuSteps.value.filter((s: any) =>
-                (s.phase_number || '').toLowerCase().includes('p030') &&
+            // Log this scanned step to the database by publishing step_cmd MQTT message with Actual_Qty
+            const logTopic = simCmdTopic(activePlantId.value, 'step_cmd')
+            const logPayload = {
+                Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
+                Confirm_Phase: String(step.phase_number || ''),
+                Confirm_Step: Number(step.sub_step || 0),
+                Batch_ID: selectedBatchId.value || '-',
+                Phase_ID: String(step.phase_number || ''),
+                Step_ID: Number(step.sub_step || 0),
+                Cmd_StartTimer: 0,
+                HMI_Command: 5, // Bypass/Complete
+                Step_Time_SP: 0,
+                Step_Status: 2, // Completed
+                Material_ID: step.mat_sap_code || '',
+                Re_Code_ID: step.re_code || '',
+                Req_Qty: productionRequire(step),
+                Actual_Qty: scannedVol, // Send the actual scanned volume
+                Cmd_NewStep: false
+            }
+            publishMessage(logTopic, logPayload)
+
+            // Auto-fetch stamp times after database update (approx 1s delay)
+            setTimeout(() => {
+                if (selectedBatchId.value) {
+                    fetchStampTimes(selectedBatchId.value)
+                }
+            }, 1000)
+
+            // 2. All SPP/FH manual-scan steps in this phase_number
+            //    WH filter is intentional — only SPP/FH ingredients require QR scanning.
+            //    NFC Yuzu now shows SPP correctly via backend Ingredient fallback.
+            const matchedPhase = step.phase_number
+            const allFreeScanSteps = skuSteps.value.filter((s: any) =>
+                s.phase_number === matchedPhase &&
                 (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
-                s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
+                s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+                (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
             )
-            const scannedCount = allP30Steps.filter((s: any) => scannedVolumeMap.value[s.re_code] != null).length
-            const allScanned   = scannedCount >= allP30Steps.length && allP30Steps.length > 0
+            const scannedCount = allFreeScanSteps.filter((s: any) => {
+                return (scannedVolumeMap.value[s.re_code] != null) || (s.stamp_time != null && s.stamp_time !== '-')
+            }).length
+            const allScanned   = scannedCount >= allFreeScanSteps.length && allFreeScanSteps.length > 0
 
             $q.notify({
                 type: 'positive',
-                message: `✅ p030: ${step.re_code} — ${scannedCount}/${allP30Steps.length} done`,
+                message: `✅ ${matchedPhase}: ${step.re_code} — ${scannedCount}/${allFreeScanSteps.length} done`,
                 caption: `Volume: ${scannedVol.toFixed(5)} kg | Bag: ${barcodeId}${allScanned ? ' | 🎉 All done!' : ''}`,
                 position: 'top', icon: 'inventory_2', timeout: 3000
             })
@@ -2224,12 +2344,12 @@ const handleScan = (scannedText: string) => {
             const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
 
             if (allScanned) {
-                // All p030 scanned → override UI to show first step of p040 immediately
-                const lastP30Idx = skuSteps.value.reduce((last: number, s: any, i: number) =>
-                    (s.phase_number || '').toLowerCase().includes('p030') ? i : last, stepIdx)
-                const nextIdx = lastP30Idx + 1
+                // All steps in this phase_number scanned → advance past last step of this phase
+                const lastPhaseIdx = skuSteps.value.reduce((last: number, s: any, i: number) =>
+                    s.phase_number === matchedPhase ? i : last, stepIdx)
+                const nextIdx = lastPhaseIdx + 1
                 localStepIndex.value = nextIdx
-                appOverrideStepIndex.value = nextIdx  // ← force UI past PLC P30 telemetry
+                appOverrideStepIndex.value = nextIdx  // ← force UI past PLC telemetry
 
                 // Auto-expand the next phase and scroll after DOM update
                 if (nextIdx < skuSteps.value.length) {
@@ -2239,7 +2359,7 @@ const handleScan = (scannedText: string) => {
                         expandedPhases.value[nextPhase] = true
                         $q.notify({
                             type: 'positive', icon: 'rocket_launch',
-                            message: '🎉 P30 สแกนครบ! → ข้ามไป P40',
+                            message: `🎉 ${matchedPhase} สแกนครบ! → ข้ามไป ${nextPhase}`,
                             caption: `Phase ${nextPhase} Step ${nextStep.sub_step} - กรุณาดำเนินการต่อ`,
                             position: 'center', timeout: 3500
                         })
@@ -2250,12 +2370,12 @@ const handleScan = (scannedText: string) => {
                         })()
                     }
                 }
-                // [PLC-DRIVE MODE] PLC handles p030→p040 transition autonomously
-            } else if (stepIdx >= 0) {
-                // Advance localStepIndex to next step so UI moves forward
-                // Even if this isn't the "current" PLC step — frontend tracks independently for p030
-                if (stepIdx >= localStepIndex.value) {
-                    localStepIndex.value = stepIdx + 1
+                
+                // RESTORE OLD FUNCTION: send NEXT_STEP/next step setpoints to PLC
+                if (isPlcConnected.value && nextIdx < skuSteps.value.length) {
+                    setTimeout(() => {
+                        sendStepToPLC(nextIdx)
+                    }, 600)
                 }
             }
             return
@@ -2277,11 +2397,17 @@ const handleScan = (scannedText: string) => {
         }
     }
 
-    // 2. Fallback: search SPP steps (non-p030) for out-of-order scan
+    // 2. Fallback: search SPP steps (non-free-scan) for out-of-order scan
     if (!matchedStep) {
         for (const step of skuSteps.value) {
-            const isP30 = (step.phase_number || '').toLowerCase().includes('p030')
-            if (isP30) continue  // already handled above
+            const isFree = isFreeScanPhase(step.phase_number)
+            const hasScanSteps = skuSteps.value.some((s: any) =>
+                s.phase_number === step.phase_number &&
+                (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+                s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+                (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+            )
+            if (isFree && hasScanSteps) continue  // already handled above
             const aCode = String(step.action_code || '')
             if (!aCode.startsWith('2') && !aCode.startsWith('3')) continue
             const whType = prebatchWhMap.value[step.re_code] || ''
@@ -2727,6 +2853,7 @@ onMounted(async () => {
 
 // Auto-fetch stamp times whenever batch changes
 watch(selectedBatchId, (newBatchId) => {
+    scannedVolumeMap.value = {} // Clear local scan cache for new batch
     if (newBatchId) {
         fetchStampTimes(newBatchId)
         startStampRefresh()
@@ -3090,17 +3217,17 @@ onUnmounted(() => {
                           <template v-if="(prebatchWhMap[step.re_code] === 'SPP' || prebatchWhMap[step.re_code] === 'FH') && scannedVolumeMap[step.re_code] != null">
                             <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[step.re_code]).toFixed(3) }}</span>
                             <span class="slash">/</span>
-                            <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(3) : '-' }}</span>
+                            <span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(3) : '-' }}</span>
                           </template>
                           <!-- Default: LIVE Hopper scale vs required -->
                           <template v-else>
-                            <span class="act-num" :class="productionRequire(step) && isWeightInTolerance(step, getStepLiveWeight(step)) ? 'text-green-8' : 'text-deep-orange-9'">{{ getStepLiveWeight(step) !== 0 ? Number(getStepLiveWeight(step)).toFixed(2) : '-' }}</span>
+                            <span class="act-num" :class="productionRequire(step) > 0 ? (isWeightInTolerance(step, getStepLiveWeight(step)) ? 'text-green-8' : 'text-deep-orange-9') : ''">{{ getStepLiveWeight(step) !== 0 ? Number(getStepLiveWeight(step)).toFixed(2) : '-' }}</span>
                             <span class="slash">/</span>
-                            <span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
+                            <span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(2) : '-' }}</span>
                           </template>
                         </template>
                         <template v-else>
-                          <span class="act-num">{{ step.actual_volume != null ? Number(step.actual_volume).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ productionRequire(step) ? productionRequire(step).toFixed(2) : '-' }}</span>
+                          <span class="act-num">{{ step.actual_volume != null ? Number(step.actual_volume).toFixed(2) : '-' }}</span><span class="slash">/</span><span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(2) : '-' }}</span>
                         </template>
                       </td>
                       <!-- Temperature -->
