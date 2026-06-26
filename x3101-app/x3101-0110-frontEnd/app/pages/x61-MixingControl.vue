@@ -1156,6 +1156,23 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
 }
 
 
+// ── Clear QC Records for a batch (called on Soft Reset / Kill Batch) ──────────
+// Removes all Brix/pH QC records from the previous run so they do not
+// appear as "ghost" values when the same batch_id is replayed.
+const clearQcRecords = async (batchId: string) => {
+    if (!batchId) return
+    try {
+        await $fetch(`${appConfig.apiBaseUrl}/production-batches/${batchId}/qc-records`, {
+            method: 'DELETE',
+            headers: getAuthHeader() as Record<string, string>
+        })
+        console.log(`[QC] Cleared QC records for batch ${batchId}`)
+    } catch (e) {
+        console.warn('[QC] Could not clear QC records:', e)
+        // Non-fatal — do not block the reset flow
+    }
+}
+
 const killBatch = () => {
     $q.dialog({
         title: 'Confirm Kill Batch',
@@ -1164,8 +1181,11 @@ const killBatch = () => {
         persistent: true,
         color: 'negative'
     }).onOk(async () => {
+        const batchId = selectedBatchId.value
         try {
             $q.loading.show()
+            // Clear QC records first (non-fatal)
+            if (batchId) await clearQcRecords(batchId)
             await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
                 method: 'POST',
                 headers: getAuthHeader() as Record<string, string>
@@ -1203,13 +1223,16 @@ const softResetBatch = () => {
     }
     $q.dialog({
         title: 'Confirm Reset Batch',
-        message: `Are you sure you want to soft-reset batch ${selectedBatchId.value}? This will clear DB15x0 (Step CMD), DB15x1 (Recipe), DB15x7 (Actuals), delete all step logs in database, and reset status back to Pending.`,
+        message: `Are you sure you want to soft-reset batch ${selectedBatchId.value}? This will clear DB15x0 (Step CMD), DB15x1 (Recipe), DB15x7 (Actuals), delete all step logs in database, QC records (Brix/pH), and reset status back to Pending.`,
         cancel: true,
         persistent: true,
         color: 'warning'
     }).onOk(async () => {
+        const batchId = selectedBatchId.value
         try {
             $q.loading.show()
+            // Clear QC records first (non-fatal)
+            if (batchId) await clearQcRecords(batchId)
             const remoteApiBaseUrl = appConfig.apiBaseUrl
             const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${selectedBatchId.value}`, {
                 method: 'POST',
@@ -1217,7 +1240,7 @@ const softResetBatch = () => {
             })
             
             if (res && (res.status === 'success' || res.status === 'partial')) {
-                $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory and database logs cleared.' })
+                $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory, step logs, and QC records cleared.' })
                 
                 // Reset ALL step-tracking state before navigating away
                 localStepIndex.value = 0
@@ -1229,8 +1252,6 @@ const softResetBatch = () => {
                 startConfirmed.value = false
 
                 // ── Clear stale MQTT telemetry immediately ──────────────────────────────
-                // Node-RED polls PLC every ~500ms-1s; don't wait — clear now so
-                // currentStepIndex doesn't restore wrong step from old Phase_ID/Step_ID
                 const pid = activePlantId.value
                 if (plantsData.value[pid]) {
                     plantsData.value[pid] = {
@@ -1411,14 +1432,18 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
 
     // 7. QR Scan Requirement check
     const isFree = isFreeScanPhase(step.phase_number)
+    const stepIsScanning = (String(step.action_code || '').startsWith('2') || String(step.action_code || '').startsWith('3')) &&
+        step.re_code && step.re_code !== '-' && step.re_code.trim() !== '' &&
+        (prebatchWhMap.value[step.re_code] === 'SPP' || prebatchWhMap.value[step.re_code] === 'FH')
     const hasScanSteps = skuSteps.value.some((s: any) =>
         s.phase_number === step.phase_number &&
         (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
         s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
         (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
     )
-    if (isFree && hasScanSteps) {
-        // FREE-SCAN Phase: all SPP/FH manual scan steps in this phase_number must be scanned
+    if (isFree && hasScanSteps && stepIsScanning) {
+        // FREE-SCAN Phase: only check scan-completion for steps that ARE scan steps.
+        // Non-scan steps (RO-Water, Mixing, etc.) in the same phase proceed normally.
         const matchedPhase = step.phase_number
         const allFreeScan = skuSteps.value.filter((s: any) =>
             s.phase_number === matchedPhase &&
@@ -1432,8 +1457,8 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
         if (scannedCount < allFreeScan.length) {
             failed.push(`${matchedPhase} QR: only ${scannedCount}/${allFreeScan.length} ingredients scanned`)
         }
-    } else {
-        // Standard steps: Require this specific step's ingredient to be scanned (if manual SPP/FH)
+    } else if (!isFree || !hasScanSteps) {
+        // Standard (non-free-scan) steps: check this specific step's ingredient only
         const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
         if (hasReCode) {
             const whType = prebatchWhMap.value[step.re_code] || ''
@@ -1702,6 +1727,53 @@ const printProduction = () => {
 
 const isLastStep = computed(() => currentStepIndex.value >= skuSteps.value.length - 1)
 
+// All steps completed = localStepIndex has moved past the last step
+const allStepsDone = computed(() =>
+    skuSteps.value.length > 0 && (localStepIndex.value ?? 0) >= skuSteps.value.length
+)
+
+// ── markBatchDone: call backend to set status = Done ──────────────────────────
+// Uses selectedBatchId (string) with the /complete/ endpoint.
+// Guards against double-calls via batchInfo.value.status check.
+async function markBatchDone(trigger: string = 'auto') {
+    const batchIdStr = selectedBatchId.value
+    if (!batchIdStr) return
+    if (batchInfo.value?.status === 'Done') return  // already done
+    try {
+        const remoteApiBaseUrl = appConfig.apiBaseUrl
+        await $fetch(`${remoteApiBaseUrl}/production-batches/complete/${batchIdStr}`, {
+            method: 'PATCH',
+            headers: getAuthHeader() as Record<string, string>,
+            body: { completed_by: `operator [${trigger}]` }
+        })
+        $q.notify({ type: 'positive', icon: 'check_circle', message: '✅ Batch marked as Done', position: 'top-right', timeout: 4000 })
+        if (batchInfo.value) {
+            batchInfo.value.status = 'Done'
+            batchInfo.value.done = true
+        }
+        console.log(`[Batch Done] ${batchIdStr} → Done (triggered by: ${trigger})`)
+    } catch (e: any) {
+        // 400 "already Done" is OK — just log it
+        const msg = e?.data?.detail || String(e)
+        if (msg.includes('already')) {
+            console.log(`[Batch Done] ${batchIdStr} already Done`)
+            if (batchInfo.value) batchInfo.value.status = 'Done'
+        } else {
+            console.error('[Batch Done] Failed:', e)
+            $q.notify({ type: 'warning', message: 'ไม่สามารถอัปเดต Batch Done ได้ — ตรวจสอบ API', position: 'top-right' })
+        }
+    }
+}
+
+// Auto-trigger Done when all steps are done AND PLC is in Stand By (offline scenario)
+watch(allStepsDone, async (done) => {
+    if (!done) return
+    if (batchInfo.value?.status === 'Done') return
+    // Wait a short moment to ensure the last step stamp_time is written
+    await new Promise(r => setTimeout(r, 1500))
+    await markBatchDone('all-steps-completed')
+})
+
 // ── Passive Tracking State ──
 const currentElapsed = computed(() => Number(plantData.value.Step_Timer || 0))
 const actualBrix = ref<string | number>('')
@@ -1796,7 +1868,28 @@ watch(() => skuSteps.value.length, (newLen, oldLen) => {
     }
 })
 
-// Clear appOverrideStepIndex once PLC MQTT telemetry confirms it has reached or passed
+// ── Rinse Step Notification ──────────────────────────────────────────────────
+// Notify operator when the active step is a manual MIX/rinse step (e.g. กลั้วภาชนะด้วย RO water)
+// These steps have no SPP/FH scan requirement → operator must press ▶ manually to advance.
+watch(currentStep, (step) => {
+    if (!step) return
+    const aCode = String(step.action_code || '')
+    const reCode = String(step.re_code || '').toLowerCase()
+    // Only notify for explicit rinse steps: action_code 20020 + re_code contains 'RO-Water'
+    const isRinseStep = aCode === '20020' && reCode.includes('ro-water')
+    if (!isRinseStep) return
+    $q.notify({
+        type: 'info',
+        icon: 'water_drop',
+        color: 'cyan-8',
+        message: `🪣 กลั้วสารด้วย RO water`,
+        caption: `Phase ${step.phase_number} Step ${step.sub_step} — ดำเนินการเสร็จแล้วกด ▶ เพื่อไปขั้นตอนต่อไป`,
+        position: 'top-right',
+        timeout: 6000,
+        actions: [{ label: 'เข้าใจแล้ว', color: 'white', handler: () => {} }]
+    })
+}, { immediate: false })
+
 // the overridden phase. Requires mqttBatchOk to prevent false clears when Batch_ID
 // doesn't match (which would snap back to the wrong step via localStepIndex fallback).
 watch(() => ({
@@ -1897,14 +1990,40 @@ const fetchPrebatchWeights = async (batchId: string) => {
         }
         prebatchWeightMap.value = map
         prebatchIdMap.value = idMap
-        prebatchWhMap.value = whMap
-        console.log('[Production Weights] Loaded from batch data:', map)
+        // Build whMap with BOTH original and lowercase-normalized keys for robust lookup
+        const whMapFinal: Record<string, string> = {}
+        for (const [k, v] of Object.entries(whMap)) {
+            whMapFinal[k] = v as string
+            whMapFinal[k.toLowerCase()] = v as string  // fallback for case-insensitive match
+        }
+        prebatchWhMap.value = whMapFinal
+        console.log('[Production Weights] Loaded weights:', map)
+        console.log('[Production Weights] WH map:', whMapFinal)
+        console.log('[Production Weights] ID map:', idMap)
     } catch (e) {
         console.warn('[Production Weights] Could not fetch prebatch items, using standard recipe weights', e)
         prebatchWeightMap.value = {}
         prebatchIdMap.value = {}
         prebatchWhMap.value = {}
     }
+}
+
+/** Lookup WH for a step with case-insensitive + alphanumeric-normalized fallback.
+ * Handles re_code mismatches like "Kelcogel (Gellan Gum" vs "Kelcogel (Gellan Gum)" */
+const getStepWh = (step: any): string => {
+    const rc = (step.re_code || '').trim()
+    if (!rc) return ''
+    // 1. Exact match
+    if (prebatchWhMap.value[rc]) return prebatchWhMap.value[rc]
+    // 2. Case-insensitive match (also catches lowercase keys stored in whMapFinal)
+    const lower = rc.toLowerCase()
+    if (prebatchWhMap.value[lower]) return prebatchWhMap.value[lower]
+    // 3. Alphanumeric-normalized match: strips ALL non-alphanum chars
+    //    catches "Kelcogel (Gellan Gum" vs "Kelcogel (Gellan Gum)" (missing closing paren)
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const rcNorm = norm(rc)
+    const key = Object.keys(prebatchWhMap.value).find(k => norm(k) === rcNorm)
+    return key ? prebatchWhMap.value[key] : ''
 }
 
 // ── Restore Batch from PLC ──
@@ -2235,7 +2354,9 @@ const isFreeScanPhase = (phaseNumber: any) => {
     const norm = String(phaseNumber).toLowerCase().replace(/[^0-9]/g, '')
     const num = parseInt(norm, 10)
     if (isNaN(num)) return false
-    return num >= 30 && num <= 49
+    // p010–p049: free-scan zone (any order within phase_number)
+    // hasScanSteps filter ensures phases without SPP/FH scan steps fall through to normal flow.
+    return num >= 10 && num <= 49
 }
 
 const handleScan = (scannedText: string) => {
@@ -2247,21 +2368,46 @@ const handleScan = (scannedText: string) => {
     // Extract ID: if JSON use 'b' field, otherwise use raw text
     const barcodeId = qrData?.b ?? cleanText
 
-    const normalize = (str: string) => str.toLowerCase().replace(/[-_\s]/g, '')
+    const normalize = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '')
     const barcodeNorm = normalize(barcodeId)
+    // Extract just the ingredient part of barcode (strip batch_id prefix) for reverse-match
+    // e.g. "P260622-01-02-001-NFC Yuzu" → strip "p2606220102001" → "nfcyuzu"
+    // e.g. plain-text "P260622-01-02-001-NFC Yuzu 1216450241000077" → "nfcyuzu1216450241000077"
+    const batchPrefixNorm = normalize(selectedBatchId.value || '')
+    const barcodeIngredientNorm = barcodeNorm.startsWith(batchPrefixNorm) && batchPrefixNorm.length > 0
+        ? barcodeNorm.slice(batchPrefixNorm.length)
+        : barcodeNorm
+    // Also strip digits (SAP codes appended after ingredient name in plain-text labels)
+    // e.g. "nfcyuzu1216450241000077" → "nfcyuzu" to match "nfcyuzudksh"
+    const barcodeIngredientAlphaNorm = barcodeIngredientNorm.replace(/[0-9]/g, '')
 
     let matchedStep: any = null
 
     // ── FREE-SCAN: any ingredient in a free-scan phase can be scanned in any order ─────────
     // Uses localStepIndex to advance the UI — works even when PLC is OFFLINE.
     // Groups by phase_number — ALL SPP/FH scan steps must be scanned before advancing.
+    //
+    // ⚠️ PHASE GUARD: Only accept scans for the CURRENTLY ACTIVE free-scan phase.
+    // Scanning an ingredient from a different phase → alarm, do NOT record.
+    const activeFreeScanPhase: string | null = (() => {
+        const cur = currentStep.value
+        if (cur && isFreeScanPhase(cur.phase_number)) return String(cur.phase_number)
+        // Fallback: look forward from localStepIndex for first free-scan step
+        const idx = localStepIndex.value ?? 0
+        for (let i = idx; i < skuSteps.value.length; i++) {
+            const s = skuSteps.value[i]
+            if (s && isFreeScanPhase(s.phase_number)) return String(s.phase_number)
+        }
+        return null
+    })()
+
     for (const step of skuSteps.value) {
         const isFree = isFreeScanPhase(step.phase_number)
         const hasScanSteps = skuSteps.value.some((s: any) =>
             s.phase_number === step.phase_number &&
             (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
             s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
-            (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+            (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH')
         )
         if (!(isFree && hasScanSteps)) continue
         const aCode = String(step.action_code || '')
@@ -2270,9 +2416,157 @@ const handleScan = (scannedText: string) => {
         const expectedIds = prebatchIdMap.value[step.re_code] || ''
         const expectedNorm = normalize(step.re_code || '')
         const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
-        const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
+        // isNameMatch checks in order:
+        // 1. barcodeNorm includes full expectedNorm (standard exact-ish match)
+        // 2. expectedNorm starts with barcodeIngredientNorm (JSON short-name barcode: "NFC Yuzu")
+        // 3. expectedNorm starts with barcodeIngredientAlphaNorm (plain-text label: "NFC Yuzu 1216450241000077" → alpha: "nfcyuzu")
+        const isNameMatch = expectedNorm && (
+            barcodeNorm.includes(expectedNorm) ||
+            (barcodeIngredientNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientNorm)) ||
+            (barcodeIngredientAlphaNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientAlphaNorm))
+        )
 
         if (isExactMatch || isNameMatch) {
+            // ⛔ PHASE GUARD: only allow scan if ingredient belongs to the CURRENT active free-scan phase
+            const wrongPhase = !activeFreeScanPhase || step.phase_number !== activeFreeScanPhase
+            if (wrongPhase) {
+                // 🔄 CROSS-PHASE RE-CODE CHECK:
+                // Some SKUs reuse the same ingredient (re_code) across multiple phases.
+                // If the matched step is in a different phase, check whether the SAME re_code
+                // also exists as a scan step in the currently active phase.
+                // If yes → redirect the match to that step (no alarm).
+                // If no  → this is a genuine cross-phase error → alarm.
+                if (activeFreeScanPhase) {
+                    const sameReInActivePhase = skuSteps.value.find((s: any) =>
+                        s.phase_number === activeFreeScanPhase &&
+                        (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+                        s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+                        normalize(s.re_code) === normalize(step.re_code) &&
+                        (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH')
+                    )
+                    if (sameReInActivePhase) {
+                        // Redirect: treat this scan as if it matched the active-phase step
+                        // Continue loop with the active-phase step by overriding `step` is not possible
+                        // — so we fall-through by replacing the matched `step` reference via a local var
+                        // and jumping directly to the processing block below using the redirected step.
+                        const redirectedStep = sameReInActivePhase
+
+                        const rawVol2 = qrData?.r ?? qrData?.n ?? null
+                        const matchedPhase2 = redirectedStep.phase_number
+                        if (rawVol2 == null) {
+                            $q.notify({
+                                type: 'warning', icon: 'qr_code',
+                                message: `${matchedPhase2} Scan — no volume: ${redirectedStep.re_code}`,
+                                caption: 'Scan again slowly to capture the volume field.',
+                                position: 'top', timeout: 4000
+                            })
+                            return
+                        }
+
+                        const scannedVol2 = Number(rawVol2)
+                        const redirectScanKey = `${redirectedStep.phase_number}|${redirectedStep.re_code}`
+                        prebatchWeightMap.value = { ...prebatchWeightMap.value, [redirectedStep.re_code]: scannedVol2 }
+                        scannedVolumeMap.value  = { ...scannedVolumeMap.value, [redirectScanKey]: scannedVol2 }
+
+                        const logTopic2 = simCmdTopic(activePlantId.value, 'step_cmd')
+                        const logPayload2 = {
+                            Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
+                            Confirm_Phase: String(redirectedStep.phase_number || ''),
+                            Confirm_Step: Number(redirectedStep.sub_step || 0),
+                            Batch_ID: selectedBatchId.value || '-',
+                            Phase_ID: String(redirectedStep.phase_number || ''),
+                            Step_ID: Number(redirectedStep.sub_step || 0),
+                            Cmd_StartTimer: 0,
+                            HMI_Command: 5,
+                            Step_Time_SP: 0,
+                            Step_Status: 2,
+                            Material_ID: redirectedStep.mat_sap_code || '',
+                            Re_Code_ID: redirectedStep.re_code || '',
+                            Req_Qty: productionRequire(redirectedStep),
+                            Actual_Qty: scannedVol2,
+                            Cmd_NewStep: false
+                        }
+                        publishMessage(logTopic2, logPayload2)
+
+                        setTimeout(() => {
+                            if (selectedBatchId.value) fetchStampTimes(selectedBatchId.value)
+                        }, 1000)
+
+                        // ✅ Same logic as primary free-scan block (keep in sync!)
+                        const allFreeScanSteps2 = skuSteps.value.filter((s: any) =>
+                            s.phase_number === matchedPhase2 &&
+                            (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+                            s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
+                        )
+                        const scannedCount2 = allFreeScanSteps2.filter((s: any) => {
+                            // Phase-scoped key — no stamp_time to avoid cross-phase/historical contamination
+                            const phaseScanKey2 = `${s.phase_number}|${s.re_code}`
+                            return scannedVolumeMap.value[phaseScanKey2] != null
+                        }).length
+                        const allScanned2 = scannedCount2 >= allFreeScanSteps2.length && allFreeScanSteps2.length > 0
+                        console.log(`[FreeScan2] Phase ${matchedPhase2}: ${scannedCount2}/${allFreeScanSteps2.length} scanned | allScanned2=${allScanned2}`,
+                            allFreeScanSteps2.map((s: any) => {
+                                const k = `${s.phase_number}|${s.re_code}`
+                                return `${s.re_code.trim()}(scanned:${scannedVolumeMap.value[k] != null})`
+                            }))
+
+                        $q.notify({
+                            type: 'positive',
+                            message: `✅ ${matchedPhase2}: ${redirectedStep.re_code} — ${scannedCount2}/${allFreeScanSteps2.length} done`,
+                            caption: `Volume: ${scannedVol2.toFixed(5)} kg | Bag: ${barcodeId}${allScanned2 ? ' | 🎉 All done!' : ''}`,
+                            position: 'top', icon: 'inventory_2', timeout: 3000
+                        })
+
+                        if (allScanned2) {
+                            const scannedIdxList2 = allFreeScanSteps2.map((s: any) =>
+                                skuSteps.value.findIndex((sk: any) => Number(sk.id) === Number(s.id))
+                            ).filter((i: number) => i >= 0)
+                            const stepIdx2 = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(redirectedStep.id))
+                            const maxScannedIdx2 = scannedIdxList2.length > 0 ? Math.max(...scannedIdxList2) : stepIdx2
+                            const nextIdx2 = maxScannedIdx2 + 1
+                            localStepIndex.value = nextIdx2
+                            appOverrideStepIndex.value = nextIdx2
+
+                            if (nextIdx2 < skuSteps.value.length) {
+                                const nextStep2 = skuSteps.value[nextIdx2]
+                                if (nextStep2) {
+                                    const nextPhase2 = nextStep2.phase_number || '0'
+                                    const isSamePhase2 = nextPhase2 === matchedPhase2
+                                    expandedPhases.value[nextPhase2] = true
+                                    $q.notify({
+                                        type: 'positive', icon: 'rocket_launch',
+                                        message: `🎉 ${matchedPhase2} สแกนครบ! → ${isSamePhase2 ? 'ต่อ' : 'ข้ามไป'} ${nextPhase2}`,
+                                        caption: `Phase ${nextPhase2} Step ${nextStep2.sub_step} - กรุณาดำเนินการต่อ`,
+                                        position: 'center', timeout: 3500
+                                    });
+                                    (async () => { await nextTick(); scrollToActiveStep() })()
+                                }
+                            }
+
+                            if (isPlcConnected.value && nextIdx2 < skuSteps.value.length) {
+                                setTimeout(() => { sendStepToPLC(nextIdx2) }, 600)
+                            }
+                        }
+
+                        return
+                    }
+                }
+
+                // Genuine cross-phase error — re_code does NOT exist in the active phase
+                const expectedPhaseMsg = activeFreeScanPhase
+                    ? `ขณะนี้กำลังทำ Phase ${activeFreeScanPhase} อยู่`
+                    : `ขณะนี้ไม่ได้อยู่ใน Phase สแกนอิสระ`
+                $q.notify({
+                    type: 'negative',
+                    icon: 'block',
+                    message: `⛔ สแกนผิด Phase!`,
+                    caption: `"${step.re_code}" อยู่ใน Phase ${step.phase_number} — ${expectedPhaseMsg}`,
+                    position: 'center',
+                    timeout: 5000,
+                })
+                return
+            }
+
             const rawVol = qrData?.r ?? qrData?.n ?? null
             const matchedPhase = step.phase_number
             if (rawVol == null) {
@@ -2286,9 +2580,12 @@ const handleScan = (scannedText: string) => {
             }
 
             // 1. Record the scanned volume
+            //    Key = "phase_number|re_code" to prevent cross-phase contamination
+            //    (e.g. W100 CG scanned in p015 must NOT count as scanned in p020)
             const scannedVol = Number(rawVol)
+            const scanKey = `${step.phase_number}|${step.re_code}`
             prebatchWeightMap.value = { ...prebatchWeightMap.value, [step.re_code]: scannedVol }
-            scannedVolumeMap.value  = { ...scannedVolumeMap.value,  [step.re_code]: scannedVol }
+            scannedVolumeMap.value  = { ...scannedVolumeMap.value, [scanKey]: scannedVol }
 
             // Log this scanned step to the database by publishing step_cmd MQTT message with Actual_Qty
             const logTopic = simCmdTopic(activePlantId.value, 'step_cmd')
@@ -2318,20 +2615,30 @@ const handleScan = (scannedText: string) => {
                 }
             }, 1000)
 
-            // 2. All SPP/FH manual-scan steps in this phase_number
-            //    WH filter is intentional — only SPP/FH ingredients require QR scanning.
-            //    NFC Yuzu now shows SPP correctly via backend Ingredient fallback.
-            const matchedPhase = step.phase_number
-            const allFreeScanSteps = skuSteps.value.filter((s: any) =>
-                s.phase_number === matchedPhase &&
-                (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
-                s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
-                (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
-            )
+            // 2. All SPP/FH manual-scan steps in this phase (WH-based — correct business logic)
+            //    Now that backend returns correct WH from Ingredient master, this is reliable.
+            //    MIX ingredients use action_code 1x → excluded by action_code check above.
+            const allFreeScanSteps = skuSteps.value.filter((s: any) => {
+                if (s.phase_number !== matchedPhase) return false
+                const aCode = String(s.action_code || '')
+                if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
+                if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
+                const wh = getStepWh(s)
+                return wh === 'SPP' || wh === 'FH'
+            })
             const scannedCount = allFreeScanSteps.filter((s: any) => {
-                return (scannedVolumeMap.value[s.re_code] != null) || (s.stamp_time != null && s.stamp_time !== '-')
+                // Phase-scoped key: phase_number|re_code prevents cross-phase false-positives
+                const phaseScanKey = `${s.phase_number}|${s.re_code}`
+                return scannedVolumeMap.value[phaseScanKey] != null
             }).length
-            const allScanned   = scannedCount >= allFreeScanSteps.length && allFreeScanSteps.length > 0
+            const allScanned = scannedCount >= allFreeScanSteps.length && allFreeScanSteps.length > 0
+            console.log(`[FreeScan] Phase ${matchedPhase}: ${scannedCount}/${allFreeScanSteps.length} scanned | allScanned=${allScanned}`,
+                allFreeScanSteps.map((s: any) => {
+                    const k = `${s.phase_number}|${s.re_code}`
+                    return `${s.re_code.trim()}(scanned:${scannedVolumeMap.value[k] != null})`
+                }))
+
+
 
             $q.notify({
                 type: 'positive',
@@ -2344,10 +2651,30 @@ const handleScan = (scannedText: string) => {
             const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
 
             if (allScanned) {
-                // All steps in this phase_number scanned → advance past last step of this phase
-                const lastPhaseIdx = skuSteps.value.reduce((last: number, s: any, i: number) =>
-                    s.phase_number === matchedPhase ? i : last, stepIdx)
-                const nextIdx = lastPhaseIdx + 1
+                // All SPP/FH scan steps in this phase are done.
+                // Advance to AFTER the highest-indexed scan step in the phase
+                // (not just stepIdx+1) because steps may have been scanned out of order.
+                // Example: Kelcogel(sub40) scanned before CPK(sub20) →
+                //   stepIdx = CPK index, but we must advance past Kelcogel(sub40), not back to W100(sub30)
+                const scannedIdxList = allFreeScanSteps.map((s: any) =>
+                    skuSteps.value.findIndex((sk: any) => Number(sk.id) === Number(s.id))
+                ).filter((i: number) => i >= 0)
+                const maxScannedIdx = scannedIdxList.length > 0
+                    ? Math.max(...scannedIdxList)
+                    : stepIdx
+                let nextIdx = maxScannedIdx + 1
+                // Skip over steps in the SAME phase that are already completed (have stamp_time)
+                // e.g. Frozen Dice Orange Peel (sub130) was scanned earlier but isn't in allFreeScanSteps
+                // → advance past it to p040 instead of stopping there
+                while (nextIdx < skuSteps.value.length) {
+                    const candidateStep = skuSteps.value[nextIdx]
+                    if (!candidateStep) break
+                    if (candidateStep.phase_number !== matchedPhase) break  // reached new phase → stop
+                    const isAlreadyDone = (candidateStep.stamp_time != null && candidateStep.stamp_time !== '-') ||
+                        scannedVolumeMap.value[`${candidateStep.phase_number}|${candidateStep.re_code}`] != null
+                    if (!isAlreadyDone) break  // not done yet → stop here for user to handle
+                    nextIdx++  // already done → skip forward
+                }
                 localStepIndex.value = nextIdx
                 appOverrideStepIndex.value = nextIdx  // ← force UI past PLC telemetry
 
@@ -2356,10 +2683,11 @@ const handleScan = (scannedText: string) => {
                     const nextStep = skuSteps.value[nextIdx]
                     if (nextStep) {
                         const nextPhase = nextStep.phase_number || '0'
+                        const isSamePhase = nextPhase === matchedPhase
                         expandedPhases.value[nextPhase] = true
                         $q.notify({
                             type: 'positive', icon: 'rocket_launch',
-                            message: `🎉 ${matchedPhase} สแกนครบ! → ข้ามไป ${nextPhase}`,
+                            message: `🎉 ${matchedPhase} สแกนครบ! → ${isSamePhase ? 'ต่อ' : 'ข้ามไป'} ${nextPhase}`,
                             caption: `Phase ${nextPhase} Step ${nextStep.sub_step} - กรุณาดำเนินการต่อ`,
                             position: 'center', timeout: 3500
                         })
@@ -2378,6 +2706,7 @@ const handleScan = (scannedText: string) => {
                     }, 600)
                 }
             }
+
             return
         }
     }
@@ -2433,9 +2762,10 @@ const handleScan = (scannedText: string) => {
 
         if ((whType === 'FH' || whType === 'SPP') && rawVol != null) {
             const scannedVol = Number(rawVol)
-            // Save the scanned volume
+            // Save the scanned volume — use phase-scoped key to align with scannedCount check
+            const normalScanKey = `${matchedStep.phase_number}|${matchedStep.re_code}`
             prebatchWeightMap.value = { ...prebatchWeightMap.value, [matchedStep.re_code]: scannedVol }
-            scannedVolumeMap.value = { ...scannedVolumeMap.value, [matchedStep.re_code]: scannedVol }
+            scannedVolumeMap.value = { ...scannedVolumeMap.value, [normalScanKey]: scannedVol }
 
             $q.notify({
                 type: 'positive',
@@ -2629,6 +2959,10 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
     // Only auto-step if batch is actually running
     if (!batchRunning.value) return;
 
+    // NOTE: batch Done is now handled by the allStepsDone watcher (frontend-aware),
+    // which covers PLC steps + FreeScan steps + manual rinse (กลั้วภาชนะ) steps.
+    // The PLC step_done signal here only advances the UI — NOT marks batch Done.
+
     // Guard: value must actually change (not just re-render)
     // Any change (bit toggle 0→1 or counter 1→2→3...) = PLC step done
     if (newVal === undefined || newVal === null) return;
@@ -2675,21 +3009,7 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
             if (isLastStep.value) {
                 batchRunning.value = false
                 $q.notify({ type: 'positive', message: '🎉 BATCH COMPLETE!', position: 'center', timeout: 5000 })
-                
-                if (batchInfo.value && batchInfo.value.id) {
-                    try {
-                        const remoteApiBaseUrl = appConfig.apiBaseUrl
-                        await $fetch(`${remoteApiBaseUrl}/production-batches/${batchInfo.value.id}/status?status=Done`, {
-                            method: 'PATCH',
-                            headers: getAuthHeader() as Record<string, string>
-                        })
-                        $q.notify({ type: 'info', message: 'Batch marked as Done in MES.', position: 'top-right' })
-                        batchInfo.value.status = 'Done'
-                        batchInfo.value.done = true
-                    } catch (e) {
-                        console.error('[Batch Complete] Failed to sync status to MES:', e)
-                    }
-                }
+                await markBatchDone('PLC step_done')
                 // Navigate to report
                 setTimeout(() => {
                     router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
@@ -3206,7 +3526,7 @@ onUnmounted(() => {
                       <td class="text-weight-bold text-indigo">{{ step.re_code || '-' }}</td>
                       <td class="text-caption text-grey-8" style="font-family: monospace;">{{ prebatchIdMap[step.re_code] || '-' }}</td>
                       <td class="text-center">
-                        <q-badge v-if="prebatchWhMap[step.re_code]" :color="prebatchWhMap[step.re_code] === 'FH' ? 'amber-9' : prebatchWhMap[step.re_code] === 'SPP' ? 'blue-8' : 'green-8'">{{ prebatchWhMap[step.re_code] }}</q-badge>
+                        <q-badge v-if="getStepWh(step)" :color="getStepWh(step) === 'FH' ? 'amber-9' : getStepWh(step) === 'SPP' ? 'blue-8' : 'green-8'">{{ getStepWh(step) }}</q-badge>
                         <span v-else>-</span>
                       </td>
                       <td>{{ step.destination || '-' }}</td>
@@ -3214,8 +3534,8 @@ onUnmounted(() => {
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
                           <!-- SPP/FH with confirmed scan: show scan volume, not load cell -->
-                          <template v-if="(prebatchWhMap[step.re_code] === 'SPP' || prebatchWhMap[step.re_code] === 'FH') && scannedVolumeMap[step.re_code] != null">
-                            <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[step.re_code]).toFixed(3) }}</span>
+                          <template v-if="(getStepWh(step) === 'SPP' || getStepWh(step) === 'FH') && scannedVolumeMap[`${step.phase_number}|${step.re_code}`] != null">
+                            <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[`${step.phase_number}|${step.re_code}`]).toFixed(3) }}</span>
                             <span class="slash">/</span>
                             <span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(3) : '-' }}</span>
                           </template>

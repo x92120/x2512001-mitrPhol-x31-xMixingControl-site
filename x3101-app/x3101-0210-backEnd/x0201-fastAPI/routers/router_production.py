@@ -847,6 +847,59 @@ def unhold_batch(batch_id_str: str, data: HoldBatchRequest, db: Session = Depend
         "message": f"Batch '{batch_id_str}' released from Hold → In-Progress."
     }
 
+
+class CompleteBatchRequest(BaseModel):
+    completed_by: Optional[str] = None
+
+
+@router.patch("/production-batches/complete/{batch_id_str}")
+def complete_batch(batch_id_str: str, data: CompleteBatchRequest, db: Session = Depends(get_db)):
+    """Mark a batch as Done — called by Mixing Control when all production steps are completed.
+    Sets status='Done' and records finished_at timestamp.
+    Guards against re-completing already Done/Cancelled batches.
+    """
+    batch = db.query(models.ProductionBatch).filter(
+        models.ProductionBatch.batch_id == batch_id_str
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_id_str}' not found")
+    if batch.status in ("Done", "Cancelled"):
+        raise HTTPException(status_code=400, detail=f"Batch is already '{batch.status}'")
+
+    prev_status = batch.status
+    batch.status = "Done"
+    batch.done = True
+    batch.updated_at = datetime.now()
+    # Record finished_at if the model has that column
+    if hasattr(batch, 'finished_at') and batch.finished_at is None:
+        batch.finished_at = datetime.now()
+
+    # Audit history
+    plan = db.query(models.ProductionPlan).filter(
+        models.ProductionPlan.id == batch.plan_id
+    ).first()
+    if plan:
+        history = models.ProductionPlanHistory(
+            plan_db_id=plan.id,
+            action="complete_batch",
+            old_status=prev_status,
+            new_status="Done",
+            remarks=f"Batch {batch_id_str} completed. Prev={prev_status}. By: {data.completed_by or 'operator'}",
+            changed_by=data.completed_by or "operator",
+        )
+        db.add(history)
+
+    db.commit()
+    db.refresh(batch)
+    return {
+        "batch_id": batch.batch_id,
+        "status": batch.status,
+        "previous_status": prev_status,
+        "completed_by": data.completed_by,
+        "message": f"Batch '{batch_id_str}' is now Done."
+    }
+
+
 @router.get("/production-batches/by-batch-id/{batch_id_str}")
 def get_production_batch_by_id_str(batch_id_str: str, db: Session = Depends(get_db)):
     """Get a specific production batch by its string ID, enriched with sku_name from the plan."""
@@ -1179,18 +1232,20 @@ def get_items_for_ingredient(plan_id: str, re_code: str, db: Session = Depends(g
 @router.get("/prebatch-items/by-batch/{batch_id}")
 def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
     """Get all items for a batch — single query.
-    If item.wh is null, falls back to the Ingredient table's warehouse field.
+    Ingredient.warehouse is the SOURCE OF TRUTH and always overrides item.wh.
+    This prevents stale/incorrect 'Mix' values in prebatch_items from
+    blocking SPP/FH ingredient scan validation.
     """
     items = db.query(models.PreBatchItem).filter(
         models.PreBatchItem.batch_id == batch_id
     ).all()
 
-    # Build fallback WH map from Ingredient table for items missing wh
-    missing_re_codes = [item.re_code for item in items if not item.wh and item.re_code]
+    # Always look up Ingredient.warehouse for ALL re_codes (not just missing ones)
+    all_re_codes = [item.re_code for item in items if item.re_code]
     ingredient_wh_map: dict = {}
-    if missing_re_codes:
+    if all_re_codes:
         ings = db.query(models.Ingredient).filter(
-            models.Ingredient.re_code.in_(missing_re_codes)
+            models.Ingredient.re_code.in_(all_re_codes)
         ).all()
         for ing in ings:
             if ing.re_code and ing.warehouse:
@@ -1205,8 +1260,8 @@ def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
         "ingredient_name": item.ingredient_name,
         "required_volume": item.required_volume,
         "total_packaged": round(float(item.net_volume or 0), 4),
-        # Fallback: use Ingredient.warehouse if item.wh is null
-        "wh": item.wh or ingredient_wh_map.get((item.re_code or '').strip(), None),
+        # Ingredient.warehouse overrides item.wh — master data is source of truth
+        "wh": ingredient_wh_map.get((item.re_code or '').strip()) or item.wh or None,
         "status": item.status,
         "packing_status": item.packing_status or 0,
         "batch_record_id": item.batch_record_id,
@@ -1214,6 +1269,7 @@ def get_items_by_batch(batch_id: str, db: Session = Depends(get_db)):
         "recheck_at": item.recheck_at,
         "recheck_by": item.recheck_by,
     } for item in items]
+
 
 
 @router.get("/prebatch-items/by-plan/{plan_id}")
@@ -2190,6 +2246,30 @@ def save_qc_record(batch_id_str: str, qc_data: QcRecordRequest, db: Session = De
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/production-batches/{batch_id_str}/qc-records")
+def clear_qc_records(batch_id_str: str, db: Session = Depends(get_db)):
+    """
+    Clear ALL QC records (Brix/pH) for a batch.
+    Called when operator replays / soft-resets a batch so that
+    old QC values from a previous run do not appear in the new session.
+    """
+    try:
+        deleted = db.query(models.ProductionQcRecord).filter(
+            models.ProductionQcRecord.batch_id == batch_id_str
+        ).delete(synchronize_session=False)
+        db.commit()
+        logger.info("QC records cleared: batch=%s deleted=%d", batch_id_str, deleted)
+        return {
+            "status": "success",
+            "batch_id": batch_id_str,
+            "deleted": deleted,
+            "message": f"Cleared {deleted} QC record(s) for batch {batch_id_str}"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/production-batches/{batch_id_str}/logs")
 def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
