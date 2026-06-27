@@ -1,41 +1,44 @@
 <template>
-  <q-page class="oee-page">
+  <q-page class="oee-page" style="padding:0">
+    <!-- Quasar body:overflow:hidden → must use q-scroll-area for internal scrolling -->
+    <q-scroll-area class="oee-scroll" style="height:calc(100vh - 106px)">
 
-    <!-- ── Top Bar (non-sticky, let Quasar layout scroll) ── -->
-    <div class="oee-topbar row items-center q-px-lg q-py-sm no-wrap" style="gap:12px;flex-wrap:wrap">
-      <q-icon name="analytics" size="24px" color="lime-4" />
-      <span class="text-subtitle1 text-white text-weight-bold">OEE Dashboard</span>
-      <q-chip dense color="lime-9" text-color="lime-2" size="sm" icon="precision_manufacturing">Mixing Plant</q-chip>
-      <q-space />
+      <!-- ── Top Bar ── -->
+      <div class="oee-topbar row items-center q-px-lg q-py-sm no-wrap" style="gap:12px;flex-wrap:wrap">
+        <q-icon name="analytics" size="24px" color="lime-4" />
+        <span class="text-subtitle1 text-white text-weight-bold">OEE Dashboard</span>
+        <q-chip dense color="lime-9" text-color="lime-2" size="sm" icon="precision_manufacturing">Mixing Plant</q-chip>
+        <q-space />
 
-      <!-- Plant Filter -->
-      <span class="text-caption text-grey-5">PLANT:</span>
-      <q-btn-toggle
-        v-model="selectedPlant"
-        :options="[{label:'All',value:'all'},{label:'1',value:'1'},{label:'2',value:'2'},{label:'3',value:'3'}]"
-        dense unelevated rounded
-        color="blue-grey-8" text-color="grey-4"
-        toggle-color="lime-8" toggle-text-color="white"
-        size="sm"
-        @update:model-value="loadData"
-      />
+        <!-- Plant Filter -->
+        <span class="text-caption text-grey-5">PLANT:</span>
+        <q-btn-toggle
+          v-model="selectedPlant"
+          :options="[{label:'All',value:'all'},{label:'1',value:'1'},{label:'2',value:'2'},{label:'3',value:'3'}]"
+          dense unelevated rounded
+          color="blue-grey-8" text-color="grey-4"
+          toggle-color="lime-8" toggle-text-color="white"
+          size="sm"
+          @update:model-value="loadData"
+        />
 
-      <!-- Period Filter -->
-      <span class="text-caption text-grey-5">PERIOD:</span>
-      <q-btn-toggle
-        v-model="period"
-        :options="[{label:'7d',value:7},{label:'30d',value:30},{label:'90d',value:90}]"
-        dense unelevated rounded
-        color="blue-grey-8" text-color="grey-4"
-        toggle-color="cyan-8" toggle-text-color="white"
-        size="sm"
-        @update:model-value="loadData"
-      />
+        <!-- Period Filter -->
+        <span class="text-caption text-grey-5">PERIOD:</span>
+        <q-btn-toggle
+          v-model="period"
+          :options="[{label:'7d',value:7},{label:'30d',value:30},{label:'90d',value:90}]"
+          dense unelevated rounded
+          color="blue-grey-8" text-color="grey-4"
+          toggle-color="cyan-8" toggle-text-color="white"
+          size="sm"
+          @update:model-value="loadData"
+        />
 
-      <q-btn flat dense round icon="refresh" color="grey-4" @click="loadData" :loading="loading" />
-    </div>
+        <q-btn flat dense round icon="refresh" color="grey-4" @click="loadData" :loading="loading" />
+      </div>
 
-    <div class="q-px-lg q-pb-xl" v-if="!loading && stats">
+
+      <div class="q-px-lg q-pb-xl" v-if="!loading && stats">
 
       <!-- ── Row 1: OEE + A/P/Q ── -->
       <div class="row q-col-gutter-md q-mb-md">
@@ -213,6 +216,7 @@
       </div>
     </div>
 
+    </q-scroll-area>
   </q-page>
 </template>
 
@@ -476,16 +480,19 @@ onMounted(() => loadData())
 <style scoped>
 .oee-page {
   background: #0f172a;
-  min-height: 100vh;
   color: #e2e8f0;
   font-family: 'Inter', 'Segoe UI', sans-serif;
-  padding-bottom: 48px;   /* ensure trend chart not clipped */
+  padding-bottom: 80px;
 }
 
 .oee-topbar {
   background: #1e293b;
   border-bottom: 1px solid #334155;
-  /* NOT sticky — Quasar layout handles scroll; sticky breaks page scroll */
+}
+
+.oee-scroll {
+  background: #0f172a;
+  width: 100%;
 }
 
 .oee-card {
