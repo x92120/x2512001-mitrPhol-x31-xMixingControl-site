@@ -203,7 +203,7 @@ const materials = computed(() => {
 })
 
 const processSteps = computed(() => {
-  // Group by phase_id and take first/last completed_at as start/stop
+  // Group by phase_id: track start/stop timestamps + sum all duration_sec
   const phaseMap: Record<string, any> = {}
   for (const l of rawLogs.value) {
     const pid = l.phase_id || '—'
@@ -213,19 +213,24 @@ const processSteps = computed(() => {
         start: l.completed_at,
         stop: l.completed_at,
         temperature: l.temperature,
-        duration: null
+        totalSec: Number(l.duration_sec || 0)
       }
     } else {
       if (l.completed_at && l.completed_at > phaseMap[pid].stop) {
         phaseMap[pid].stop = l.completed_at
       }
+      phaseMap[pid].totalSec += Number(l.duration_sec || 0)
     }
   }
   return Object.values(phaseMap).map(ps => {
     const start = ps.start ? fmtHM(ps.start) : '—'
     const stop  = ps.stop  ? fmtHM(ps.stop)  : '—'
+    // Priority 1: sum of duration_sec from DB (accurate for all phase types)
+    // Priority 2: fallback to stop-start timestamp diff
     let dur: string | null = null
-    if (ps.start && ps.stop && ps.start !== ps.stop) {
+    if (ps.totalSec > 0) {
+      dur = fmtHMS(ps.totalSec)
+    } else if (ps.start && ps.stop && ps.start !== ps.stop) {
       const sec = Math.round((new Date(ps.stop).getTime() - new Date(ps.start).getTime()) / 1000)
       if (sec > 0) dur = fmtHMS(sec)
     }
