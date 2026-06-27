@@ -135,50 +135,46 @@
         </div>
       </div>
 
-      <!-- ── Row 2: Batch Status Breakdown ── -->
+      <!-- ── Row 2: 3 Charts Side by Side ── -->
       <div class="row q-col-gutter-md q-mb-md">
-        <div class="col-12 col-md-6">
+
+        <!-- Chart 1: Batch Status Donut -->
+        <div class="col-12 col-md-4">
           <div class="oee-card q-pa-md">
-            <div class="text-caption text-grey-5 text-weight-bold q-mb-md" style="letter-spacing:2px">BATCH STATUS BREAKDOWN</div>
-            <div v-for="s in statusBreakdown" :key="s.label" class="row items-center q-mb-sm" style="gap:10px">
-              <q-icon :name="s.icon" :color="s.color" size="16px"/>
-              <div style="width:130px;font-size:12px" :class="`text-${s.color}`">{{ s.label }}</div>
-              <q-linear-progress
-                :value="s.pct/100"
-                :color="s.color"
-                track-color="blue-grey-9"
-                class="col"
-                style="height:14px;border-radius:4px"
-              />
-              <span class="text-caption text-grey-4" style="width:40px;text-align:right">{{ s.count }}</span>
-              <span class="text-caption text-grey-6" style="width:36px;text-align:right">{{ s.pct }}%</span>
-            </div>
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">Batch Status</div>
+            <div class="text-caption text-grey-5 q-mb-sm">Distribution over last {{ period }} days</div>
+            <apexchart v-if="donutSeries.length" type="donut" height="240"
+              :options="donutOptions" :series="donutSeries" />
           </div>
         </div>
 
-        <!-- Summary stats -->
-        <div class="col-12 col-md-6">
+        <!-- Chart 2: Downtime / Status Horizontal Bar -->
+        <div class="col-12 col-md-4">
           <div class="oee-card q-pa-md">
-            <div class="text-caption text-grey-5 text-weight-bold q-mb-md" style="letter-spacing:2px">PRODUCTION SUMMARY</div>
-            <div class="row q-col-gutter-md">
-              <div v-for="m in summaryMetrics" :key="m.label" class="col-6">
-                <div class="stat-box q-pa-md rounded-borders text-center">
-                  <q-icon :name="m.icon" :color="m.color" size="24px" class="q-mb-xs"/>
-                  <div class="text-h5 text-weight-bolder text-white">{{ m.value }}</div>
-                  <div class="text-caption text-grey-5">{{ m.label }}</div>
-                </div>
-              </div>
-            </div>
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">Production Volume</div>
+            <div class="text-caption text-grey-5 q-mb-sm">Batches per status · last {{ period }} days</div>
+            <apexchart v-if="hbarSeries.length" type="bar" height="240"
+              :options="hbarOptions" :series="hbarSeries" />
+          </div>
+        </div>
+
+        <!-- Chart 3: OEE % Trend -->
+        <div class="col-12 col-md-4">
+          <div class="oee-card q-pa-md">
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">OEE Trend</div>
+            <div class="text-caption text-grey-5 q-mb-sm">Daily OEE % · last {{ period }} days</div>
+            <apexchart v-if="miniTrendSeries.length" type="area" height="240"
+              :options="miniTrendOptions" :series="miniTrendSeries" />
           </div>
         </div>
       </div>
 
-      <!-- ── Row 3: Premium Trend Chart ── -->
+      <!-- ── Row 3: Full-width Batch + Done Timeline ── -->
       <div class="oee-card q-pa-md q-mb-md">
         <div class="row items-center q-mb-md">
           <div>
-            <div class="text-subtitle2 text-white text-weight-bold">OEE Trend</div>
-            <div class="text-caption text-grey-5">Daily completion rate & batch count over last {{ period }} days</div>
+            <div class="text-subtitle2 text-white text-weight-bold">Daily Batch Timeline</div>
+            <div class="text-caption text-grey-5">Done vs Total batches per day · last {{ period }} days</div>
           </div>
           <q-space/>
           <div class="row" style="gap:16px">
@@ -188,15 +184,15 @@
             </div>
             <div class="row items-center" style="gap:6px">
               <div style="width:12px;height:10px;background:#1d4ed8;border-radius:2px"></div>
-              <span class="text-caption text-grey-4">Done Batches</span>
+              <span class="text-caption text-grey-4">Done</span>
             </div>
             <div class="row items-center" style="gap:6px">
               <div style="width:12px;height:10px;background:#334155;border-radius:2px"></div>
-              <span class="text-caption text-grey-4">Total Batches</span>
+              <span class="text-caption text-grey-4">Total</span>
             </div>
           </div>
         </div>
-        <apexchart v-if="trendSeries.length" type="line" height="260"
+        <apexchart v-if="trendSeries.length" type="line" height="240"
           :options="trendOptions" :series="trendSeries" />
         <div v-else class="flex flex-center text-grey-6" style="height:200px">
           <div class="text-center">
@@ -310,6 +306,106 @@ const statusBreakdown = computed(() => {
     return { ...s, count, pct: Math.round(count / total * 100) }
   }).filter(s => s.count > 0)
 })
+
+// ── Donut Chart (Batch Status) ────────────────────────────
+const donutSeries = computed(() =>
+  statusBreakdown.value.map(s => s.count)
+)
+const donutOptions = computed(() => ({
+  chart: { background: 'transparent', toolbar: { show: false },
+    animations: { enabled: true, speed: 500 } },
+  labels: statusBreakdown.value.map(s => s.label),
+  colors: ['#22c55e','#f97316','#60a5fa','#94a3b8','#ef4444','#f59e0b'],
+  legend: { position: 'bottom', labels: { colors: '#94a3b8' } },
+  dataLabels: {
+    enabled: true,
+    style: { colors: ['#fff'], fontSize: '11px' },
+    formatter: (v: number) => `${Math.round(v)}%`
+  },
+  stroke: { width: 2, colors: ['#0f172a'] },
+  tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v} batches` } },
+  plotOptions: { pie: { donut: {
+    size: '65%',
+    labels: {
+      show: true,
+      total: { show: true, label: 'Total', color: '#94a3b8',
+        formatter: () => String(filteredBatches.value.length)
+      }
+    }
+  }}}
+}))
+
+// ── Horizontal Bar Chart (Production Volume) ──────────────
+const hbarSeries = computed(() => [{
+  name: 'Batches',
+  data: statusBreakdown.value.map(s => s.count)
+}])
+const hbarOptions = computed(() => ({
+  chart: { type: 'bar', background: 'transparent', toolbar: { show: false },
+    animations: { enabled: true, speed: 500 } },
+  plotOptions: { bar: {
+    horizontal: true, borderRadius: 5,
+    dataLabels: { position: 'center' }
+  }},
+  colors: ['#84cc16'],
+  fill: { type: 'gradient', gradient: {
+    shade: 'dark', type: 'horizontal',
+    gradientToColors: ['#22d3ee'], opacityFrom: 1, opacityTo: 0.7
+  }},
+  xaxis: { categories: statusBreakdown.value.map(s => s.label),
+    labels: { style: { colors: '#64748b', fontSize: '11px' } } },
+  yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
+  grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+  dataLabels: { enabled: true, style: { colors: ['#fff'], fontSize: '11px' } },
+  tooltip: { theme: 'dark' },
+  legend: { show: false }
+}))
+
+// ── Mini Trend (OEE % only, area) ────────────────────────
+const miniTrendSeries = computed(() => {
+  const byDay = trendDays.value
+  const sorted = Object.keys(byDay).sort()
+  if (!sorted.length) return []
+  return [{
+    name: 'OEE %',
+    data: sorted.map(d => {
+      const r = byDay[d]
+      if (!r.total) return 0
+      const a = Math.round((r.done + (r.total - r.cancelled - r.done)) / r.total * 100)
+      const p = Math.round(r.done / Math.max(r.total - r.cancelled, 1) * 100)
+      const q = r.cancelled === 0 ? 100 : Math.round(r.done / (r.done + r.cancelled) * 100)
+      return Math.round(a * p * q / 10000)
+    })
+  }]
+})
+const miniTrendOptions = computed(() => {
+  const cats = Object.keys(trendDays.value).sort().map(d => d.slice(5))
+  return {
+    chart: { type: 'area', background: 'transparent', toolbar: { show: false },
+      sparkline: { enabled: false },
+      animations: { enabled: true, speed: 600 },
+      dropShadow: { enabled: true, color: '#84cc16', top: 6, blur: 10, opacity: 0.25 }
+    },
+    stroke: { width: 2.5, curve: 'smooth' },
+    fill: { type: 'gradient', gradient: {
+      shade: 'dark', type: 'vertical', shadeIntensity: 0.4,
+      gradientToColors: ['#22d3ee'], opacityFrom: 0.5, opacityTo: 0.03, stops: [0,90,100]
+    }},
+    colors: ['#84cc16'],
+    markers: { size: 3, colors: ['#84cc16'], strokeColors: '#0f172a', strokeWidth: 2, hover: { size: 6 } },
+    xaxis: { categories: cats, labels: { style: { colors: '#64748b', fontSize: '10px' }, rotate: -30 },
+      axisBorder: { color: '#1e293b' } },
+    yaxis: { min: 0, max: 100, labels: { style: { colors: '#94a3b8', fontSize: '10px' },
+      formatter: (v: number) => `${v}%` } },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    annotations: { yaxis: [{ y: 65, borderColor: '#f59e0b', strokeDashArray: 4,
+      label: { text: '65%', style: { background: '#f59e0b', color: '#000', fontSize: '10px' } }
+    }]},
+    tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v}%` } },
+    dataLabels: { enabled: false }
+  }
+})
+
 
 // ── Summary Metrics ───────────────────────────────────────
 const summaryMetrics = computed(() => {
