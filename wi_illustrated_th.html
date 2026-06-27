@@ -1,0 +1,297 @@
+# บทที่ 1: คู่มือปฏิบัติงานพร้อมภาพประกอบ (Illustrated Work Instruction)
+
+---
+
+## 1.1 การเข้าสู่ระบบ (User Login — x80)
+**วัตถุประสงค์:** ยืนยันตัวตนพนักงานทุกครั้งก่อนเข้าใช้ระบบ ชื่อจะถูกบันทึกลงทุก Batch Log
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x80.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.1 — หน้าจอ User Login (x80)</div></div>
+
+**วิธีการใช้งาน:**
+1. เปิดแอปพลิเคชัน — ระบบจะแสดงหน้า Login อัตโนมัติ
+2. **วิธีที่ 1 (สแกนบัตร):** ใช้ปืนสแกนยิงบัตรพนักงาน → กล่อง PIN จะปรากฏ → กรอก PIN 4 หลัก → กด **Login**
+3. **วิธีที่ 2 (กรอกเอง):** พิมพ์ Username และ Password → กดปุ่ม **[เข้าสู่ระบบ]**
+4. ชื่อพนักงานจะแสดงที่มุมขวาบนของทุกหน้า
+
+**ปุ่มและการกระทำทั้งหมด:**
+
+| ไอคอน / ปุ่ม | หน้าที่ | เงื่อนไข |
+|:---|:---|:---|
+| **เข้าสู่ระบบ (Login)** | ยืนยันตัวตนและเข้าระบบ | ต้องกรอก Username + Password ถูกต้อง |
+| **Login (Badge PIN)** | ยืนยัน PIN หลังสแกนบัตร | กรอก PIN 4 หลักที่ตั้งไว้ |
+| **สร้างบัญชีใหม่** | ไปหน้า Register (x81) | เฉพาะ Admin เท่านั้น |
+| **Cancel** | ยกเลิก PIN Dialog | ปิดกล่อง PIN กลับสู่หน้า Login |
+| 👁 (ดูรหัสผ่าน) | สลับแสดง/ซ่อนรหัสผ่าน | — |
+| ✕ ปิด | ปิดหน้า Login | ต้อง Login ก่อนใช้งาน |
+
+---
+
+## 1.2 แผนการผลิต (Production Plan — x55)
+**วัตถุประสงค์:** ตรวจสอบรายการ Batch ที่รอผลิตและเลือก Batch ที่จะดำเนินการ
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x55.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.2 — หน้าจอแผนการผลิต (x55)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **PRODUCTION PLAN** บนแถบด้านบน
+2. ระบบแสดงตารางรายการ Batch ทั้งหมด เรียงตามวันที่
+3. ดูคอลัมน์ **Status** — เลือก Batch ที่เป็นสีเขียว **Prepared**
+4. กดปุ่ม **Select / เลือก** → ระบบโหลดข้อมูล Batch ไปยัง Mixing Control (x61)
+
+**คอลัมน์ในตาราง:**
+
+| คอลัมน์ | ความหมาย |
+|:---|:---|
+| **Batch ID** | รหัส Batch การผลิต เช่น P260622-01 |
+| **SKU / Product Name** | ชื่อสินค้า เช่น Senorita Yuzu 750ml |
+| **Batch Size (kg)** | ปริมาณที่จะผลิต (กิโลกรัม) |
+| **Plant** | เครื่องผสมที่จะใช้ (Plant 1/2/3) |
+| **Status** | Created / Prepared / In-Progress / Done |
+| **วันที่ผลิต** | วันที่วางแผนผลิต |
+
+**ปุ่มและการกระทำ:**
+
+| ปุ่ม | หน้าที่ |
+|:---|:---|
+| **Select (เลือก)** | เลือก Batch นี้เพื่อเริ่มผลิต |
+| 🔄 **Refresh** | โหลดรายการแผนงานใหม่จาก Server |
+
+**ความหมายสี Status Badge:**
+
+| สี | สถานะ | ความหมาย |
+|:---:|:---:|:---|
+| ⚪ เทา | Created | สร้างแผนแล้ว รอเตรียมวัตถุดิบ |
+| 🟡 เหลือง | In-Progress | กำลังเตรียมหรือกำลังผลิต |
+| 🟢 เขียว | Prepared | วัตถุดิบพร้อม — สามารถเดินเครื่องได้ |
+| 🔵 น้ำเงิน | Done | ผลิตเสร็จสิ้น |
+
+---
+
+## 1.3 สูตรการผลิต (SKU View — x56)
+**วัตถุประสงค์:** ตรวจสอบสูตรและส่วนผสม (BOM) ของสินค้าแต่ละรายการก่อนผลิต
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x56.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.3 — หน้าจอสูตรการผลิต SKU View (x56)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **SKU** บนแถบด้านบน
+2. เลือกสินค้าจากรายการซ้ายมือ หรือค้นหาชื่อ
+3. ระบบแสดง Tab ต่างๆ: **Recipe Steps** (ขั้นตอน) และ **Ingredients** (วัตถุดิบ)
+4. ตรวจสอบน้ำหนักและลำดับขั้นตอนก่อนเริ่มการผลิตจริง
+
+**ปุ่มและการกระทำ:**
+
+| ปุ่ม | หน้าที่ |
+|:---|:---|
+| 🔄 **Refresh** | โหลดรายการสูตรใหม่ |
+| **เลือก SKU** | คลิกชื่อสินค้าเพื่อดูรายละเอียด |
+
+**Tab ข้อมูลที่แสดง:**
+
+| Tab | เนื้อหา |
+|:---|:---|
+| **Recipe Steps** | รายการขั้นตอน Phase/Step ทั้งหมด (Action Code, Phase, น้ำหนัก, อุณหภูมิ) |
+| **Ingredients** | รายการวัตถุดิบ BOM ทั้งหมดพร้อมน้ำหนักรวม |
+
+---
+
+## 1.4 การเตรียมวัตถุดิบ (Check for Production — x60)
+**วัตถุประสงค์:** ชั่งตวงและยืนยันวัตถุดิบย่อยก่อนส่งเข้าสายการผลิต
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x60.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.4 — หน้าจอเตรียมวัตถุดิบ (x60)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **CHECK FOR PRODUCTION** (ตราชั่ง ⚖️)
+2. เลือก Batch ที่ต้องการเตรียมจากรายการซ้ายมือ (Tree สีน้ำเงิน=SPP / สีแดง=FH)
+3. ชั่งน้ำหนักวัตถุดิบแต่ละรายการให้ได้ตาม **Require WT**
+4. กดปุ่ม **✓ Verify / Confirm** เมื่อน้ำหนักอยู่ใน Tolerance
+5. เมื่อครบทุกรายการ → Batch Status เปลี่ยนเป็น **Prepared** (สีเขียว)
+
+**ปุ่มและการกระทำทั้งหมด:**
+
+| ไอคอน / ปุ่ม | หน้าที่ | หมายเหตุ |
+|:---|:---|:---|
+| **✓ Verify Ingredient** | ยืนยันวัตถุดิบรายการนั้น | กดได้เมื่อชั่งน้ำหนักแล้ว |
+| **Force Verify All (WH)** | ยืนยันทั้งคลัง (SPP/FH) ทีเดียว | ต้องสิทธิ์ Supervisor |
+| 🖨️ **Print Batch Report** | พิมพ์รายงานวัตถุดิบ Batch | ต้องเลือก Batch ก่อน |
+| 📊 **QC Report** | เปิดรายงาน QC | — |
+| 🔊 **Sound Settings** | ตั้งค่าเสียง Alarm | — |
+| 🔄 **Refresh** | โหลดข้อมูลใหม่ | — |
+| ✕ **Clear Lot** | ล้างรายการ Lot ที่เลือก | — |
+| **Hold Batch** | พัก Batch ไว้ก่อน | กดที่รายการ Batch |
+| **GO TO MIXING** | ข้ามไปหน้า Mixing Control (x61) | เมื่อ Prepared แล้ว |
+
+**ความหมายสีแถบ Warehouse (WH):**
+
+| สี | คลัง | ความหมาย |
+|:---:|:---:|:---|
+| 🔵 น้ำเงิน | **SPP** | วัตถุดิบจากคลัง SPP (High Shear / Specialty) |
+| 🔴 แดง | **FH** | วัตถุดิบจากคลัง FH (Flavor House) |
+| 🟢 เขียว | **MIX** | วัตถุดิบจากคลังผสม |
+
+---
+
+## 1.5 การควบคุมการผสม (Mixing Control — x61)
+**วัตถุประสงค์:** หน้าจอหลักสำหรับ Operator ควบคุมเครื่องผสม PLC และสแกนยืนยันวัตถุดิบทุกขั้นตอน
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x61.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.5 — หน้าจอหลัก Mixing Control (x61)</div></div>
+
+**วิธีการใช้งาน (ขั้นตอนมาตรฐาน):**
+1. กดเมนู **MIXING CONTROL** (ไอคอนหน้าปัด 🎛️)
+2. กดเลือก **PLANT 1 / 2 / 3** ที่ต้องการควบคุม (แถบบนซ้าย)
+3. ตรวจสอบไฟสถานะ PLC: **🟢 ONLINE** = พร้อม / **🔴 OFFLINE** = ขาดการติดต่อ
+4. เลือก Batch จากรายการ (Status ต้อง Prepared)
+5. กดปุ่ม ▶️ **START** เพื่อเริ่มการผลิต
+6. ระบบจะทำงานอัตโนมัติ — สังเกตแถบสีที่ Step ปัจจุบัน
+7. เมื่อแถบเปลี่ยนเป็น **สีเหลือง (รอสแกน)** → ใช้ปืนสแกนยิง QR Code ที่ถุงวัตถุดิบ
+8. ระบบยืนยัน ✅ → เดินเครื่องต่ออัตโนมัติ
+
+**ปุ่มควบคุมหลักทั้งหมด (Control Panel):**
+
+| ไอคอน | ชื่อปุ่ม | หน้าที่ | เงื่อนไข |
+|:---:|:---|:---|:---|
+| ▶️ | **START / RESUME** | เริ่มหรือทำต่อหลัง Hold | PLC ต้อง Online |
+| ⏸️ | **PAUSE / HOLD** | หยุดเครื่องชั่วคราว PLC รักษาค่าเดิม | กำลัง Running |
+| ⏹️ | **STOP / ABORT** | ยกเลิก Batch ทันที (ฉุกเฉินเท่านั้น!) | เตือนยืนยันก่อน |
+| ⏭️ | **NEXT STEP (Force)** | บังคับข้าม Step ปัจจุบัน | ต้องสิทธิ์ Supervisor |
+| 🔄 | **Refresh from PLC** | โหลดสถานะจาก PLC ใหม่ | — |
+| 🖨️ | **Print PDF** | พิมพ์รายงานการผลิต | มีข้อมูล Batch |
+| 💻 | **PLC Data Block** | ดู Memory ของ PLC ตรงๆ (Debug) | — |
+| ← | **Back** | กลับหน้าก่อน | — |
+
+**ข้อมูลบนหน้าปัด (Gauges) ที่แสดง Real-time:**
+
+| ค่า | ความหมาย | หน่วย |
+|:---|:---|:---:|
+| **Temperature** | อุณหภูมิถังผสมจริง | °C |
+| **Agitator RPM** | ความเร็วใบกวน (Agitator) จริง | RPM |
+| **High Shear RPM** | ความเร็ว High Shear จริง | RPM |
+| **Brix** | ค่าความหวาน Brix จากเซ็นเซอร์ | °Bx |
+| **pH** | ค่า pH จากเซ็นเซอร์ | — |
+| **Total Weight** | น้ำหนักในถังผสมปัจจุบัน | kg |
+| **Timer** | เวลาที่ใช้ใน Step ปัจจุบัน | นาที:วินาที |
+
+**ความหมายสีแถบขั้นตอน (Step Row):**
+
+| สี | ความหมาย | การกระทำของ Operator |
+|:---:|:---|:---|
+| 🟢 เขียว | **Active** — PLC กำลังทำงาน Step นี้ | เฝ้าดูค่าบนหน้าปัด |
+| 🟡 เหลือง | **Waiting Scan** — รอสแกนวัตถุดิบ | ใช้ปืนสแกน QR Code |
+| ⚪ เทา+✅ | **Completed** — ทำเสร็จแล้ว | ไม่ต้องทำอะไร |
+| 🔴 แดง | **Error / Tolerance Failed** | แจ้งหัวหน้า ตรวจสอบค่า |
+
+**ระบบป้องกัน Phase Guard (Error Proofing):**
+
+| กรณี | การแจ้งเตือน | สิ่งที่ต้องทำ |
+|:---|:---|:---|
+| สแกนวัตถุดิบถูกต้อง | ✅ สีเขียว | ไม่ต้องทำอะไร ระบบดำเนินการต่อ |
+| สแกนผิด Phase | ⛔ Popup "สแกนผิด Phase!" | วางถุงไว้ก่อน หยิบถุงที่ถูกต้องมา |
+| สแกนวัตถุดิบผิด Batch | 🚨 "WRONG BOX!" | หยุดทันที! แจ้งหัวหน้า |
+| สแกน Batch Label ซ้ำ | ⚠️ "สแกนหัวบิลซ้ำ!" | เปลี่ยนมาสแกนถุงวัตถุดิบแทน |
+| Phase สแกนอิสระ (p010-p049) | ✅ หลังสแกนครบ | สแกนได้อิสระ แต่ต้องครบทุกตัวใน Phase |
+
+**กรณีต้องกรอก QC (Brix / pH):**
+1. เครื่องหยุดรอที่ขั้นตอน QC Check
+2. หน้าจอแสดงกล่องกรอกค่า
+3. ดึง Sampling จากถัง → วัดค่า Brix และ pH
+4. กรอกค่าลงในช่อง บนหน้าจอ
+5. กด **Confirm QC** → เครื่องทำงานต่อ
+
+---
+
+## 1.6 ติดตามสถานะโรงงาน (Plant Monitor — x100)
+**วัตถุประสงค์:** ดูภาพรวมเครื่องจักรทุก Plant พร้อมกัน เหมาะสำหรับหัวหน้ากะ
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x100.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.6 — หน้าจอ Plant Monitor (x100)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **PLANT MONITOR** (ไอคอนโรงงาน 🏭)
+2. ระบบแสดงการ์ดของแต่ละ Plant (1, 2, 3) พร้อมข้อมูล Real-time
+3. คลิกที่การ์ด Plant เพื่อดูรายละเอียดหรือเข้าสู่หน้า Mixing Control
+
+**ข้อมูลที่แสดงในแต่ละการ์ด:**
+
+| ข้อมูล | ความหมาย |
+|:---|:---|
+| **Plant Name** | ชื่อเครื่องผสม |
+| **PLC Status** | 🟢 Online / 🔴 Offline |
+| **Current Step** | ขั้นตอนที่กำลังทำอยู่ |
+| **Batch ID** | รหัส Batch ปัจจุบัน |
+| **Temperature** | อุณหภูมิถังขณะนี้ |
+| **Weight** | น้ำหนักในถัง |
+
+**ความหมายสีการ์ด:**
+
+| สี | สถานะ |
+|:---:|:---|
+| 🟢 เขียว | Running — กำลังผลิต |
+| 🟡 เหลือง | Hold — หยุดพัก |
+| 🔴 แดง | Alarm / Error |
+| ⚪ เทา | Standby — ว่าง |
+
+---
+
+## 1.7 รายงานการผลิต (Production Report — x70)
+**วัตถุประสงค์:** ดูสรุปข้อมูลการผลิตและวัตถุดิบที่ใช้จริงย้อนหลัง
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x70.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.7 — หน้าจอรายงานการผลิต (x70)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **PRODUCTION REPORT**
+2. เลือก Batch จากรายการซ้ายมือ
+3. ระบบแสดงรายละเอียดปริมาณวัตถุดิบจริง, เวลา, และผู้ปฏิบัติงาน
+
+**ปุ่มและการกระทำ:**
+
+| ปุ่ม | หน้าที่ |
+|:---|:---|
+| 🔄 **Refresh** | โหลดรายการใหม่ |
+| **Recent Only** | แสดงเฉพาะ Batch ล่าสุด |
+| **Select Batch** | เลือก Batch เพื่อดูรายงาน |
+| 🖨️ **Print** | พิมพ์รายงาน |
+| 📄 **Export PDF** | บันทึกเป็น PDF |
+
+---
+
+## 1.8 รายงานการผสม (Mixing Report — x71)
+**วัตถุประสงค์:** รายงานแบบ Mitr Phol Format พร้อม Timeline การผสม, ค่า QC, และลายเซ็นผู้ปฏิบัติงาน
+
+<div style="text-align:center;margin:16px 0;border:1px solid #ddd;padding:10px;border-radius:6px;background:#fafafa;"><img src="file:////home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/wi_screenshots/page_x71.png" style="max-width:100%;box-shadow:0 2px 8px rgba(0,0,0,.12);"><div style="font-style:italic;color:#666;font-size:9pt;margin-top:6px;">ภาพที่ 1.8 — หน้าจอรายงานการผสม Mitr Phol Format (x71)</div></div>
+
+**วิธีการใช้งาน:**
+1. กดเมนู **MIXING REPORT**
+2. เลือก Batch ที่ต้องการออกรายงาน
+3. ระบบแสดงรายงานพร้อม Logo Mitr Phol, ค่า Brix/pH ที่วัดได้จริง, เวลาเริ่ม-สิ้นสุดแต่ละ Step
+
+---
+
+## 1.9 การจัดการผู้ใช้งาน (User Config — x89)
+**วัตถุประสงค์:** Admin จัดการบัญชีพนักงาน, สิทธิ์, และพิมพ์ QR บัตรพนักงาน
+
+**วิธีการใช้งาน:**
+1. เข้าเมนู **USER → User Config** (ต้องสิทธิ์ Admin)
+2. ดูรายชื่อพนักงานทั้งหมด
+
+**ปุ่มและการกระทำ:**
+
+| ปุ่ม | หน้าที่ |
+|:---|:---|
+| **+ สร้างผู้ใช้ใหม่** | เพิ่มพนักงานและพิมพ์ QR Card |
+| **แก้ไข (ดินสอ)** | แก้ไขข้อมูลหรือสิทธิ์ผู้ใช้ |
+| **ลบ (ถังขยะ)** | ลบบัญชีผู้ใช้ |
+| 🖨️ **Print QR** | พิมพ์บัตรพนักงาน QR Code |
+| **Toggle Permission** | เปิด/ปิดสิทธิ์แต่ละด้าน |
+
+---
+
+## 1.10 สรุปการทำงานทั้งระบบ (System Workflow Summary)
+
+ลำดับขั้นตอนมาตรฐานตั้งแต่ต้นจนจบ Batch:
+
+| ลำดับ | ผู้รับผิดชอบ | หน้าจอ | การกระทำ |
+|:---:|:---|:---:|:---|
+| 1 | Admin / Planner | x55 | สร้างแผนการผลิต (Batch Plan) |
+| 2 | Prebatch Operator | x60 | ชั่งตวงและ Confirm วัตถุดิบ → Status: Prepared |
+| 3 | Mixing Operator | x61 | เลือก Batch → กด START → คุมเครื่อง |
+| 4 | Mixing Operator | x61 | สแกน QR Code ถุงวัตถุดิบเมื่อระบบร้องขอ |
+| 5 | Mixing Operator | x61 | กรอกค่า Brix/pH เมื่อถึงขั้นตอน QC |
+| 6 | Supervisor | x100 | ติดตามสถานะทุก Plant |
+| 7 | QC / Supervisor | x71 | ออกรายงาน Mixing Report ฉบับ Mitr Phol |

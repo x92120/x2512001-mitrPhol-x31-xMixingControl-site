@@ -1,0 +1,131 @@
+body {
+    font-family: "Sarabun", "Arial", sans-serif;
+    color: #333333;
+    line-height: 1.6;
+}
+
+h1, h2, h3, h4 {
+    color: #0b3d91;
+    border-bottom: 2px solid #ffcc00;
+    padding-bottom: 5px;
+    margin-top: 30px;
+}
+
+.cover-page {
+    text-align: center;
+    margin-top: 100px;
+    page-break-after: always;
+}
+
+.cover-logo {
+    width: 200px;
+    margin-bottom: 50px;
+}
+
+.cover-title {
+    font-size: 36px;
+    color: #0b3d91;
+    font-weight: bold;
+    margin-bottom: 20px;
+}
+
+.cover-subtitle {
+    font-size: 24px;
+    color: #555555;
+    margin-bottom: 100px;
+}
+
+.doc-info {
+    margin-top: 50px;
+    font-size: 16px;
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.doc-info td {
+    padding: 10px;
+    border: 1px solid #cccccc;
+    text-align: left;
+}
+
+.doc-info th {
+    background-color: #f2f2f2;
+    padding: 10px;
+    border: 1px solid #cccccc;
+    text-align: right;
+    width: 40%;
+}
+
+table.content-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 14px;
+}
+
+table.content-table th {
+    background-color: #0b3d91;
+    color: white;
+    padding: 12px;
+    text-align: left;
+    border: 1px solid #dddddd;
+}
+
+table.content-table td {
+    padding: 12px;
+    border: 1px solid #dddddd;
+}
+
+table.content-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.screenshot-container {
+    text-align: center;
+    margin: 30px 0;
+    border: 1px solid #eeeeee;
+    padding: 10px;
+    background-color: #fafafa;
+    border-radius: 5px;
+}
+
+.screenshot-container img {
+    max-width: 100%;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.screenshot-caption {
+    font-style: italic;
+    color: #666666;
+    margin-top: 10px;
+    font-size: 12px;
+}
+
+.warning-box {
+    background-color: #fff3cd;
+    border-left: 6px solid #ffcc00;
+    padding: 15px;
+    margin: 20px 0;
+    border-radius: 4px;
+}
+
+.note-box {
+    background-color: #e2e3e5;
+    border-left: 6px solid #6c757d;
+    padding: 15px;
+    margin: 20px 0;
+    border-radius: 4px;
+}
+
+.step-number {
+    display: inline-block;
+    background-color: #0b3d91;
+    color: white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    text-align: center;
+    line-height: 24px;
+    margin-right: 10px;
+    font-weight: bold;
+}

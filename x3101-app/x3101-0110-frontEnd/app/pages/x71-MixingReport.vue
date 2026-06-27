@@ -117,7 +117,7 @@
             <tr style="background:#e8eaf6">
               <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:68px">Start</th>
               <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:68px">Stop</th>
-              <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:60px">Duration<br>(Sec)</th>
+              <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:60px">Duration<br>(HH:MM:SS)</th>
               <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:72px">Temperature<br>(DegC)</th>
               <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:44px">Brix</th>
               <th style="border:1px solid #9fa8da;padding:3px;text-align:center;width:44px">pH</th>
@@ -227,7 +227,7 @@ const processSteps = computed(() => {
     let dur: string | null = null
     if (ps.start && ps.stop && ps.start !== ps.stop) {
       const sec = Math.round((new Date(ps.stop).getTime() - new Date(ps.start).getTime()) / 1000)
-      if (sec > 0) dur = String(sec)
+      if (sec > 0) dur = fmtHMS(sec)
     }
     return { ...ps, start, stop, duration: dur }
   })
@@ -243,7 +243,7 @@ const reportData_computed = computed(() => {
     const sec = Math.round((new Date(last).getTime() - new Date(first).getTime()) / 1000)
     const h = Math.floor(sec/3600)
     const m = Math.floor((sec%3600)/60)
-    opTime = h > 0 ? `${h}:${String(m).padStart(2,'0')}` : `0:${String(m).padStart(2,'0')}`
+    opTime = fmtHMS(sec)
   }
   return {
     date_no:        first ? fmtDate(first) : '—',
@@ -265,6 +265,12 @@ function fmtHM(dt: string) {
     const d = new Date(dt)
     return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
   } catch { return '—' }
+}
+function fmtHMS(sec: number) {
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
 }
 function padMaterials(arr: any[], n: number) {
   const out = [...arr]

@@ -1417,16 +1417,15 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
         }
     }
 
-    // 6. Timer — if step has a time setpoint, elapsed must reach it before confirming
-    //    step_time is in SECONDS (DB) — compare directly with currentElapsed (also seconds from PLC)
+    // 6. Timer — PLC Step_Timer is COUNTDOWN (stepTimeSec → 0). Done when remaining == 0.
+    //    step_time is in SECONDS (DB). currentRemaining = seconds left from PLC.
     const stepTimeSec = Number(step.step_time || 0)
     if (stepTimeSec > 0) {
-        const elapsed = currentElapsed.value   // seconds from PLC
-        if (elapsed < stepTimeSec) {
-            const remaining = stepTimeSec - elapsed
+        const remaining = currentRemaining.value   // countdown from PLC: 240→0
+        if (remaining > 0) {
             const remMin = Math.floor(remaining / 60)
             const remSec = Math.floor(remaining % 60)
-            failed.push(`Timer: ${formatDuration(elapsed)} / ${formatDuration(stepTimeSec)} (${remMin}m ${remSec}s remaining)`)
+            failed.push(`Timer: ${remMin}m ${remSec}s remaining / ${formatDuration(stepTimeSec)} total`)
         }
     }
 
@@ -1775,7 +1774,10 @@ watch(allStepsDone, async (done) => {
 })
 
 // ── Passive Tracking State ──
-const currentElapsed = computed(() => Number(plantData.value.Step_Timer || 0))
+// PLC Step_Timer is a COUNTDOWN: starts at step_time setpoint and decrements to 0.
+// 'remaining' = seconds left on the timer (0 = timer done).
+const currentRemaining = computed(() => Number(plantData.value.Step_Timer || 0))
+const currentElapsed = currentRemaining  // alias kept for legacy references
 const actualBrix = ref<string | number>('')
 const actualPh = ref<string | number>('')
 
@@ -3607,7 +3609,12 @@ onUnmounted(() => {
                       </td>
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
-                           <span class="act-num text-deep-purple">{{ formatDuration(currentElapsed) }}</span>
+                           <!-- PLC countdown: starts at step_time → 0, purple→orange(≤30s)→green(done) -->
+                           <span class="act-num"
+                                 :class="currentRemaining === 0 ? 'text-positive' : currentRemaining <= 30 ? 'text-orange-8' : 'text-deep-purple'"
+                                 :title="`Remaining: ${currentRemaining}s`">
+                             {{ step.step_time ? formatDuration(currentRemaining) : '-' }}
+                           </span>
                            <span class="slash">/</span>
                            <span class="req-num">{{ step.step_time ? formatDuration(Number(step.step_time)) : '-' }}</span>
                         </template>
