@@ -170,12 +170,37 @@
         </div>
       </div>
 
-      <!-- ── Row 3: ApexChart Trend ── -->
+      <!-- ── Row 3: Premium Trend Chart ── -->
       <div class="oee-card q-pa-md q-mb-md">
-        <div class="text-caption text-grey-5 text-weight-bold q-mb-sm" style="letter-spacing:2px">OEE TREND (BATCH COMPLETION RATE BY DAY)</div>
-        <apexchart v-if="trendSeries.length" type="bar" height="180"
+        <div class="row items-center q-mb-md">
+          <div>
+            <div class="text-subtitle2 text-white text-weight-bold">OEE Trend</div>
+            <div class="text-caption text-grey-5">Daily completion rate & batch count over last {{ period }} days</div>
+          </div>
+          <q-space/>
+          <div class="row" style="gap:16px">
+            <div class="row items-center" style="gap:6px">
+              <div style="width:12px;height:3px;background:linear-gradient(90deg,#84cc16,#22d3ee);border-radius:2px"></div>
+              <span class="text-caption text-grey-4">OEE %</span>
+            </div>
+            <div class="row items-center" style="gap:6px">
+              <div style="width:12px;height:10px;background:#1d4ed8;border-radius:2px"></div>
+              <span class="text-caption text-grey-4">Done Batches</span>
+            </div>
+            <div class="row items-center" style="gap:6px">
+              <div style="width:12px;height:10px;background:#334155;border-radius:2px"></div>
+              <span class="text-caption text-grey-4">Total Batches</span>
+            </div>
+          </div>
+        </div>
+        <apexchart v-if="trendSeries.length" type="line" height="260"
           :options="trendOptions" :series="trendSeries" />
-        <div v-else class="flex flex-center text-grey-6" style="height:120px">No trend data</div>
+        <div v-else class="flex flex-center text-grey-6" style="height:200px">
+          <div class="text-center">
+            <q-icon name="show_chart" size="48px" color="grey-8" class="q-mb-sm"/>
+            <div>No trend data for selected period</div>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -298,42 +323,143 @@ const summaryMetrics = computed(() => {
 })
 
 // ── Trend Chart ───────────────────────────────────────────
-const trendSeries = computed(() => {
-  const byDay: Record<string, { done: number; total: number }> = {}
+const trendDays = computed(() => {
+  const byDay: Record<string, { done: number; total: number; cancelled: number }> = {}
   for (const b of filteredBatches.value) {
-    if (!byDay[b.date]) byDay[b.date] = { done: 0, total: 0 }
+    if (!byDay[b.date]) byDay[b.date] = { done: 0, total: 0, cancelled: 0 }
     byDay[b.date].total++
     if (b.status === 'Done') byDay[b.date].done++
+    if (b.status === 'Cancelled') byDay[b.date].cancelled++
   }
+  return byDay
+})
+
+const trendSeries = computed(() => {
+  const byDay = trendDays.value
   const sorted = Object.keys(byDay).sort()
   if (!sorted.length) return []
-  return [{
-    name: 'Done',
-    data: sorted.map(d => byDay[d].done)
-  }, {
-    name: 'Total',
-    data: sorted.map(d => byDay[d].total)
-  }]
+  return [
+    {
+      name: 'OEE %',
+      type: 'area',
+      data: sorted.map(d => {
+        const r = byDay[d]
+        if (!r.total) return 0
+        const done = r.done, total = r.total, cancelled = r.cancelled
+        const a = Math.round((done + (total - cancelled - done)) / total * 100)
+        const p = Math.round(done / Math.max(total - cancelled, 1) * 100)
+        const q = cancelled === 0 ? 100 : Math.round(done / (done + cancelled) * 100)
+        return Math.round(a * p * q / 10000)
+      })
+    },
+    {
+      name: 'Done Batches',
+      type: 'bar',
+      data: sorted.map(d => byDay[d].done)
+    },
+    {
+      name: 'Total Batches',
+      type: 'bar',
+      data: sorted.map(d => byDay[d].total)
+    }
+  ]
 })
 
 const trendOptions = computed(() => {
-  const byDay: Record<string, any> = {}
-  for (const b of filteredBatches.value) {
-    if (!byDay[b.date]) byDay[b.date] = { done: 0, total: 0 }
-    byDay[b.date].total++
-    if (b.status === 'Done') byDay[b.date].done++
-  }
+  const byDay = trendDays.value
   const cats = Object.keys(byDay).sort().map(d => d.slice(5))
   return {
-    chart: { type: 'bar', background: 'transparent', toolbar: { show: false }, stacked: false },
-    theme: { mode: 'dark' },
-    colors: ['#84cc16', '#334155'],
-    plotOptions: { bar: { borderRadius: 3, columnWidth: '60%' } },
-    xaxis: { categories: cats, labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
-    yaxis: { labels: { style: { colors: '#94a3b8' } } },
-    grid: { borderColor: '#1e293b' },
-    legend: { labels: { colors: '#94a3b8' } },
-    tooltip: { theme: 'dark' },
+    chart: {
+      type: 'line',
+      background: 'transparent',
+      toolbar: { show: false },
+      animations: { enabled: true, speed: 600, animateGradually: { enabled: true, delay: 80 } },
+      dropShadow: { enabled: true, color: '#84cc16', top: 4, blur: 8, opacity: 0.2 }
+    },
+    stroke: { width: [3, 0, 0], curve: 'smooth' },
+    fill: {
+      type: ['gradient', 'solid', 'solid'],
+      gradient: {
+        shade: 'dark',
+        type: 'vertical',
+        shadeIntensity: 0.5,
+        gradientToColors: ['#22d3ee'],
+        inverseColors: false,
+        opacityFrom: 0.6,
+        opacityTo: 0.05,
+        stops: [0, 90, 100]
+      }
+    },
+    colors: ['#84cc16', '#1d4ed8', '#334155'],
+    plotOptions: {
+      bar: { borderRadius: 4, columnWidth: '55%', dataLabels: { position: 'top' } }
+    },
+    markers: {
+      size: [4, 0, 0],
+      colors: ['#84cc16'],
+      strokeColors: '#0f172a',
+      strokeWidth: 2,
+      hover: { size: 7 }
+    },
+    xaxis: {
+      categories: cats,
+      labels: { style: { colors: '#64748b', fontSize: '11px', fontFamily: 'Inter' }, rotate: -30 },
+      axisBorder: { color: '#1e293b' },
+      axisTicks: { color: '#1e293b' }
+    },
+    yaxis: [
+      {
+        seriesName: 'OEE %',
+        min: 0, max: 100,
+        labels: {
+          style: { colors: '#84cc16', fontSize: '11px' },
+          formatter: (v: number) => `${v}%`
+        },
+        title: { text: 'OEE %', style: { color: '#84cc16', fontSize: '11px' } }
+      },
+      {
+        seriesName: 'Done Batches',
+        opposite: true,
+        labels: { style: { colors: '#60a5fa', fontSize: '11px' } },
+        title: { text: 'Batches', style: { color: '#60a5fa', fontSize: '11px' } }
+      },
+      { seriesName: 'Total Batches', show: false, opposite: true }
+    ],
+    grid: {
+      borderColor: '#1e293b',
+      strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } },
+      padding: { left: 8, right: 8 }
+    },
+    annotations: {
+      yaxis: [{
+        y: 65,
+        borderColor: '#f59e0b',
+        borderWidth: 1,
+        strokeDashArray: 4,
+        label: {
+          text: 'Target 65%',
+          style: { background: '#f59e0b', color: '#000', fontSize: '10px', padding: { top: 2, bottom: 2, left: 6, right: 6 } }
+        }
+      }]
+    },
+    legend: {
+      labels: { colors: '#94a3b8' },
+      markers: { radius: 3 },
+      position: 'bottom',
+      horizontalAlign: 'center'
+    },
+    tooltip: {
+      theme: 'dark',
+      shared: true,
+      intersect: false,
+      y: [
+        { formatter: (v: number) => `${v}%` },
+        { formatter: (v: number) => `${v} batches` },
+        { formatter: (v: number) => `${v} batches` }
+      ]
+    },
     dataLabels: { enabled: false }
   }
 })
