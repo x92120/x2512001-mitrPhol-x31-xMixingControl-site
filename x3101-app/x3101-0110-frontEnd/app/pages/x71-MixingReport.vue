@@ -228,53 +228,78 @@ const materials = computed(() => {
 })
 
 const processSteps = computed(() => {
-  // Group by phase_id: track start/stop (raw ISO) + sum step_time from recipe
+  // Sort all logs by completed_at ascending (already sorted, but ensure)
+  const sortedLogs = [...rawLogs.value].sort((a, b) =>
+    (a.completed_at || '') < (b.completed_at || '') ? -1 : 1
+  )
+
+  // Group by phase_id: track start/stop (ms epoch) + sum step_time
   const phaseMap: Record<string, any> = {}
-  for (const l of rawLogs.value) {
+  for (const l of sortedLogs) {
     const pid = l.phase_id || '—'
+    const ts  = l.completed_at ? new Date(l.completed_at).getTime() : 0
     if (!phaseMap[pid]) {
       phaseMap[pid] = {
-        label: l.phase_description ? `${pid} - ${l.phase_description}` : pid,
-        startRaw: l.completed_at,   // raw ISO for QC range matching
-        stopRaw:  l.completed_at,
+        label:       l.phase_description ? `${pid} - ${l.phase_description}` : pid,
+        startMs:     ts,
+        stopMs:      ts,
+        startRaw:    l.completed_at,
+        stopRaw:     l.completed_at,
         temperature: l.temperature,
-        totalSec: Number(l.step_time || 0)   // step_time from recipe (seconds)
+        totalSec:    Number(l.step_time || 0),
       }
     } else {
-      if (l.completed_at && l.completed_at > phaseMap[pid].stopRaw) {
+      if (ts > phaseMap[pid].stopMs) {
+        phaseMap[pid].stopMs  = ts
         phaseMap[pid].stopRaw = l.completed_at
       }
       phaseMap[pid].totalSec += Number(l.step_time || 0)
     }
   }
 
-  // Map QC records to phases by recorded_at timestamp range
-  // Each QC record belongs to the phase whose [startRaw, stopRaw] window contains recorded_at.
-  // Tie-break: if no window matches, assign to the phase closest BEFORE the QC timestamp.
+  // Sort phases by startMs (chronological order)
   const phaseEntries = Object.entries(phaseMap).sort(
-    ([, a], [, b]) => (a.startRaw || '') < (b.startRaw || '') ? -1 : 1
+    ([, a], [, b]) => a.startMs - b.startMs
   )
 
+  // For temp-controlled phases (step_time=0, startMs===stopMs):
+  // Estimate duration = this phase's stopMs − previous phase's stopMs
+  for (let i = 1; i < phaseEntries.length; i++) {
+    const [, cur] = phaseEntries[i]
+    const [, prev] = phaseEntries[i - 1]
+    if (cur.totalSec === 0 && cur.startMs === cur.stopMs && prev.stopMs) {
+      const inferredSec = Math.round((cur.stopMs - prev.stopMs) / 1000)
+      if (inferredSec > 0 && inferredSec < 86400) {   // sanity: < 24 h
+        cur.inferredSec = inferredSec
+      }
+    }
+  }
+
+  // Map QC records to phases using ms-based range matching
   const qcByPhase: Record<string, any> = {}
   for (const qc of rawQcRecords.value) {
     if (!qc.recorded_at) continue
-    const ts = qc.recorded_at
+    const qcMs = new Date(qc.recorded_at).getTime()
 
-    // 1) Find a phase whose window contains the QC timestamp
+    // 1) Exact range match: QC time is within phase window
     let matched = phaseEntries.find(([, ps]) =>
-      ps.startRaw && ps.stopRaw && ts >= ps.startRaw && ts <= ps.stopRaw
+      ps.startMs && ps.stopMs && qcMs >= ps.startMs && qcMs <= ps.stopMs
     )
 
-    // 2) Fallback: last phase whose startRaw <= ts (closest before QC time)
+    // 2) Fallback: nearest phase that completed just before or at QC time
     if (!matched) {
-      const before = phaseEntries.filter(([, ps]) => ps.startRaw && ps.startRaw <= ts)
+      const before = phaseEntries.filter(([, ps]) => ps.stopMs && ps.stopMs <= qcMs)
       matched = before[before.length - 1]
+    }
+
+    // 3) Last fallback: first phase after QC time (QC recorded slightly early)
+    if (!matched) {
+      matched = phaseEntries[0]
     }
 
     if (matched) {
       const [pid] = matched
-      // Keep the latest QC record per phase
-      if (!qcByPhase[pid] || ts > qcByPhase[pid].recorded_at) {
+      if (!qcByPhase[pid] || qcMs > new Date(qcByPhase[pid].recorded_at).getTime()) {
         qcByPhase[pid] = qc
       }
     }
@@ -283,13 +308,17 @@ const processSteps = computed(() => {
   return phaseEntries.map(([pid, ps]) => {
     const start = ps.startRaw ? fmtHM(ps.startRaw) : '—'
     const stop  = ps.stopRaw  ? fmtHM(ps.stopRaw)  : '—'
-    // Priority 1: Σ step_time from recipe (covers single-step timer phases)
-    // Priority 2: fallback to actual stop-start diff (multi-step phases)
+    // Duration priority:
+    // 1) Σ step_time from recipe (timer-based steps)
+    // 2) inferred from prev-phase stop (temp-controlled steps)
+    // 3) stop-start diff (multi-step phases)
     let dur: string | null = null
     if (ps.totalSec > 0) {
       dur = fmtHMS(ps.totalSec)
-    } else if (ps.startRaw && ps.stopRaw && ps.startRaw !== ps.stopRaw) {
-      const sec = Math.round((new Date(ps.stopRaw).getTime() - new Date(ps.startRaw).getTime()) / 1000)
+    } else if (ps.inferredSec) {
+      dur = fmtHMS(ps.inferredSec)
+    } else if (ps.startMs && ps.stopMs && ps.startMs !== ps.stopMs) {
+      const sec = Math.round((ps.stopMs - ps.startMs) / 1000)
       if (sec > 0) dur = fmtHMS(sec)
     }
     const qc = qcByPhase[pid] || null
