@@ -2371,6 +2371,7 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "step_condition":     recipe.step_condition if recipe else None,
             "low_tol":            recipe.low_tol        if recipe else None,
             "high_tol":           recipe.high_tol       if recipe else None,
+            "step_time":          int(recipe.step_time) if recipe and recipe.step_time else 0,
             "completed_at":       fmt_ts(log.completed_at),
             "operator":           log.operator,
             "operator2":          log.operator2,

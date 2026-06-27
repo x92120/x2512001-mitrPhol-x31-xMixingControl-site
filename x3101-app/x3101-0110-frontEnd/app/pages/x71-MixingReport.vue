@@ -130,11 +130,35 @@
               <td style="border:1px solid #ddd;padding:3px 6px;font-weight:600;color:#1a237e">{{ ps.label }}</td>
               <td style="border:1px solid #ddd;padding:3px;text-align:center;color:#546e7a">{{ ps.start || '—' }}</td>
               <td style="border:1px solid #ddd;padding:3px;text-align:center;color:#546e7a">{{ ps.stop || '—' }}</td>
-              <td style="border:1px solid #ddd;padding:3px;text-align:center">{{ ps.duration || '' }}</td>
+              <td style="border:1px solid #ddd;padding:3px;text-align:center">{{ ps.duration || '—' }}</td>
               <td style="border:1px solid #ddd;padding:3px;text-align:center;color:#c62828;font-weight:700">{{ ps.temperature ? ps.temperature+'°C' : '' }}</td>
-              <td style="border:1px solid #ddd;padding:3px;text-align:center"></td>
-              <td style="border:1px solid #ddd;padding:3px;text-align:center"></td>
-              <td style="border:1px solid #ddd;padding:3px;text-align:center"></td>
+              <!-- Brix actual/target from QC records -->
+              <td style="border:1px solid #ddd;padding:3px;text-align:center">
+                <template v-if="ps.brix_actual != null">
+                  <span :style="ps.brix_target != null && Math.abs(ps.brix_actual - ps.brix_target) <= 0.5 ? 'color:#2e7d32;font-weight:700' : 'color:#c62828;font-weight:700'">
+                    {{ Number(ps.brix_actual).toFixed(1) }}
+                  </span>
+                  <span v-if="ps.brix_target != null" style="color:#999;font-size:7pt">/{{ Number(ps.brix_target).toFixed(1) }}</span>
+                </template>
+                <span v-else style="color:#bbb">—</span>
+              </td>
+              <!-- pH actual/target from QC records -->
+              <td style="border:1px solid #ddd;padding:3px;text-align:center">
+                <template v-if="ps.ph_actual != null">
+                  <span :style="ps.ph_target != null && Math.abs(ps.ph_actual - ps.ph_target) <= 0.1 ? 'color:#1565c0;font-weight:700' : 'color:#c62828;font-weight:700'">
+                    {{ Number(ps.ph_actual).toFixed(2) }}
+                  </span>
+                  <span v-if="ps.ph_target != null" style="color:#999;font-size:7pt">/{{ Number(ps.ph_target).toFixed(2) }}</span>
+                </template>
+                <span v-else style="color:#bbb">—</span>
+              </td>
+              <!-- OK/NG -->
+              <td style="border:1px solid #ddd;padding:3px;text-align:center;font-weight:700">
+                <template v-if="ps.brix_actual != null || ps.ph_actual != null">
+                  <span v-if="(ps.brix_actual == null || (ps.brix_target != null && Math.abs(ps.brix_actual - ps.brix_target) <= 0.5)) && (ps.ph_actual == null || (ps.ph_target != null && Math.abs(ps.ph_actual - ps.ph_target) <= 0.1))" style="color:#2e7d32">OK</span>
+                  <span v-else style="color:#c62828">NG</span>
+                </template>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -181,6 +205,7 @@ const batches     = ref<any[]>([])
 const selectedBatch = ref<any>(null)
 const reportData  = ref<any>(null)
 const rawLogs     = ref<any[]>([])
+const rawQcRecords = ref<any[]>([])   // QC records: brix_actual, ph_actual per step
 const logoUrl     = '/mitrphol_logo.png'
 
 const statusColor: Record<string,string> = {
@@ -203,40 +228,81 @@ const materials = computed(() => {
 })
 
 const processSteps = computed(() => {
-  // Group by phase_id: track start/stop timestamps + sum all duration_sec
+  // Group by phase_id: track start/stop (raw ISO) + sum step_time from recipe
   const phaseMap: Record<string, any> = {}
   for (const l of rawLogs.value) {
     const pid = l.phase_id || '—'
     if (!phaseMap[pid]) {
       phaseMap[pid] = {
         label: l.phase_description ? `${pid} - ${l.phase_description}` : pid,
-        start: l.completed_at,
-        stop: l.completed_at,
+        startRaw: l.completed_at,   // raw ISO for QC range matching
+        stopRaw:  l.completed_at,
         temperature: l.temperature,
-        totalSec: Number(l.duration_sec || 0)
+        totalSec: Number(l.step_time || 0)   // step_time from recipe (seconds)
       }
     } else {
-      if (l.completed_at && l.completed_at > phaseMap[pid].stop) {
-        phaseMap[pid].stop = l.completed_at
+      if (l.completed_at && l.completed_at > phaseMap[pid].stopRaw) {
+        phaseMap[pid].stopRaw = l.completed_at
       }
-      phaseMap[pid].totalSec += Number(l.duration_sec || 0)
+      phaseMap[pid].totalSec += Number(l.step_time || 0)
     }
   }
-  return Object.values(phaseMap).map(ps => {
-    const start = ps.start ? fmtHM(ps.start) : '—'
-    const stop  = ps.stop  ? fmtHM(ps.stop)  : '—'
-    // Priority 1: sum of duration_sec from DB (accurate for all phase types)
-    // Priority 2: fallback to stop-start timestamp diff
+
+  // Map QC records to phases by recorded_at timestamp range
+  // Each QC record belongs to the phase whose [startRaw, stopRaw] window contains recorded_at.
+  // Tie-break: if no window matches, assign to the phase closest BEFORE the QC timestamp.
+  const phaseEntries = Object.entries(phaseMap).sort(
+    ([, a], [, b]) => (a.startRaw || '') < (b.startRaw || '') ? -1 : 1
+  )
+
+  const qcByPhase: Record<string, any> = {}
+  for (const qc of rawQcRecords.value) {
+    if (!qc.recorded_at) continue
+    const ts = qc.recorded_at
+
+    // 1) Find a phase whose window contains the QC timestamp
+    let matched = phaseEntries.find(([, ps]) =>
+      ps.startRaw && ps.stopRaw && ts >= ps.startRaw && ts <= ps.stopRaw
+    )
+
+    // 2) Fallback: last phase whose startRaw <= ts (closest before QC time)
+    if (!matched) {
+      const before = phaseEntries.filter(([, ps]) => ps.startRaw && ps.startRaw <= ts)
+      matched = before[before.length - 1]
+    }
+
+    if (matched) {
+      const [pid] = matched
+      // Keep the latest QC record per phase
+      if (!qcByPhase[pid] || ts > qcByPhase[pid].recorded_at) {
+        qcByPhase[pid] = qc
+      }
+    }
+  }
+
+  return phaseEntries.map(([pid, ps]) => {
+    const start = ps.startRaw ? fmtHM(ps.startRaw) : '—'
+    const stop  = ps.stopRaw  ? fmtHM(ps.stopRaw)  : '—'
+    // Priority 1: Σ step_time from recipe (covers single-step timer phases)
+    // Priority 2: fallback to actual stop-start diff (multi-step phases)
     let dur: string | null = null
     if (ps.totalSec > 0) {
       dur = fmtHMS(ps.totalSec)
-    } else if (ps.start && ps.stop && ps.start !== ps.stop) {
-      const sec = Math.round((new Date(ps.stop).getTime() - new Date(ps.start).getTime()) / 1000)
+    } else if (ps.startRaw && ps.stopRaw && ps.startRaw !== ps.stopRaw) {
+      const sec = Math.round((new Date(ps.stopRaw).getTime() - new Date(ps.startRaw).getTime()) / 1000)
       if (sec > 0) dur = fmtHMS(sec)
     }
-    return { ...ps, start, stop, duration: dur }
+    const qc = qcByPhase[pid] || null
+    return {
+      ...ps, start, stop, duration: dur,
+      brix_actual: qc?.brix_actual ?? null,
+      brix_target: qc?.brix_target ?? null,
+      ph_actual:   qc?.ph_actual   ?? null,
+      ph_target:   qc?.ph_target   ?? null,
+    }
   })
 })
+
 
 const reportData_computed = computed(() => {
   if (!selectedBatch.value || !rawLogs.value.length) return null
@@ -310,6 +376,7 @@ async function loadBatches() {
 async function loadLogs(batchId: string) {
   reportData.value = null
   rawLogs.value = []
+  rawQcRecords.value = []
   try {
     const res = await $fetch<any>(`${apiBase}/production-batches/${batchId}/logs`, {
       headers: getAuthHeader() as Record<string,string>
@@ -317,6 +384,7 @@ async function loadLogs(batchId: string) {
     rawLogs.value = (res.logs || []).sort((a: any, b: any) =>
       (a.completed_at||'') < (b.completed_at||'') ? -1 : 1
     )
+    rawQcRecords.value = res.qc_records || []
     reportData.value = reportData_computed.value
   } catch (e) { console.error(e) }
 }
