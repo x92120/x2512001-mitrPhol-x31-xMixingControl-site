@@ -41,6 +41,18 @@
         </div>
       </div>
 
+      <!-- ── Alert Panel ── -->
+      <transition-group name="mes-alert" tag="div" class="q-px-lg q-pt-xs">
+        <div v-for="a in mesAlerts" :key="a.id"
+          class="mes-alert-card row items-center q-mb-xs q-px-md q-py-sm"
+          :class="`mes-alert-${a.type}`">
+          <q-icon :name="a.icon" size="18px" class="q-mr-sm"/>
+          <span style="font-size:13px;font-weight:500">{{ a.msg }}</span>
+          <q-space/>
+          <q-btn flat dense round icon="close" size="xs" color="grey-5" @click="dismissMesAlert(a.id)"/>
+        </div>
+      </transition-group>
+
       <div class="q-px-lg q-pb-xl" v-if="!loading">
 
         <!-- Row 1: WIP Status + Schedule Adherence -->
@@ -161,6 +173,91 @@
               </q-td>
             </template>
           </q-table>
+        </div>
+
+        <!-- Row 3: SKU Mix + Actual vs Plan -->
+        <div class="row q-col-gutter-md q-mb-md">
+
+          <!-- SKU Mix Donut -->
+          <div class="col-12 col-md-4">
+            <div class="mes-card q-pa-md flex column items-center">
+              <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+                <q-icon name="pie_chart" color="purple-4" size="16px" class="q-mr-xs"/>SKU Product Mix
+              </div>
+              <div class="text-caption text-grey-5 q-mb-sm">All batches by SKU (top 8)</div>
+              <apexchart v-if="skuMixSeries.length" type="donut" height="220"
+                :options="skuMixOptions" :series="skuMixSeries" />
+              <div v-else class="flex flex-center text-grey-6" style="height:160px">No data</div>
+            </div>
+          </div>
+
+          <!-- Actual vs Plan -->
+          <div class="col-12 col-md-5">
+            <div class="mes-card q-pa-md">
+              <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+                <q-icon name="leaderboard" color="lime-4" size="16px" class="q-mr-xs"/>Actual vs Target
+              </div>
+              <div class="text-caption text-grey-5 q-mb-sm">Done batches vs daily target ({{ dailyTarget }}/day)</div>
+              <apexchart v-if="actualPlanSeries.length" type="bar" height="200"
+                :options="actualPlanOptions" :series="actualPlanSeries" />
+              <div v-else class="flex flex-center text-grey-6" style="height:160px">No data</div>
+            </div>
+          </div>
+
+          <!-- Capacity Utilization Radial -->
+          <div class="col-12 col-md-3">
+            <div class="mes-card q-pa-md flex column items-center justify-center">
+              <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+                <q-icon name="speed" color="amber-4" size="16px" class="q-mr-xs"/>Capacity Utilization
+              </div>
+              <div class="text-caption text-grey-5 q-mb-sm">Active / Total batches</div>
+              <apexchart v-if="capSeries.length" type="radialBar" height="200"
+                :options="capOptions" :series="capSeries" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 4: Batch Age Analysis -->
+        <div class="mes-card q-pa-md q-mb-md">
+          <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+            <q-icon name="hourglass_top" color="orange-4" size="16px" class="q-mr-xs"/>Batch Age Analysis
+          </div>
+          <div class="text-caption text-grey-5 q-mb-sm">How long Prepared & In-Progress batches have been waiting · top 15 oldest</div>
+          <div v-if="batchAgeRows.length">
+            <div v-for="b in batchAgeRows" :key="b.id" class="age-row row items-center q-mb-xs" style="gap:8px">
+              <div style="width:160px;font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ b.sku }}</div>
+              <q-chip dense :color="b.status==='In-Progress'?'orange-8':'blue-8'" text-color="white" size="xs">{{ b.status }}</q-chip>
+              <div class="col">
+                <q-linear-progress :value="b.pct/100"
+                  :color="b.ageH > 48 ? 'negative' : b.ageH > 24 ? 'warning' : 'teal-6'"
+                  track-color="blue-grey-9" style="height:10px;border-radius:5px"/>
+              </div>
+              <span class="text-caption" :class="b.ageH>48?'text-negative':b.ageH>24?'text-warning':'text-teal-4'"
+                style="width:50px;text-align:right;font-weight:600">{{ b.ageH }}h</span>
+            </div>
+          </div>
+          <div v-else class="flex flex-center text-grey-6" style="height:80px">No waiting batches</div>
+        </div>
+
+        <!-- Row 5: Gantt Timeline -->
+        <div class="mes-card q-pa-md q-mb-md">
+          <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+            <q-icon name="view_timeline" color="cyan-4" size="16px" class="q-mr-xs"/>Batch Gantt Timeline
+          </div>
+          <div class="text-caption text-grey-5 q-mb-sm">Most recent Done batches — Created to Done duration</div>
+          <div v-if="ganttRows.length" style="overflow-x:auto">
+            <div v-for="g in ganttRows" :key="g.id" class="gantt-row row items-center q-mb-xs" style="gap:8px">
+              <div style="width:130px;font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ g.sku }}</div>
+              <q-chip dense size="xs" :color="g.plant==='Line-1'?'blue-8':g.plant==='Line-2'?'teal-8':'indigo-8'" text-color="white">{{ g.plant }}</q-chip>
+              <div class="col" style="position:relative;height:18px;background:#1e293b;border-radius:4px">
+                <div :style="`position:absolute;left:${g.left}%;width:${Math.max(g.width,2)}%;height:100%;background:${g.color};border-radius:4px;opacity:0.85`">
+                  <span style="font-size:9px;color:#fff;padding:0 4px;line-height:18px">{{ g.durH }}h</span>
+                </div>
+              </div>
+              <div style="width:70px;font-size:10px;color:#64748b;text-align:right">{{ g.dateStr }}</div>
+            </div>
+          </div>
+          <div v-else class="flex flex-center text-grey-6" style="height:80px">No completed batches</div>
         </div>
 
       </div>
@@ -420,6 +517,173 @@ function statusColor(s: string) {
   return m[s] || 'grey-6'
 }
 
+const dismissedMesAlerts = ref<Set<string>>(new Set())
+const dailyTarget = ref(5)
+
+function dismissMesAlert(id: string) { dismissedMesAlerts.value.add(id) }
+
+// ── Alert Panel ────────────────────────────────────────
+const mesAlerts = computed(() => {
+  const alerts: {id:string;type:'critical'|'warning';icon:string;msg:string}[] = []
+  const fb = filteredBatches.value
+  const now = Date.now()
+
+  // Batches stuck In-Progress > 24h
+  const stuck = fb.filter(b => b.status === 'In-Progress' && b.created_at &&
+    (now - new Date(b.created_at).getTime()) > 24*3600000)
+  if (stuck.length > 0) {
+    const id = 'stuck-inprog'
+    if (!dismissedMesAlerts.value.has(id))
+      alerts.push({ id, type: 'critical', icon: 'warning', msg: `🚨 ${stuck.length} batch ค้าง In-Progress นานกว่า 24 ชั่วโมง — ต้องตรวจสอบด่วน!` })
+  }
+
+  // Large Prepared queue
+  const prepared = fb.filter(b => b.status === 'Prepared').length
+  if (prepared > 500) {
+    const id = 'large-queue'
+    if (!dismissedMesAlerts.value.has(id))
+      alerts.push({ id, type: 'warning', icon: 'inventory', msg: `⚠️ คิว Prepared สูงมาก ${prepared} batch — production อาจล้าหลัง` })
+  }
+
+  // No Done batches recently
+  const recentDone = fb.filter(b => b.status === 'Done' && b.date === new Date().toISOString().slice(0,10)).length
+  if (recentDone === 0 && fb.length > 0) {
+    const id = 'no-done-today'
+    if (!dismissedMesAlerts.value.has(id))
+      alerts.push({ id, type: 'warning', icon: 'today', msg: `⚠️ วันนี้ยังไม่มี batch สำเร็จเลย` })
+  }
+
+  return alerts
+})
+
+// ── SKU Mix Donut ─────────────────────────────────────
+const skuMixSeries = computed(() => {
+  const m: Record<string,number> = {}
+  for (const b of filteredBatches.value)
+    if (b.sku_name) m[b.sku_name.slice(0,18)] = (m[b.sku_name.slice(0,18)] || 0) + 1
+  const sorted = Object.entries(m).sort(([,a],[,b]) => b-a).slice(0,8)
+  return sorted.map(([,v]) => v)
+})
+const skuMixOptions = computed(() => {
+  const m: Record<string,number> = {}
+  for (const b of filteredBatches.value)
+    if (b.sku_name) m[b.sku_name.slice(0,18)] = (m[b.sku_name.slice(0,18)] || 0) + 1
+  const sorted = Object.entries(m).sort(([,a],[,b]) => b-a).slice(0,8)
+  return {
+    chart: { background: 'transparent', toolbar: { show: false } },
+    labels: sorted.map(([k]) => k),
+    colors: ['#22d3ee','#84cc16','#818cf8','#f97316','#ec4899','#f59e0b','#10b981','#60a5fa'],
+    legend: { position: 'bottom' as const, labels: { colors: '#94a3b8' }, fontSize: '10px' },
+    stroke: { width: 2, colors: ['#0a1628'] },
+    dataLabels: { enabled: true, style: { fontSize: '10px', colors: ['#fff'] },
+      formatter: (v: number) => `${Math.round(v)}%` },
+    tooltip: { theme: 'dark' }
+  }
+})
+
+// ── Actual vs Plan ────────────────────────────────────
+const actualPlanSeries = computed(() => {
+  const byDay: Record<string,number> = {}
+  for (const b of filteredBatches.value)
+    if (b.status === 'Done' && b.date) byDay[b.date] = (byDay[b.date] || 0) + 1
+  const days = Object.keys(byDay).sort().slice(-14)
+  if (!days.length) return []
+  return [
+    { name: 'Actual', data: days.map(d => byDay[d] || 0) },
+    { name: 'Target', data: days.map(() => dailyTarget.value) }
+  ]
+})
+const actualPlanOptions = computed(() => {
+  const byDay: Record<string,number> = {}
+  for (const b of filteredBatches.value)
+    if (b.status === 'Done' && b.date) byDay[b.date] = (byDay[b.date] || 0) + 1
+  const cats = Object.keys(byDay).sort().slice(-14).map(d => d.slice(5))
+  return {
+    chart: { type: 'bar', background: 'transparent', toolbar: { show: false } },
+    plotOptions: { bar: { columnWidth: '60%', borderRadius: 3 } },
+    colors: ['#22c55e', '#334155'],
+    xaxis: { categories: cats, labels: { style: { colors: '#64748b', fontSize: '10px' }, rotate: -30 } },
+    yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    legend: { labels: { colors: '#94a3b8' } },
+    dataLabels: { enabled: false },
+    tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v} batches` } }
+  }
+})
+
+// ── Capacity Utilization Radial ─────────────────────────
+const capSeries = computed(() => {
+  const fb = filteredBatches.value
+  const active = fb.filter(b => b.status === 'In-Progress').length
+  const total = fb.length || 1
+  return [Math.round(active / total * 100)]
+})
+const capOptions = computed(() => ({
+  chart: { type: 'radialBar', background: 'transparent' },
+  plotOptions: { radialBar: {
+    startAngle: -135, endAngle: 135,
+    hollow: { size: '60%', background: '#0a1628' },
+    track: { background: '#1e293b', strokeWidth: '80%' },
+    dataLabels: {
+      name: { show: true, color: '#94a3b8', fontSize: '12px', offsetY: -8, label: 'Utilization' },
+      value: { show: true, color: '#fff', fontSize: '24px', fontWeight: 700,
+        formatter: (v: number) => `${v}%` }
+    }
+  }},
+  fill: { type: 'gradient', gradient: { shade: 'dark', type: 'horizontal',
+    gradientToColors: ['#14b8a6'], stops: [0, 100] } },
+  colors: ['#f97316'],
+  labels: ['Utilization'],
+  tooltip: { enabled: false }
+}))
+
+// ── Batch Age Analysis ──────────────────────────────────
+const batchAgeRows = computed(() => {
+  const now = Date.now()
+  const waiting = filteredBatches.value
+    .filter(b => (b.status === 'In-Progress' || b.status === 'Prepared') && b.created_at)
+    .map(b => ({
+      id: b.batch_id || Math.random(),
+      sku: b.sku_name || b.sku_id || 'Unknown',
+      status: b.status,
+      ageH: Math.round((now - new Date(b.created_at).getTime()) / 3600000),
+    }))
+    .filter(b => b.ageH > 0)
+    .sort((a, b) => b.ageH - a.ageH)
+    .slice(0, 15)
+  const maxAge = waiting[0]?.ageH || 1
+  return waiting.map(b => ({ ...b, pct: Math.round(b.ageH / maxAge * 100) }))
+})
+
+// ── Gantt Timeline ──────────────────────────────────────
+const ganttRows = computed(() => {
+  const done = filteredBatches.value
+    .filter(b => b.status === 'Done' && b.created_at && b.updated_at)
+    .map(b => ({
+      id: b.batch_id || Math.random(),
+      sku: b.sku_name || b.sku_id || '?',
+      plant: b.plant || '?',
+      start: new Date(b.created_at).getTime(),
+      end: new Date(b.updated_at).getTime(),
+      durH: Math.round((new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 360000) / 10,
+      dateStr: new Date(b.updated_at).toLocaleDateString('th-TH'),
+      color: b.plant?.includes('1') ? '#3b82f6' : b.plant?.includes('2') ? '#14b8a6' : '#818cf8'
+    }))
+    .filter(b => b.durH > 0 && b.durH < 72)
+    .sort((a, b) => b.end - a.end)
+    .slice(0, 15)
+
+  if (!done.length) return []
+  const minT = Math.min(...done.map(d => d.start))
+  const maxT = Math.max(...done.map(d => d.end))
+  const range = maxT - minT || 1
+  return done.map(d => ({
+    ...d,
+    left: Math.round((d.start - minT) / range * 100),
+    width: Math.round((d.end - d.start) / range * 100)
+  }))
+})
+
 onMounted(() => loadData())
 </script>
 
@@ -437,4 +701,15 @@ onMounted(() => loadData())
   border-radius: 12px;
   height: 100%;
 }
+/* Alert */
+.mes-alert-card { border-radius: 8px; border-left: 4px solid; font-size: 13px; }
+.mes-alert-critical { background: rgba(239,68,68,0.12); border-color: #ef4444; color: #fca5a5; }
+.mes-alert-warning  { background: rgba(245,158,11,0.12); border-color: #f59e0b; color: #fcd34d; }
+.mes-alert-enter-active, .mes-alert-leave-active { transition: all 0.3s ease; }
+.mes-alert-enter-from, .mes-alert-leave-to { opacity: 0; transform: translateY(-8px); }
+/* Age & Gantt */
+.age-row { padding: 3px 0; border-bottom: 1px solid #0f2030; }
+.age-row:last-child { border: none; }
+.gantt-row { padding: 3px 0; border-bottom: 1px solid #0f2030; }
+.gantt-row:last-child { border: none; }
 </style>
