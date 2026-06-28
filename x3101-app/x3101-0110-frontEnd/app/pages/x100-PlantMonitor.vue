@@ -11,9 +11,20 @@
         text-color="white"
         icon="analytics"
         label="OEE Dashboard"
-        class="q-mr-md shadow-4"
+        class="q-mr-sm shadow-4"
         style="font-weight:700;letter-spacing:0.5px"
         :to="'/x72-OEEDashboard'"
+      />
+      <!-- MES Dashboard Button -->
+      <q-btn
+        unelevated rounded
+        color="teal-8"
+        text-color="white"
+        icon="precision_manufacturing"
+        label="MES Dashboard"
+        class="q-mr-md shadow-4"
+        style="font-weight:700;letter-spacing:0.5px"
+        :to="'/x73-MESDashboard'"
       />
       <q-chip
         :color="isConnected ? 'positive' : 'negative'"
