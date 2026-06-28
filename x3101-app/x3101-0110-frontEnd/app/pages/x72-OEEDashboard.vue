@@ -272,7 +272,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { appConfig } from '~/appConfig/config'
 
 const { getAuthHeader } = useAuth()
