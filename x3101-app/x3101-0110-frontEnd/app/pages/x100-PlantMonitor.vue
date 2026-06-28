@@ -4,9 +4,20 @@
       <q-icon name="precision_manufacturing" size="3rem" color="primary" class="q-mr-md" />
       <div class="text-h3 text-grey-9 text-weight-bolder" style="letter-spacing: 1px;">Plant Production Monitor</div>
       <q-space />
-      <q-chip 
-        :color="isConnected ? 'positive' : 'negative'" 
-        text-color="white" 
+      <!-- OEE Dashboard Button -->
+      <q-btn
+        unelevated rounded
+        color="deep-purple-8"
+        text-color="white"
+        icon="analytics"
+        label="OEE Dashboard"
+        class="q-mr-md shadow-4"
+        style="font-weight:700;letter-spacing:0.5px"
+        :to="'/x72-OEEDashboard'"
+      />
+      <q-chip
+        :color="isConnected ? 'positive' : 'negative'"
+        text-color="white"
         :icon="isConnected ? 'wifi' : 'wifi_off'"
         size="lg"
         class="shadow-4 text-weight-bold shadow-soft"
