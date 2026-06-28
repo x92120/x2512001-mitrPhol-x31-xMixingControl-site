@@ -35,6 +35,36 @@
         />
 
         <q-btn flat dense round icon="refresh" color="grey-4" @click="loadData" :loading="loading" />
+
+        <!-- Auto-refresh toggle -->
+        <q-toggle v-model="autoRefresh" color="lime" dense size="xs"
+          :label="autoRefresh ? 'Auto' : 'Manual'" left-label
+          class="text-caption text-grey-5"
+        />
+
+        <!-- Last Updated -->
+        <div v-if="lastUpdated" class="text-caption text-grey-6 no-wrap">
+          <q-icon name="schedule" size="12px" class="q-mr-xs"/>
+          {{ lastUpdated }}
+        </div>
+      </div>
+
+      <!-- ── KPI Quick Stats Bar ── -->
+      <div v-if="!loading && kpiStats" class="kpi-bar row items-stretch q-px-lg q-py-sm" style="gap:1px">
+        <div v-for="k in kpiStats" :key="k.label" class="kpi-chip col row items-center" style="gap:10px;padding:8px 20px">
+          <q-icon :name="k.icon" :color="k.color" size="20px"/>
+          <div>
+            <div class="text-caption text-grey-5" style="font-size:10px;letter-spacing:1px">{{ k.label }}</div>
+            <div class="row items-baseline" style="gap:6px">
+              <span class="text-subtitle1 text-weight-bolder text-white">{{ k.value }}</span>
+              <span v-if="k.delta !== undefined"
+                :class="k.delta >= 0 ? 'text-positive' : 'text-negative'"
+                style="font-size:11px;font-weight:600">
+                {{ k.delta >= 0 ? '▲' : '▼' }} {{ Math.abs(k.delta) }}%
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
 
@@ -202,6 +232,31 @@
         </div>
       </div>
 
+      <!-- ── Row 4: Top SKUs + OEE target gauge ── -->
+      <div class="row q-col-gutter-md q-mb-md">
+
+        <!-- Top 5 SKUs by Done Batches -->
+        <div class="col-12 col-md-7">
+          <div class="oee-card q-pa-md">
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">Top SKUs by Production</div>
+            <div class="text-caption text-grey-5 q-mb-sm">Done batches per SKU · last {{ period }} days</div>
+            <apexchart v-if="skuSeries.length" type="bar" height="220"
+              :options="skuOptions" :series="skuSeries" />
+            <div v-else class="flex flex-center text-grey-6" style="height:180px">No SKU data</div>
+          </div>
+        </div>
+
+        <!-- OEE Achievement Radial -->
+        <div class="col-12 col-md-5">
+          <div class="oee-card q-pa-md flex column items-center justify-center">
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">OEE Achievement</div>
+            <div class="text-caption text-grey-5 q-mb-sm">vs Target 65% · last {{ period }} days</div>
+            <apexchart v-if="radialSeries.length" type="radialBar" height="220"
+              :options="radialOptions" :series="radialSeries" />
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Loading -->
@@ -217,7 +272,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { appConfig } from '~/appConfig/config'
 
 const { getAuthHeader } = useAuth()
@@ -227,6 +282,9 @@ const loading = ref(false)
 const selectedPlant = ref<string>('all')
 const period = ref<number>(30)
 const allBatches = ref<any[]>([])
+const lastUpdated = ref<string>('')
+const autoRefresh = ref(false)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 // ── Load Data ──────────────────────────────────────────────
 async function loadData() {
@@ -255,6 +313,9 @@ async function loadData() {
       })
     })
     allBatches.value = flat
+    // Update last-refreshed time
+    const now = new Date()
+    lastUpdated.value = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   } catch (e) { console.error(e) }
   finally { loading.value = false }
 }
@@ -570,7 +631,102 @@ const plantColorHexMap: Record<string,string> = { '1': '#60a5fa', '2': '#2dd4bf'
 const plantColor = (p: string) => plantColorMap[p] || 'grey-4'
 const plantColorHex = (p: string) => plantColorHexMap[p] || '#94a3b8'
 
+// ── KPI Quick Stats ──────────────────────────────────────
+const kpiStats = computed(() => {
+  const days = Object.keys(trendDays.value).sort()
+  const oeeByDay = days.map(d => {
+    const r = trendDays.value[d]
+    if (!r.total) return 0
+    const a = Math.round((r.done + (r.total - r.cancelled - r.done)) / r.total * 100)
+    const p = Math.round(r.done / Math.max(r.total - r.cancelled, 1) * 100)
+    const q = r.cancelled === 0 ? 100 : Math.round(r.done / (r.done + r.cancelled) * 100)
+    return Math.round(a * p * q / 10000)
+  }).filter(v => v > 0)
+
+  const avg = oeeByDay.length ? Math.round(oeeByDay.reduce((a,b) => a+b,0) / oeeByDay.length) : 0
+  const best = oeeByDay.length ? Math.max(...oeeByDay) : 0
+  const worst = oeeByDay.length ? Math.min(...oeeByDay) : 0
+  const done = filteredBatches.value.filter(b => b.status === 'Done').length
+  const cancelled = filteredBatches.value.filter(b => b.status === 'Cancelled').length
+  const total = filteredBatches.value.length
+  const successRate = total ? Math.round(done / total * 100) : 0
+
+  return [
+    { label: 'BEST DAY OEE',    icon: 'emoji_events',   color: 'lime-4',   value: `${best}%`,         delta: undefined },
+    { label: 'AVG OEE',         icon: 'analytics',      color: 'cyan-4',   value: `${avg}%`,          delta: undefined },
+    { label: 'WORST DAY OEE',   icon: 'warning_amber',  color: 'amber-4',  value: `${worst}%`,        delta: undefined },
+    { label: 'DONE BATCHES',    icon: 'check_circle',   color: 'positive', value: done,               delta: undefined },
+    { label: 'CANCELLED',       icon: 'cancel',         color: 'negative', value: cancelled,          delta: undefined },
+    { label: 'SUCCESS RATE',    icon: 'percent',        color: 'purple-4', value: `${successRate}%`,  delta: undefined },
+  ]
+})
+
+// ── Top SKUs Chart ───────────────────────────────────────
+const skuSeries = computed(() => {
+  const skuMap: Record<string, number> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status === 'Done' && b.sku_name) {
+      skuMap[b.sku_name] = (skuMap[b.sku_name] || 0) + 1
+    }
+  }
+  const sorted = Object.entries(skuMap).sort(([,a],[,b]) => b - a).slice(0, 8)
+  if (!sorted.length) return []
+  return [{ name: 'Done Batches', data: sorted.map(([,v]) => v) }]
+})
+const skuOptions = computed(() => {
+  const skuMap: Record<string, number> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status === 'Done' && b.sku_name) skuMap[b.sku_name] = (skuMap[b.sku_name] || 0) + 1
+  }
+  const sorted = Object.entries(skuMap).sort(([,a],[,b]) => b - a).slice(0, 8)
+  return {
+    chart: { type: 'bar', background: 'transparent', toolbar: { show: false },
+      animations: { enabled: true, speed: 600 } },
+    plotOptions: { bar: { horizontal: true, borderRadius: 5, distributed: true } },
+    colors: ['#84cc16','#22d3ee','#818cf8','#f97316','#ec4899','#f59e0b','#10b981','#60a5fa'],
+    xaxis: { categories: sorted.map(([k]) => k.length > 22 ? k.slice(0,22)+'…' : k),
+      labels: { style: { colors: '#64748b', fontSize: '11px' } } },
+    yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    dataLabels: { enabled: true, style: { colors: ['#fff'], fontSize: '11px' } },
+    legend: { show: false },
+    tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v} batches` } }
+  }
+})
+
+// ── Radial OEE Achievement ────────────────────────────────
+const radialSeries = computed(() => [stats.value?.oee ?? 0])
+const radialOptions = computed(() => ({
+  chart: { type: 'radialBar', background: 'transparent',
+    animations: { enabled: true, speed: 800 } },
+  plotOptions: { radialBar: {
+    startAngle: -135, endAngle: 135,
+    hollow: { size: '60%', background: '#0f172a' },
+    track: { background: '#1e293b', strokeWidth: '80%' },
+    dataLabels: {
+      name: { show: true, color: '#94a3b8', fontSize: '13px', offsetY: -10 },
+      value: { show: true, color: '#fff', fontSize: '28px', fontWeight: 700,
+        formatter: (v: number) => `${v}%` }
+    }
+  }},
+  fill: { type: 'gradient', gradient: {
+    shade: 'dark', type: 'horizontal',
+    gradientToColors: ['#22d3ee'], stops: [0, 100]
+  }},
+  colors: ['#84cc16'],
+  labels: ['OEE'],
+  annotations: {},
+  tooltip: { enabled: false }
+}))
+
+// ── Auto-refresh ─────────────────────────────────────────
+watch(autoRefresh, (val) => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  if (val) refreshTimer = setInterval(loadData, 60000)
+})
+
 onMounted(() => loadData())
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
 
 <style scoped>
@@ -610,4 +766,18 @@ onMounted(() => loadData())
   transition: transform 0.2s;
 }
 .stat-box:hover { transform: translateY(-2px); }
+
+.kpi-bar {
+  background: #0d1b2e;
+  border-top: 1px solid #1e3a5f;
+  border-bottom: 1px solid #1e3a5f;
+}
+
+.kpi-chip {
+  border-right: 1px solid #1e293b;
+  transition: background 0.2s;
+  min-width: 0;
+}
+.kpi-chip:last-child { border-right: none; }
+.kpi-chip:hover { background: rgba(132,204,22,0.06); border-radius: 6px; }
 </style>
