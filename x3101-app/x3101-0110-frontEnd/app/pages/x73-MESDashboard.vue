@@ -129,7 +129,8 @@
           <div class="row items-center q-mb-md">
             <div>
               <div class="text-subtitle2 text-white text-weight-bold">
-                <q-icon name="list_alt" color="purple-4" size="16px" class="q-mr-xs"/>Production Orders — Latest 20
+                <q-icon name="list_alt" color="purple-4" size="16px" class="q-mr-xs"/>Production Orders
+                <q-badge color="teal-8" class="q-ml-sm">{{ filteredOrders.length }} orders</q-badge>
               </div>
               <div class="text-caption text-grey-5">Real-time batch status · filtered by plant & period</div>
             </div>
@@ -140,9 +141,10 @@
             </q-input>
           </div>
           <q-table :rows="filteredOrders" :columns="orderColumns" row-key="batch_id"
-            dark flat dense virtual-scroll :rows-per-page-options="[20]"
-            :filter="search" hide-bottom
+            dark flat dense :rows-per-page-options="[25, 50, 100, 0]"
+            :filter="search"
             table-header-class="text-grey-5 text-caption"
+            :pagination="{ rowsPerPage: 25 }"
           >
             <template #body-cell-status="props">
               <q-td :props="props">
@@ -228,7 +230,12 @@ async function loadData() {
 
 const filteredBatches = computed(() => {
   if (selectedPlant.value === 'all') return allBatches.value
-  return allBatches.value.filter(b => b.plant === selectedPlant.value)
+  return allBatches.value.filter(b => {
+    const p = String(b.plant || '')
+    return p === selectedPlant.value ||
+           p.includes(selectedPlant.value) ||
+           p.replace(/[^0-9]/g,'') === selectedPlant.value
+  })
 })
 
 // KPIs
@@ -402,7 +409,7 @@ const orderColumns = [
 const filteredOrders = computed(() =>
   filteredBatches.value.slice().sort((a, b) =>
     new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-  ).slice(0, 20)
+  )
 )
 
 function statusColor(s: string) {
