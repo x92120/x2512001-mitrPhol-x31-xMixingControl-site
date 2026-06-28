@@ -199,35 +199,27 @@
         </div>
       </div>
 
-      <!-- ── Row 3: Full-width Batch + Done Timeline ── -->
+      <!-- ── Row 3: Daily Batch Timeline (Stacked Bar) ── -->
       <div class="oee-card q-pa-md q-mb-md">
         <div class="row items-center q-mb-md">
           <div>
             <div class="text-subtitle2 text-white text-weight-bold">Daily Batch Timeline</div>
-            <div class="text-caption text-grey-5">Done vs Total batches per day · last {{ period }} days</div>
+            <div class="text-caption text-grey-5">Batch status breakdown per day · last {{ period }} days</div>
           </div>
           <q-space/>
-          <div class="row" style="gap:16px">
-            <div class="row items-center" style="gap:6px">
-              <div style="width:12px;height:3px;background:linear-gradient(90deg,#84cc16,#22d3ee);border-radius:2px"></div>
-              <span class="text-caption text-grey-4">OEE %</span>
-            </div>
-            <div class="row items-center" style="gap:6px">
-              <div style="width:12px;height:10px;background:#1d4ed8;border-radius:2px"></div>
-              <span class="text-caption text-grey-4">Done</span>
-            </div>
-            <div class="row items-center" style="gap:6px">
-              <div style="width:12px;height:10px;background:#334155;border-radius:2px"></div>
-              <span class="text-caption text-grey-4">Total</span>
+          <div class="row items-center" style="gap:12px">
+            <div v-for="s in stackedLegend" :key="s.label" class="row items-center" style="gap:5px">
+              <div :style="`width:10px;height:10px;background:${s.color};border-radius:2px`"></div>
+              <span class="text-caption text-grey-4">{{ s.label }}</span>
             </div>
           </div>
         </div>
-        <apexchart v-if="trendSeries.length" type="line" height="240"
-          :options="trendOptions" :series="trendSeries" />
-        <div v-else class="flex flex-center text-grey-6" style="height:200px">
+        <apexchart v-if="stackedSeries.length" type="bar" height="240"
+          :options="stackedOptions" :series="stackedSeries" />
+        <div v-else class="flex flex-center text-grey-6" style="height:180px">
           <div class="text-center">
-            <q-icon name="show_chart" size="48px" color="grey-8" class="q-mb-sm"/>
-            <div>No trend data for selected period</div>
+            <q-icon name="bar_chart" size="48px" color="grey-8" class="q-mb-sm"/>
+            <div>No data for selected period</div>
           </div>
         </div>
       </div>
@@ -630,6 +622,76 @@ const plantColorMap: Record<string,string> = { '1': 'blue-4', '2': 'teal-4', '3'
 const plantColorHexMap: Record<string,string> = { '1': '#60a5fa', '2': '#2dd4bf', '3': '#818cf8' }
 const plantColor = (p: string) => plantColorMap[p] || 'grey-4'
 const plantColorHex = (p: string) => plantColorHexMap[p] || '#94a3b8'
+
+// ── Daily Stacked Bar Timeline ────────────────────────────
+const STACK_STATUSES = [
+  { key: 'Done',        color: '#22c55e', label: 'Done' },
+  { key: 'In-Progress', color: '#f97316', label: 'In-Progress' },
+  { key: 'Prepared',    color: '#60a5fa', label: 'Prepared' },
+  { key: 'Created',     color: '#64748b', label: 'Created' },
+  { key: 'Cancelled',   color: '#ef4444', label: 'Cancelled' },
+  { key: 'Hold',        color: '#f59e0b', label: 'Hold' },
+]
+const stackedLegend = STACK_STATUSES
+
+const stackedDays = computed(() => {
+  const byDay: Record<string, Record<string, number>> = {}
+  for (const b of filteredBatches.value) {
+    if (!byDay[b.date]) byDay[b.date] = {}
+    byDay[b.date][b.status] = (byDay[b.date][b.status] || 0) + 1
+  }
+  return byDay
+})
+
+const stackedSeries = computed(() => {
+  const days = Object.keys(stackedDays.value).sort()
+  if (!days.length) return []
+  return STACK_STATUSES
+    .map(s => ({
+      name: s.label,
+      data: days.map(d => stackedDays.value[d][s.key] || 0)
+    }))
+    .filter(s => s.data.some(v => v > 0))   // hide zero series
+})
+
+const stackedOptions = computed(() => {
+  const days = Object.keys(stackedDays.value).sort()
+  const cats = days.map(d => d.slice(5))     // show MM-DD
+  const activeColors = STACK_STATUSES
+    .filter(s => stackedSeries.value.some(ss => ss.name === s.label))
+    .map(s => s.color)
+  return {
+    chart: {
+      type: 'bar',
+      background: 'transparent',
+      toolbar: { show: false },
+      stacked: true,
+      animations: { enabled: true, speed: 500 }
+    },
+    plotOptions: { bar: { horizontal: false, borderRadius: 3, columnWidth: '70%' } },
+    colors: activeColors,
+    xaxis: {
+      categories: cats,
+      labels: { style: { colors: '#64748b', fontSize: '10px' }, rotate: -30 },
+      axisBorder: { color: '#1e293b' },
+      axisTicks: { color: '#1e293b' }
+    },
+    yaxis: {
+      labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
+      title: { text: 'Batches', style: { color: '#64748b', fontSize: '11px' } }
+    },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    legend: { show: false },   // custom legend above chart
+    dataLabels: { enabled: false },
+    tooltip: {
+      theme: 'dark',
+      shared: true,
+      intersect: false,
+      y: { formatter: (v: number) => `${v} batches` }
+    },
+    fill: { opacity: 0.92 }
+  }
+})
 
 // ── KPI Quick Stats ──────────────────────────────────────
 const kpiStats = computed(() => {
