@@ -34,6 +34,18 @@
           @update:model-value="loadData"
         />
 
+        <!-- Date Range Picker -->
+        <span class="text-caption text-grey-5">FROM:</span>
+        <q-input v-model="dateFrom" dark dense outlined type="date" input-class="text-white"
+          style="width:130px;font-size:12px" bg-color="blue-grey-9"
+          @update:model-value="loadData"
+        />
+        <span class="text-caption text-grey-5">TO:</span>
+        <q-input v-model="dateTo" dark dense outlined type="date" input-class="text-white"
+          style="width:130px;font-size:12px" bg-color="blue-grey-9"
+          @update:model-value="loadData"
+        />
+
         <q-btn flat dense round icon="refresh" color="grey-4" @click="loadData" :loading="loading" />
 
         <!-- Auto-refresh toggle -->
@@ -47,6 +59,14 @@
           <q-icon name="schedule" size="12px" class="q-mr-xs"/>
           {{ lastUpdated }}
         </div>
+
+        <!-- Export PDF -->
+        <q-btn unelevated dense rounded color="teal-9" text-color="teal-2"
+          icon="picture_as_pdf" label="Export" size="sm"
+          @click="exportPDF"
+        >
+          <q-tooltip>Print / Save as PDF</q-tooltip>
+        </q-btn>
       </div>
 
       <!-- ── KPI Quick Stats Bar ── -->
@@ -67,6 +87,21 @@
         </div>
       </div>
 
+
+      <!-- ── Alert Panel ── -->
+      <transition-group name="alert-slide" tag="div" class="q-px-lg">
+        <div v-for="alert in activeAlerts" :key="alert.id"
+          class="alert-card row items-center q-mb-xs q-px-md q-py-sm"
+          :class="`alert-${alert.type}`"
+        >
+          <q-icon :name="alert.icon" :color="alert.type === 'critical' ? 'negative' : 'warning'" size="18px" class="q-mr-sm"/>
+          <span class="text-weight-medium" style="font-size:13px">{{ alert.msg }}</span>
+          <q-space/>
+          <q-btn flat dense round icon="close" size="xs" color="grey-5"
+            @click="dismissAlert(alert.id)"
+          />
+        </div>
+      </transition-group>
 
       <div class="q-px-lg q-pb-xl" v-if="!loading && stats">
 
@@ -249,6 +284,81 @@
         </div>
       </div>
 
+      <!-- ── Row 5: Avg Duration per SKU + Operator Leaderboard ── -->
+      <div class="row q-col-gutter-md q-mb-md q-px-lg">
+
+        <!-- Avg Batch Duration per SKU -->
+        <div class="col-12 col-md-7">
+          <div class="oee-card q-pa-md">
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+              <q-icon name="timer" color="cyan-4" size="16px" class="q-mr-xs"/>Avg Batch Duration per SKU
+            </div>
+            <div class="text-caption text-grey-5 q-mb-sm">Average hours from Created → Done · top 8 SKUs</div>
+            <apexchart v-if="durationSeries.length" type="bar" height="220"
+              :options="durationOptions" :series="durationSeries" />
+            <div v-else class="flex flex-center text-grey-6" style="height:160px">No duration data</div>
+          </div>
+        </div>
+
+        <!-- Operator Leaderboard -->
+        <div class="col-12 col-md-5">
+          <div class="oee-card q-pa-md">
+            <div class="text-subtitle2 text-white text-weight-bold q-mb-md">
+              <q-icon name="emoji_events" color="amber-4" size="16px" class="q-mr-xs"/>Operator Leaderboard
+            </div>
+            <div class="text-caption text-grey-5 q-mb-sm">Done batches per operator · last {{ period }} days</div>
+            <div v-if="operatorRank.length">
+              <div v-for="(op, idx) in operatorRank" :key="op.name"
+                class="leader-row row items-center q-mb-sm" style="gap:10px">
+                <div class="leader-rank" :class="idx===0?'rank-gold':idx===1?'rank-silver':idx===2?'rank-bronze':'rank-other'">
+                  {{ idx+1 }}
+                </div>
+                <div class="col text-white" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ op.name }}</div>
+                <q-linear-progress :value="op.pct/100" color="lime-6" track-color="blue-grey-9"
+                  style="width:80px;height:8px;border-radius:4px" class="q-mr-xs"/>
+                <span class="text-caption text-lime-4" style="width:24px;text-align:right">{{ op.count }}</span>
+              </div>
+            </div>
+            <div v-else class="flex flex-center text-grey-6" style="height:100px">No operator data</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Row 6: Activity Heatmap ── -->
+      <div class="oee-card q-pa-md q-mb-md q-mx-lg">
+        <div class="row items-center q-mb-md">
+          <div>
+            <div class="text-subtitle2 text-white text-weight-bold">
+              <q-icon name="calendar_month" color="purple-4" size="16px" class="q-mr-xs"/>Activity Heatmap
+            </div>
+            <div class="text-caption text-grey-5">Daily batch count — last 90 days</div>
+          </div>
+          <q-space/>
+          <div class="row items-center" style="gap:4px">
+            <span class="text-caption text-grey-6">Less</span>
+            <div v-for="c in heatColors" :key="c" :style="`width:12px;height:12px;background:${c};border-radius:2px`"></div>
+            <span class="text-caption text-grey-6">More</span>
+          </div>
+        </div>
+        <div class="heatmap-wrap" style="overflow-x:auto">
+          <svg :width="heatmapW" height="110" class="heatmap-svg">
+            <text v-for="(d,i) in ['Mon','','Wed','','Fri','','Sun']" :key="i"
+              :x="0" :y="i*14+22" fill="#64748b" font-size="9" text-anchor="end">{{ d }}</text>
+            <g v-for="(col,ci) in heatmapCells" :key="ci" :transform="`translate(${ci*14+12},0)`">
+              <text v-if="col[0]?.monthLabel" x="0" y="8" fill="#64748b" font-size="9">{{ col[0].monthLabel }}</text>
+              <rect v-for="(cell,ri) in col" :key="ri"
+                :x="0" :y="ri*14+12"
+                width="11" height="11" rx="2"
+                :fill="cell.color"
+                class="heatmap-cell"
+              >
+                <title>{{ cell.date }}: {{ cell.count }} batches</title>
+              </rect>
+            </g>
+          </svg>
+        </div>
+      </div>
+
     </div>
 
     <!-- Loading -->
@@ -278,6 +388,28 @@ const lastUpdated = ref<string>('')
 const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+// Date range — default to last 30 days
+const dateFrom = ref<string>('')
+const dateTo   = ref<string>('')
+const dismissedAlerts = ref<Set<string>>(new Set())
+
+// Init default date range
+;(() => {
+  const to = new Date()
+  const from = new Date()
+  from.setDate(from.getDate() - 30)
+  dateFrom.value = from.toISOString().slice(0, 10)
+  dateTo.value   = to.toISOString().slice(0, 10)
+})()
+
+function exportPDF() {
+  window.print()
+}
+
+function dismissAlert(id: string) {
+  dismissedAlerts.value.add(id)
+}
+
 // ── Load Data ──────────────────────────────────────────────
 async function loadData() {
   loading.value = true
@@ -294,7 +426,9 @@ async function loadData() {
     plans.forEach((p: any) => {
       ;(p.batches || []).forEach((b: any) => {
         const batchDate = new Date(b.updated_at || b.created_at || 0)
-        if (batchDate >= cutoff) {
+        const fromD = dateFrom.value ? new Date(dateFrom.value) : cutoff
+        const toD   = dateTo.value   ? new Date(dateTo.value + 'T23:59:59') : new Date()
+        if (batchDate >= fromD && batchDate <= toD) {
           flat.push({
             ...b,
             sku_name: p.sku_name || b.sku_id,
@@ -781,6 +915,164 @@ const radialOptions = computed(() => ({
   tooltip: { enabled: false }
 }))
 
+// ── Avg Batch Duration per SKU ───────────────────────────
+const durationSeries = computed(() => {
+  const skuDur: Record<string, number[]> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status === 'Done' && b.created_at && b.updated_at) {
+      const dur = (new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 3600000
+      if (dur > 0 && dur < 72) {  // filter outliers < 72h
+        const key = (b.sku_name || b.sku_id || 'Unknown').slice(0, 20)
+        if (!skuDur[key]) skuDur[key] = []
+        skuDur[key].push(dur)
+      }
+    }
+  }
+  const sorted = Object.entries(skuDur)
+    .map(([k, v]) => ({ name: k, avg: v.reduce((a,b)=>a+b,0)/v.length }))
+    .sort((a,b) => b.avg - a.avg)
+    .slice(0, 8)
+  if (!sorted.length) return []
+  return [{ name: 'Avg Hours', data: sorted.map(s => Math.round(s.avg * 10)/10) }]
+})
+const durationOptions = computed(() => {
+  const skuDur: Record<string, number[]> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status === 'Done' && b.created_at && b.updated_at) {
+      const dur = (new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 3600000
+      if (dur > 0 && dur < 72) {
+        const key = (b.sku_name || b.sku_id || 'Unknown').slice(0, 20)
+        if (!skuDur[key]) skuDur[key] = []
+        skuDur[key].push(dur)
+      }
+    }
+  }
+  const sorted = Object.entries(skuDur)
+    .map(([k,v]) => ({ name: k, avg: v.reduce((a,b)=>a+b,0)/v.length }))
+    .sort((a,b) => b.avg - a.avg).slice(0, 8)
+  return {
+    chart: { type: 'bar', background: 'transparent', toolbar: { show: false },
+      animations: { enabled: true, speed: 600 } },
+    plotOptions: { bar: { horizontal: true, borderRadius: 4, distributed: true } },
+    colors: ['#22d3ee','#84cc16','#818cf8','#f97316','#ec4899','#f59e0b','#10b981','#60a5fa'],
+    xaxis: { categories: sorted.map(s => s.name),
+      labels: { style: { colors: '#64748b', fontSize: '11px' } },
+      title: { text: 'Hours', style: { color: '#64748b' } } },
+    yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    dataLabels: { enabled: true, style: { colors: ['#fff'], fontSize: '11px' },
+      formatter: (v: number) => `${v}h` },
+    legend: { show: false },
+    tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v} hours` } }
+  }
+})
+
+// ── Operator Leaderboard ──────────────────────────────────
+const operatorRank = computed(() => {
+  const opMap: Record<string, number> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status !== 'Done') continue
+    const ops = [
+      b.pour_operator_name, b.cook_operator_name,
+      b.operator, b.operator_name
+    ].filter(Boolean)
+    const name = ops[0] || null
+    if (name) opMap[name] = (opMap[name] || 0) + 1
+  }
+  const sorted = Object.entries(opMap).sort(([,a],[,b]) => b-a).slice(0, 8)
+  const max = sorted[0]?.[1] || 1
+  return sorted.map(([name, count]) => ({ name, count, pct: Math.round(count/max*100) }))
+})
+
+// ── Activity Heatmap (90 days, GitHub-style) ──────────────
+const heatColors = ['#1e293b','#14532d','#166534','#16a34a','#22c55e','#86efac']
+
+const heatmapCells = computed(() => {
+  // Build count map for all batches (not just filtered by date)
+  const countMap: Record<string, number> = {}
+  for (const b of allBatches.value) {
+    if (b.date) countMap[b.date] = (countMap[b.date] || 0) + 1
+  }
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const today = new Date()
+  // Go back 90 days, start from Monday of that week
+  const start = new Date(today)
+  start.setDate(start.getDate() - 89)
+  const dow = start.getDay()  // 0=Sun..6=Sat
+  const monday = new Date(start)
+  monday.setDate(start.getDate() - ((dow + 6) % 7))  // roll back to Monday
+
+  const cols: { date: string; count: number; color: string; monthLabel?: string }[][] = []
+  const cursor = new Date(monday)
+  const maxCount = Math.max(...Object.values(countMap), 1)
+
+  while (cursor <= today) {
+    const col: { date: string; count: number; color: string; monthLabel?: string }[] = []
+    for (let d = 0; d < 7; d++) {
+      const iso = cursor.toISOString().slice(0, 10)
+      const count = countMap[iso] || 0
+      const level = count === 0 ? 0 : Math.ceil(count / maxCount * 5)
+      col.push({
+        date: iso,
+        count,
+        color: heatColors[Math.min(level, 5)],
+        monthLabel: (d === 0 && cursor.getDate() <= 7) ? MONTHS[cursor.getMonth()] : undefined
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    cols.push(col)
+  }
+  return cols
+})
+const heatmapW = computed(() => heatmapCells.value.length * 14 + 20)
+
+// ── Alert Panel ───────────────────────────────────────────
+const activeAlerts = computed(() => {
+  const alerts: { id: string; type: 'critical' | 'warning'; icon: string; msg: string }[] = []
+  const byDay = trendDays.value
+  const sorted = Object.keys(byDay).sort()
+
+  // Check last 3 days below target (65%)
+  if (sorted.length >= 3) {
+    const recent = sorted.slice(-3)
+    const allBelow = recent.every(d => {
+      const r = byDay[d]
+      if (!r.total) return false
+      const a = (r.done + r.total - r.cancelled - r.done) / r.total * 100
+      const p = r.done / Math.max(r.total - r.cancelled, 1) * 100
+      const q = r.cancelled === 0 ? 100 : r.done / (r.done + r.cancelled) * 100
+      return (a * p * q / 10000) < 65
+    })
+    if (allBelow) {
+      const id = 'oee-below-target-3d'
+      if (!dismissedAlerts.value.has(id))
+        alerts.push({ id, type: 'critical', icon: 'warning', msg: '🚨 OEE ต่ำกว่าเป้า 65% ติดต่อกัน 3 วัน — ควรตรวจสอบด่วน!' })
+    }
+  }
+
+  // Per plant: any plant OEE = 0?
+  ;['1','2','3'].forEach(p => {
+    const ps = plantStats.value[p]
+    if (!ps) return
+    if (ps.oee === 0 && ps.totalBatches > 10) {
+      const id = `plant-${p}-zero-oee`
+      if (!dismissedAlerts.value.has(id))
+        alerts.push({ id, type: 'warning', icon: 'info', msg: `⚠️ Plant ${p}: OEE = 0% — ไม่มี batch สำเร็จในช่วงนี้` })
+    }
+  })
+
+  // High cancellation rate
+  const total = filteredBatches.value.length
+  const cancelled = filteredBatches.value.filter(b => b.status === 'Cancelled').length
+  if (total > 0 && cancelled / total > 0.15) {
+    const id = 'high-cancel-rate'
+    if (!dismissedAlerts.value.has(id))
+      alerts.push({ id, type: 'warning', icon: 'cancel', msg: `⚠️ อัตรายกเลิก batch สูงผิดปกติ ${Math.round(cancelled/total*100)}% (${cancelled}/${total})` })
+  }
+
+  return alerts
+})
+
 // ── Auto-refresh ─────────────────────────────────────────
 watch(autoRefresh, (val) => {
   if (refreshTimer) clearInterval(refreshTimer)
@@ -842,4 +1134,57 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 }
 .kpi-chip:last-child { border-right: none; }
 .kpi-chip:hover { background: rgba(132,204,22,0.06); border-radius: 6px; }
+
+/* ── Alert Panel ── */
+.alert-card {
+  border-radius: 8px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  border-left: 4px solid;
+}
+.alert-critical {
+  background: rgba(239,68,68,0.12);
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+.alert-warning {
+  background: rgba(245,158,11,0.12);
+  border-color: #f59e0b;
+  color: #fcd34d;
+}
+.alert-slide-enter-active, .alert-slide-leave-active {
+  transition: all 0.3s ease;
+}
+.alert-slide-enter-from, .alert-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ── Operator Leaderboard ── */
+.leader-row { padding: 4px 0; border-bottom: 1px solid #1e293b; }
+.leader-row:last-child { border-bottom: none; }
+.leader-rank {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.rank-gold   { background: linear-gradient(135deg,#f59e0b,#fbbf24); color: #000; }
+.rank-silver { background: linear-gradient(135deg,#9ca3af,#d1d5db); color: #000; }
+.rank-bronze { background: linear-gradient(135deg,#b45309,#d97706); color: #fff; }
+.rank-other  { background: #1e293b; color: #64748b; border: 1px solid #334155; }
+
+/* ── Heatmap ── */
+.heatmap-svg { display: block; }
+.heatmap-cell { cursor: pointer; transition: opacity 0.15s; }
+.heatmap-cell:hover { opacity: 0.75; }
+
+/* ── Print / Export ── */
+@media print {
+  .oee-topbar, .kpi-bar, .q-header, .q-toolbar, .q-tabs { display: none !important; }
+  .oee-scroll { height: auto !important; overflow: visible !important; }
+  .oee-page { background: #fff !important; color: #000 !important; }
+  .oee-card { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+  .q-px-lg { padding: 8px !important; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
 </style>
