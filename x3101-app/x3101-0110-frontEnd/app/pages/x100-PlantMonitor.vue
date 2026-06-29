@@ -5,27 +5,29 @@
       <div class="text-h3 text-grey-9 text-weight-bolder" style="letter-spacing: 1px;">Plant Production Monitor</div>
       <q-space />
       <!-- OEE Dashboard Button -->
-      <q-btn
-        unelevated rounded
-        color="deep-purple-8"
-        text-color="white"
-        icon="analytics"
-        label="OEE Dashboard"
-        class="q-mr-sm shadow-4"
-        style="font-weight:700;letter-spacing:0.5px"
-        :to="'/x72-OEEDashboard'"
-      />
+      <q-btn unelevated rounded color="deep-purple-8" text-color="white"
+        icon="analytics" label="OEE" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x72-OEEDashboard'" />
       <!-- MES Dashboard Button -->
-      <q-btn
-        unelevated rounded
-        color="teal-8"
-        text-color="white"
-        icon="precision_manufacturing"
-        label="MES Dashboard"
-        class="q-mr-md shadow-4"
-        style="font-weight:700;letter-spacing:0.5px"
-        :to="'/x73-MESDashboard'"
-      />
+      <q-btn unelevated rounded color="teal-8" text-color="white"
+        icon="precision_manufacturing" label="MES" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x73-MESDashboard'" />
+      <!-- QC Dashboard Button -->
+      <q-btn unelevated rounded color="cyan-8" text-color="white"
+        icon="science" label="QC" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x74-QCDashboard'" />
+      <!-- PM Dashboard Button -->
+      <q-btn unelevated rounded color="orange-8" text-color="white"
+        icon="build" label="PM" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x75-PMDashboard'" />
+      <!-- Tank Status Button -->
+      <q-btn unelevated rounded color="blue-8" text-color="white"
+        icon="water" label="Tank" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x76-TankDashboard'" />
+      <!-- Machine Health Button -->
+      <q-btn unelevated rounded color="red-8" text-color="white"
+        icon="monitor_heart" label="Health" class="q-mr-md shadow-4"
+        style="font-weight:700;letter-spacing:0.5px" :to="'/x77-MachineHealthDashboard'" />
       <q-chip
         :color="isConnected ? 'positive' : 'negative'"
         text-color="white"
