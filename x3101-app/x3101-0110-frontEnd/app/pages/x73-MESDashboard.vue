@@ -802,7 +802,8 @@ const ganttRows = computed(() => {
   }))
 })
 
-// \u2500\u2500 Live Batch Board \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst liveBatches = computed(() => {
+// Live Batch Board
+const liveBatches = computed(() => {
   const now = Date.now()
   return filteredBatches.value
     .filter(b => b.status === 'In-Progress' || b.status === 'Prepared')
