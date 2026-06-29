@@ -2356,9 +2356,10 @@ const isFreeScanPhase = (phaseNumber: any) => {
     const norm = String(phaseNumber).toLowerCase().replace(/[^0-9]/g, '')
     const num = parseInt(norm, 10)
     if (isNaN(num)) return false
-    // p010–p049: free-scan zone (any order within phase_number)
+    // p010–p069: free-scan zone (any order within phase_number)
+    // p050–p069 = สารละลาย (solution) phases — need free scan same as p010–p049
     // hasScanSteps filter ensures phases without SPP/FH scan steps fall through to normal flow.
-    return num >= 10 && num <= 49
+    return num >= 10 && num <= 69
 }
 
 const handleScan = (scannedText: string) => {
