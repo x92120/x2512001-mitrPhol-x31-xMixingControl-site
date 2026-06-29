@@ -402,7 +402,31 @@ const dateTo = ref<string>('')
   dateTo.value   = to.toISOString().slice(0, 10)
 })()
 
-function exportMES() { window.print() }
+function exportMES() {
+  const styleId = 'mes-print-global'
+  if (!document.getElementById(styleId)) {
+    const s = document.createElement('style')
+    s.id = styleId
+    s.textContent = `
+      @media print {
+        .q-header, .q-drawer, .q-tabs, .q-scrollarea__thumb,
+        .mes-topbar, .mes-kpi-bar { display: none !important; }
+        .q-scrollarea, .q-scrollarea__container, .q-scrollarea__content {
+          height: auto !important; max-height: none !important;
+          overflow: visible !important; position: static !important; contain: none !important;
+        }
+        .mes-page { background: #fff !important; color: #111 !important; }
+        .mes-card { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; break-inside: avoid; }
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    `
+    document.head.appendChild(s)
+  }
+  setTimeout(() => {
+    window.print()
+    setTimeout(() => { document.getElementById(styleId)?.remove() }, 500)
+  }, 200)
+}
 
 const plantColors: Record<string, string> = { '1': 'blue-4', '2': 'teal-4', '3': 'indigo-4' }
 

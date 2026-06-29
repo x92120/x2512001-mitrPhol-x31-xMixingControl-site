@@ -403,7 +403,29 @@ const dismissedAlerts = ref<Set<string>>(new Set())
 })()
 
 function exportPDF() {
-  window.print()
+  const styleId = 'oee-print-global'
+  if (!document.getElementById(styleId)) {
+    const s = document.createElement('style')
+    s.id = styleId
+    s.textContent = `
+      @media print {
+        .q-header, .q-drawer, .q-tabs, .q-scrollarea__thumb,
+        .oee-topbar, .kpi-bar { display: none !important; }
+        .q-scrollarea, .q-scrollarea__container, .q-scrollarea__content {
+          height: auto !important; max-height: none !important;
+          overflow: visible !important; position: static !important; contain: none !important;
+        }
+        .oee-page { background: #fff !important; color: #111 !important; }
+        .oee-card { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; break-inside: avoid; }
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    `
+    document.head.appendChild(s)
+  }
+  setTimeout(() => {
+    window.print()
+    setTimeout(() => { document.getElementById(styleId)?.remove() }, 500)
+  }, 200)
 }
 
 function dismissAlert(id: string) {
