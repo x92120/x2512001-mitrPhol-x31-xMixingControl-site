@@ -937,10 +937,23 @@ onMounted(() => loadData())
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 /* Print */
 @media print {
-  .mes-topbar, .mes-kpi-bar, .q-header, .q-toolbar, .q-tabs { display: none !important; }
-  .mes-scroll { height: auto !important; overflow: visible !important; }
-  .mes-page { background: #fff !important; color: #000 !important; }
-  .mes-card { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+  .mes-topbar, .mes-kpi-bar, .q-header, .q-toolbar,
+  .q-tabs, .q-drawer, .q-scrollarea__thumb { display: none !important; }
+  /* Quasar scroll-area inner structure must be unclipped */
+  .mes-scroll,
+  .mes-scroll .q-scrollarea,
+  .mes-scroll .q-scrollarea__container,
+  .mes-scroll .q-scrollarea__content {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    contain: none !important;
+  }
+  .mes-page { background: #fff !important; color: #111 !important; padding: 0 !important; }
+  .mes-card { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; break-inside: avoid; color: #111 !important; }
+  .text-white, .text-grey-5, .text-grey-6 { color: #333 !important; }
+  .live-card { border: 1px solid #cbd5e1 !important; background: #f1f5f9 !important; }
   body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
 </style>

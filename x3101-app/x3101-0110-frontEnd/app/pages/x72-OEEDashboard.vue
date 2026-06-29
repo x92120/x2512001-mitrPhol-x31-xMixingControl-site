@@ -1180,10 +1180,22 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 /* ── Print / Export ── */
 @media print {
-  .oee-topbar, .kpi-bar, .q-header, .q-toolbar, .q-tabs { display: none !important; }
-  .oee-scroll { height: auto !important; overflow: visible !important; }
-  .oee-page { background: #fff !important; color: #000 !important; }
-  .oee-card { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+  .oee-topbar, .kpi-bar, .q-header, .q-toolbar,
+  .q-tabs, .q-drawer, .q-scrollarea__thumb { display: none !important; }
+  /* Unclip Quasar scroll-area for printing */
+  .oee-scroll,
+  .oee-scroll .q-scrollarea,
+  .oee-scroll .q-scrollarea__container,
+  .oee-scroll .q-scrollarea__content {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    contain: none !important;
+  }
+  .oee-page { background: #fff !important; color: #111 !important; padding: 0 !important; }
+  .oee-card { background: #f8fafc !important; border: 1px solid #cbd5e1 !important; break-inside: avoid; color: #111 !important; }
+  .text-white, .text-grey-5, .text-grey-6 { color: #333 !important; }
   .q-px-lg { padding: 8px !important; }
   body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
