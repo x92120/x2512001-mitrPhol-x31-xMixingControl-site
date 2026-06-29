@@ -3,7 +3,7 @@
     <q-scroll-area class="mes-scroll" style="height:calc(100vh - 106px)">
 
       <!-- Top Bar -->
-      <div class="mes-topbar row items-center q-px-lg q-py-sm no-wrap" style="gap:12px;flex-wrap:wrap">
+      <div class="mes-topbar row items-center q-px-lg q-py-sm no-wrap" style="gap:10px;flex-wrap:wrap">
         <q-icon name="precision_manufacturing" size="24px" color="teal-4" />
         <span class="text-subtitle1 text-white text-weight-bold">MES Dashboard</span>
         <q-chip dense color="teal-9" text-color="teal-2" size="sm" icon="factory">Manufacturing Execution</q-chip>
@@ -14,16 +14,22 @@
           dense unelevated rounded color="blue-grey-8" text-color="grey-4"
           toggle-color="teal-8" toggle-text-color="white" size="sm"
           @update:model-value="loadData" />
-        <span class="text-caption text-grey-5">PERIOD:</span>
-        <q-btn-toggle v-model="period"
-          :options="[{label:'7d',value:7},{label:'30d',value:30},{label:'90d',value:90}]"
-          dense unelevated rounded color="blue-grey-8" text-color="grey-4"
-          toggle-color="cyan-8" toggle-text-color="white" size="sm"
+        <span class="text-caption text-grey-5">FROM:</span>
+        <q-input v-model="dateFrom" dark dense outlined type="date" input-class="text-white"
+          style="width:120px;font-size:11px" bg-color="blue-grey-9"
+          @update:model-value="loadData" />
+        <span class="text-caption text-grey-5">TO:</span>
+        <q-input v-model="dateTo" dark dense outlined type="date" input-class="text-white"
+          style="width:120px;font-size:11px" bg-color="blue-grey-9"
           @update:model-value="loadData" />
         <q-btn flat dense round icon="refresh" color="grey-4" @click="loadData" :loading="loading" />
         <div v-if="lastUpdated" class="text-caption text-grey-6 no-wrap">
           <q-icon name="schedule" size="12px" class="q-mr-xs"/>{{ lastUpdated }}
         </div>
+        <q-btn unelevated dense rounded color="teal-9" text-color="teal-2"
+          icon="picture_as_pdf" label="Export" size="sm" @click="exportMES">
+          <q-tooltip>Print / Export PDF</q-tooltip>
+        </q-btn>
         <q-btn unelevated dense rounded color="deep-purple-9" text-color="purple-2"
           icon="analytics" label="OEE" size="sm" :to="'/x72-OEEDashboard'">
           <q-tooltip>Switch to OEE Dashboard</q-tooltip>
@@ -52,6 +58,42 @@
           <q-btn flat dense round icon="close" size="xs" color="grey-5" @click="dismissMesAlert(a.id)"/>
         </div>
       </transition-group>
+
+      <!-- ── Live Batch Board ── -->
+      <div class="q-px-lg q-pt-sm" v-if="!loading && liveBatches.length">
+        <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+          <q-icon name="sensors" color="teal-4" size="16px" class="q-mr-xs"/>
+          Live Production Board
+          <q-badge color="teal-9" class="q-ml-sm" style="animation:pulse 2s infinite">LIVE</q-badge>
+        </div>
+        <div class="row q-col-gutter-sm q-mb-sm">
+          <div v-for="b in liveBatches" :key="b.id" class="col-12 col-sm-6 col-md-4 col-lg-3">
+            <div class="live-card q-pa-sm" :class="b.status === 'In-Progress' ? 'live-active' : 'live-prepared'">
+              <div class="row items-center q-mb-xs" style="gap:6px">
+                <q-chip dense size="xs"
+                  :color="b.status==='In-Progress'?'orange-8':'blue-8'" text-color="white">
+                  {{ b.status }}
+                </q-chip>
+                <q-chip dense size="xs"
+                  :color="b.plant?.includes('1')?'blue-8':b.plant?.includes('2')?'teal-8':'indigo-8'" text-color="white">
+                  {{ b.plant }}
+                </q-chip>
+              </div>
+              <div class="text-white text-weight-bold" style="font-size:12px;line-height:1.3">
+                {{ b.sku }}
+              </div>
+              <div class="text-caption text-grey-5" style="font-size:10px">{{ b.batch_id }}</div>
+              <div v-if="b.status === 'In-Progress'" class="q-mt-xs">
+                <div class="row items-center justify-between q-mb-xs">
+                  <span class="text-caption text-orange-4" style="font-size:10px">{{ b.elapsedH }}h elapsed</span>
+                  <q-icon name="fiber_manual_record" color="orange-4" size="10px"
+                    style="animation:pulse 1.5s infinite"/>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="q-px-lg q-pb-xl" v-if="!loading">
 
@@ -260,6 +302,68 @@
           <div v-else class="flex flex-center text-grey-6" style="height:80px">No completed batches</div>
         </div>
 
+        <!-- Row 6: QC Summary + Cancellation Analysis -->
+        <div class="row q-col-gutter-md q-mb-md">
+
+          <!-- QC Summary -->
+          <div class="col-12 col-md-6">
+            <div class="mes-card q-pa-md">
+              <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+                <q-icon name="science" color="cyan-4" size="16px" class="q-mr-xs"/>QC Summary
+              </div>
+              <div class="text-caption text-grey-5 q-mb-sm">Pass / Fail rate per SKU (Brix & pH records)</div>
+              <div v-if="qcSummary.length">
+                <div v-for="q in qcSummary" :key="q.sku" class="qc-row row items-center q-mb-sm" style="gap:8px">
+                  <div style="width:140px;font-size:11px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ q.sku }}</div>
+                  <div class="col row" style="gap:4px">
+                    <div :style="`flex:${q.pass};height:14px;background:#22c55e;border-radius:3px 0 0 3px;min-width:2px`"
+                      :title="`${q.pass} passed`"></div>
+                    <div :style="`flex:${q.fail};height:14px;background:#ef4444;border-radius:0 3px 3px 0;min-width:${q.fail>0?'2px':'0'}`"
+                      :title="`${q.fail} failed`"></div>
+                  </div>
+                  <span class="text-caption text-weight-bold" :class="q.pct>=80?'text-positive':'text-negative'"
+                    style="width:36px;text-align:right">{{ q.pct }}%</span>
+                </div>
+              </div>
+              <div v-else class="flex flex-center text-grey-6" style="height:100px">
+                No QC records in this period
+              </div>
+              <!-- QC KPI chips -->
+              <div v-if="qcKpi" class="row q-mt-md" style="gap:8px">
+                <div class="qc-chip">
+                  <div class="text-caption text-grey-5" style="font-size:9px">TOTAL QC</div>
+                  <div class="text-white text-weight-bold">{{ qcKpi.total }}</div>
+                </div>
+                <div class="qc-chip">
+                  <div class="text-caption text-positive" style="font-size:9px">PASSED</div>
+                  <div class="text-positive text-weight-bold">{{ qcKpi.pass }}</div>
+                </div>
+                <div class="qc-chip">
+                  <div class="text-caption text-negative" style="font-size:9px">FAILED</div>
+                  <div class="text-negative text-weight-bold">{{ qcKpi.fail }}</div>
+                </div>
+                <div class="qc-chip">
+                  <div class="text-caption text-lime-4" style="font-size:9px">PASS RATE</div>
+                  <div class="text-lime-4 text-weight-bold">{{ qcKpi.pct }}%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Cancellation Analysis -->
+          <div class="col-12 col-md-6">
+            <div class="mes-card q-pa-md">
+              <div class="text-subtitle2 text-white text-weight-bold q-mb-xs">
+                <q-icon name="cancel" color="red-4" size="16px" class="q-mr-xs"/>Cancellation Analysis
+              </div>
+              <div class="text-caption text-grey-5 q-mb-sm">Cancelled batches by SKU — top 8</div>
+              <apexchart v-if="cancelSeries.length" type="bar" height="220"
+                :options="cancelOptions" :series="cancelSeries" />
+              <div v-else class="flex flex-center text-grey-6" style="height:160px">No cancellations 🎉</div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- Loading -->
@@ -288,6 +392,18 @@ const allBatches = ref<any[]>([])
 const lastUpdated = ref<string>('')
 const search = ref('')
 
+// Date range — default last 30 days
+const dateFrom = ref<string>('')
+const dateTo = ref<string>('')
+;(() => {
+  const to = new Date()
+  const from = new Date(); from.setDate(from.getDate() - 30)
+  dateFrom.value = from.toISOString().slice(0, 10)
+  dateTo.value   = to.toISOString().slice(0, 10)
+})()
+
+function exportMES() { window.print() }
+
 const plantColors: Record<string, string> = { '1': 'blue-4', '2': 'teal-4', '3': 'indigo-4' }
 
 async function loadData() {
@@ -304,7 +420,9 @@ async function loadData() {
     plans.forEach((p: any) => {
       ;(p.batches || []).forEach((b: any) => {
         const batchDate = new Date(b.updated_at || b.created_at || 0)
-        if (batchDate >= cutoff) {
+        const fromD = dateFrom.value ? new Date(dateFrom.value) : cutoff
+        const toD   = dateTo.value   ? new Date(dateTo.value + 'T23:59:59') : new Date()
+        if (batchDate >= fromD && batchDate <= toD) {
           const durH = (b.updated_at && b.created_at && b.status === 'Done')
             ? Math.round((new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 360000) / 10
             : null
@@ -684,6 +802,99 @@ const ganttRows = computed(() => {
   }))
 })
 
+// \u2500\u2500 Live Batch Board \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconst liveBatches = computed(() => {
+  const now = Date.now()
+  return filteredBatches.value
+    .filter(b => b.status === 'In-Progress' || b.status === 'Prepared')
+    .sort((a, b) => {
+      // In-Progress first, then by most recent
+      if (a.status === 'In-Progress' && b.status !== 'In-Progress') return -1
+      if (b.status === 'In-Progress' && a.status !== 'In-Progress') return 1
+      return new Date(b.created_at||0).getTime() - new Date(a.created_at||0).getTime()
+    })
+    .slice(0, 12)
+    .map(b => ({
+      id: b.batch_id || Math.random(),
+      batch_id: b.batch_id || '—',
+      sku: (b.sku_name || b.sku_id || 'Unknown').slice(0, 22),
+      plant: b.plant || '?',
+      status: b.status,
+      elapsedH: b.created_at
+        ? Math.round((now - new Date(b.created_at).getTime()) / 3600000 * 10) / 10
+        : 0
+    }))
+})
+
+// \u2500\u2500 QC Summary \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const qcSummary = computed(() => {
+  // Use Done batches — check if QC fields exist (brix_actual, ph_actual)
+  const skuMap: Record<string, { pass: number; fail: number }> = {}
+  for (const b of filteredBatches.value) {
+    if (b.status !== 'Done') continue
+    const sku = (b.sku_name || b.sku_id || 'Unknown').slice(0, 18)
+    if (!skuMap[sku]) skuMap[sku] = { pass: 0, fail: 0 }
+
+    // QC pass logic: if qc_records exist use them, else infer from cycle time
+    const hasQC = b.brix_actual != null || b.ph_actual != null || b.qc_passed != null
+    if (hasQC) {
+      const passed = b.qc_passed !== false &&
+        (b.brix_actual == null || (b.brix_sp == null || Math.abs(b.brix_actual - b.brix_sp) <= 2)) &&
+        (b.ph_actual  == null || (b.ph_sp   == null || Math.abs(b.ph_actual  - b.ph_sp)   <= 0.5))
+      passed ? skuMap[sku].pass++ : skuMap[sku].fail++
+    } else {
+      // No QC data: treat Done with normal cycle time as passed
+      const cycleOk = !b.cycle_h || (b.cycle_h > 0 && b.cycle_h < 24)
+      cycleOk ? skuMap[sku].pass++ : skuMap[sku].fail++
+    }
+  }
+  return Object.entries(skuMap)
+    .map(([sku, v]) => ({
+      sku,
+      pass: v.pass,
+      fail: v.fail,
+      pct: Math.round(v.pass / (v.pass + v.fail) * 100)
+    }))
+    .sort((a, b) => b.pass + b.fail - a.pass - a.fail)
+    .slice(0, 8)
+})
+
+const qcKpi = computed(() => {
+  const total = qcSummary.value.reduce((s, q) => s + q.pass + q.fail, 0)
+  if (!total) return null
+  const pass = qcSummary.value.reduce((s, q) => s + q.pass, 0)
+  const fail = total - pass
+  return { total, pass, fail, pct: Math.round(pass / total * 100) }
+})
+
+// \u2500\u2500 Cancellation Analysis \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const cancelSeries = computed(() => {
+  const m: Record<string, number> = {}
+  for (const b of filteredBatches.value)
+    if (b.status === 'Cancelled' && b.sku_name)
+      m[b.sku_name.slice(0, 20)] = (m[b.sku_name.slice(0, 20)] || 0) + 1
+  const sorted = Object.entries(m).sort(([,a],[,b]) => b-a).slice(0, 8)
+  if (!sorted.length) return []
+  return [{ name: 'Cancelled', data: sorted.map(([,v]) => v) }]
+})
+const cancelOptions = computed(() => {
+  const m: Record<string, number> = {}
+  for (const b of filteredBatches.value)
+    if (b.status === 'Cancelled' && b.sku_name)
+      m[b.sku_name.slice(0, 20)] = (m[b.sku_name.slice(0, 20)] || 0) + 1
+  const cats = Object.entries(m).sort(([,a],[,b]) => b-a).slice(0, 8).map(([k]) => k)
+  return {
+    chart: { type: 'bar', background: 'transparent', toolbar: { show: false } },
+    plotOptions: { bar: { horizontal: true, borderRadius: 4, distributed: true } },
+    colors: ['#ef4444','#f97316','#f59e0b','#ec4899','#a78bfa','#60a5fa','#34d399','#94a3b8'],
+    xaxis: { categories: cats, labels: { style: { colors: '#64748b', fontSize: '11px' } } },
+    yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '11px' } } },
+    grid: { borderColor: '#1e293b', strokeDashArray: 4 },
+    dataLabels: { enabled: true, style: { colors: ['#fff'], fontSize: '11px' } },
+    legend: { show: false },
+    tooltip: { theme: 'dark', y: { formatter: (v: number) => `${v} cancelled` } }
+  }
+})
+
 onMounted(() => loadData())
 </script>
 
@@ -712,4 +923,23 @@ onMounted(() => loadData())
 .age-row:last-child { border: none; }
 .gantt-row { padding: 3px 0; border-bottom: 1px solid #0f2030; }
 .gantt-row:last-child { border: none; }
+/* Live Board */
+.live-card { border-radius: 10px; border: 1px solid #1e3a5f; transition: transform 0.2s; }
+.live-card:hover { transform: translateY(-2px); }
+.live-active  { background: linear-gradient(135deg,#1a2f1a,#0f2744); border-color: #f97316; }
+.live-prepared{ background: linear-gradient(135deg,#0f1f44,#0a1628); border-color: #3b82f6; }
+/* QC chips */
+.qc-chip { background: #0f2030; border: 1px solid #1e3a5f; border-radius: 8px; padding: 6px 12px; }
+.qc-row { padding: 3px 0; border-bottom: 1px solid #0f2030; }
+.qc-row:last-child { border: none; }
+/* Pulse animation */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+/* Print */
+@media print {
+  .mes-topbar, .mes-kpi-bar, .q-header, .q-toolbar, .q-tabs { display: none !important; }
+  .mes-scroll { height: auto !important; overflow: visible !important; }
+  .mes-page { background: #fff !important; color: #000 !important; }
+  .mes-card { background: #f8fafc !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
 </style>
