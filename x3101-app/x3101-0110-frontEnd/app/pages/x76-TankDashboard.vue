@@ -58,7 +58,7 @@
                   :fill="t.status==='CIP'?'#f59e0b':t.level>80?'#3b82f6':t.level>40?'#22d3ee':'#64748b'"
                   :clip-path="`url(#clip-${t.id})`" opacity="0.8"/>
                 <!-- Level line -->
-                <line x1="5" :y1="5 + 70*(1 - t.level/100)" x2="55" :y1="5 + 70*(1 - t.level/100)"
+                <line x1="5" :y1="5 + 70*(1 - t.level/100)" x2="55" :y2="5 + 70*(1 - t.level/100)"
                   stroke="white" stroke-width="0.8" opacity="0.5"/>
                 <!-- Level text -->
                 <text x="30" y="45" text-anchor="middle" fill="white" font-size="13" font-weight="bold">
