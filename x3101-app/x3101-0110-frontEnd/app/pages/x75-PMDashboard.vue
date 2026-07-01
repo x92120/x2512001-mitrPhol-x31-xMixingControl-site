@@ -115,29 +115,119 @@
           </div>
         </div>
 
+        <!-- Row 4: G120C Drive Health PM Alerts (Live from x77) -->
+        <div class="pm-card q-pa-md q-mb-md">
+          <div class="row items-center justify-between q-mb-md">
+            <div class="text-subtitle2 text-white text-weight-bold">
+              <q-icon name="monitor_heart" color="red-4" size="16px" class="q-mr-xs"/>G120C Drive Health — Condition-Based PM
+              <q-chip dense color="red-9" text-color="red-2" size="xs" class="q-ml-sm">LIVE</q-chip>
+            </div>
+            <q-btn flat dense round icon="refresh" color="grey-4" size="sm" @click="fetchDriveHealth" :loading="driveLoading"/>
+          </div>
+
+          <div v-if="!driveOk" class="text-grey-6 text-caption text-center q-py-md">
+            <q-icon name="link_off" size="28px" color="grey-7"/><br>ไม่สามารถเชื่อมต่อ Drive Health API (port 8031)
+          </div>
+
+          <div v-else class="row q-col-gutter-sm">
+            <div v-for="d in drives" :key="d.id" class="col-12 col-sm-6 col-md-4 col-lg-3">
+              <div class="pm-drive-card q-pa-sm" :class="driveAlertClass(d)">
+                <div class="row items-center justify-between q-mb-xs">
+                  <div class="text-white text-weight-bold" style="font-size:11px">{{ d.name }}</div>
+                  <q-badge :color="d.health>80?'positive':d.health>60?'warning':'negative'" style="font-size:9px">{{ d.health }}%</q-badge>
+                </div>
+                <div class="row" style="gap:6px;font-size:10px">
+                  <div class="pm-dm col text-center">
+                    <div class="text-grey-5" style="font-size:8px">OP HRS</div>
+                    <div class="text-amber-4 text-weight-bold">{{ d.op_hours }}h</div>
+                  </div>
+                  <div class="pm-dm col text-center">
+                    <div class="text-grey-5" style="font-size:8px">TEMP</div>
+                    <div :class="d.temperature>60?'text-negative':d.temperature>40?'text-warning':'text-cyan-4'" class="text-weight-bold">{{ d.temperature }}°C</div>
+                  </div>
+                  <div class="pm-dm col text-center">
+                    <div class="text-grey-5" style="font-size:8px">STATUS</div>
+                    <div :class="d.status==='RUNNING'?'text-positive':d.status==='FAULT'?'text-negative':'text-warning'" class="text-weight-bold" style="font-size:9px">{{ d.status }}</div>
+                  </div>
+                </div>
+                <!-- PM Alert -->
+                <div v-if="drivePmAlert(d)" class="q-mt-xs" style="background:rgba(245,158,11,0.12);border-radius:4px;padding:3px 6px;font-size:9px">
+                  <q-icon name="build" color="amber-4" size="10px" class="q-mr-xs"/>{{ drivePmAlert(d) }}
+                </div>
+                <div v-if="d.fault&&d.fault_code" class="q-mt-xs" style="background:rgba(239,68,68,0.12);border-radius:4px;padding:3px 6px;font-size:9px">
+                  <q-icon name="error" color="red-4" size="10px" class="q-mr-xs"/>
+                  F{{ String(d.fault_code).padStart(5,'0') }} — {{ d.fault_desc }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </q-scroll-area>
   </q-page>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const selectedPlant = ref<string>('all')
 const now = Date.now()
 
-// Equipment master data (simulated)
+// ─── x77 Drive Health Integration ────────────────────────────────────────────
+const baseUrl = typeof window !== 'undefined'
+  ? `http://${window.location.hostname}:8031` : 'http://192.168.21.210:8031'
+const drives       = ref<any[]>([])
+const driveOk      = ref(false)
+const driveLoading = ref(false)
+let   driveTimer: any = null
+
+async function fetchDriveHealth() {
+  driveLoading.value = true
+  try {
+    const res  = await fetch(`${baseUrl}/api/drive-health/all`)
+    const data = await res.json()
+    drives.value = data.drives || []
+    driveOk.value = data.ok === true
+    // Sync op_hours → equipment runHours for matching drives
+    for (const d of drives.value) {
+      const eq = equipment.value.find(e => e.driveId === d.id)
+      if (eq && d.op_hours > 0) eq.runHours = d.op_hours
+    }
+  } catch { driveOk.value = false }
+  finally { driveLoading.value = false }
+}
+
+function driveAlertClass(d: any) {
+  if (d.fault)        return 'pm-drive-fault'
+  if (d.health < 60)  return 'pm-drive-critical'
+  if (d.health < 80 || d.temperature > 60 || d.op_hours > 450) return 'pm-drive-warn'
+  return 'pm-drive-ok'
+}
+
+function drivePmAlert(d: any): string {
+  if (d.op_hours >= 500) return `PM แนะนำ — ชั่วโมงสะสม ${d.op_hours}h ≥ 500h`
+  if (d.op_hours >= 450) return `PM เตือน — เหลืออีก ${500-d.op_hours}h ถึงกำหนด`
+  if (d.temperature > 60) return `อุณหภูมิสูง ${d.temperature}°C — ตรวจสอบระบบระบายความร้อน`
+  if (d.health < 80) return `สุขภาพต่ำ ${d.health}% — แนะนำตรวจสอบ`
+  return ''
+}
+
+onMounted(() => { fetchDriveHealth(); driveTimer = setInterval(fetchDriveHealth, 10000) })
+onUnmounted(() => clearInterval(driveTimer))
+
+// Equipment master — driveId links to G120C drive index (x77)
 const equipment = ref([
-  { id:1, name:'Mixer Motor A1', plant:'1', plantColor:'blue-8', type:'Motor', lastPM:'2026-05-15', intervalDays:90, runHours:312, maxHours:500, status:'OK' },
-  { id:2, name:'Mixer Motor A2', plant:'1', plantColor:'blue-8', type:'Motor', lastPM:'2026-03-10', intervalDays:90, runHours:480, maxHours:500, status:'Due Soon' },
-  { id:3, name:'Pump P101',      plant:'1', plantColor:'blue-8', type:'Pump',  lastPM:'2026-06-01', intervalDays:60, runHours:180, maxHours:300, status:'OK' },
-  { id:4, name:'Mixer Motor B1', plant:'2', plantColor:'teal-8', type:'Motor', lastPM:'2026-04-20', intervalDays:90, runHours:455, maxHours:500, status:'Due Soon' },
-  { id:5, name:'Pump P201',      plant:'2', plantColor:'teal-8', type:'Pump',  lastPM:'2026-06-10', intervalDays:60, runHours:90,  maxHours:300, status:'OK' },
-  { id:6, name:'Agitator AG2',   plant:'2', plantColor:'teal-8', type:'Agitator',lastPM:'2026-02-01',intervalDays:120,runHours:620,maxHours:600,status:'OVERDUE' },
-  { id:7, name:'Mixer Motor C1', plant:'3', plantColor:'indigo-8',type:'Motor', lastPM:'2026-05-01', intervalDays:90, runHours:340, maxHours:500, status:'OK' },
-  { id:8, name:'CIP System',     plant:'3', plantColor:'indigo-8',type:'CIP',   lastPM:'2026-06-15', intervalDays:30, runHours:45,  maxHours:100, status:'OK' },
-  { id:9, name:'Heat Exchanger', plant:'1', plantColor:'blue-8',  type:'HEX',   lastPM:'2026-01-10', intervalDays:180,runHours:820, maxHours:900, status:'Due Soon' },
-  { id:10,name:'Dosing Pump D1', plant:'3', plantColor:'indigo-8',type:'Pump',  lastPM:'2026-06-20', intervalDays:45, runHours:22,  maxHours:150, status:'OK' },
+  { id:1,  name:'Motor MIX1',       plant:'1', plantColor:'blue-8',   type:'Motor',    driveId:0, lastPM:'2026-05-15', intervalDays:90,  runHours:0,   maxHours:500, status:'OK' },
+  { id:2,  name:'Motor MIX2',       plant:'2', plantColor:'teal-8',   type:'Motor',    driveId:1, lastPM:'2026-03-10', intervalDays:90,  runHours:0,   maxHours:500, status:'OK' },
+  { id:3,  name:'Circulation MIX1', plant:'1', plantColor:'blue-8',   type:'Pump',     driveId:2, lastPM:'2026-06-01', intervalDays:60,  runHours:0,   maxHours:300, status:'OK' },
+  { id:4,  name:'Circulation MIX2', plant:'2', plantColor:'teal-8',   type:'Pump',     driveId:3, lastPM:'2026-04-20', intervalDays:60,  runHours:0,   maxHours:300, status:'OK' },
+  { id:5,  name:'Motor MIX3',       plant:'3', plantColor:'indigo-8', type:'Motor',    driveId:4, lastPM:'2026-05-01', intervalDays:90,  runHours:0,   maxHours:500, status:'OK' },
+  { id:6,  name:'Circulation MIX3', plant:'3', plantColor:'indigo-8', type:'Pump',     driveId:5, lastPM:'2026-04-01', intervalDays:60,  runHours:0,   maxHours:300, status:'OK' },
+  { id:7,  name:'Cooling MIX3',     plant:'3', plantColor:'indigo-8', type:'Cooling',  driveId:6, lastPM:'2026-03-15', intervalDays:90,  runHours:0,   maxHours:500, status:'OK' },
+  { id:8,  name:'CIP System',       plant:'1', plantColor:'blue-8',   type:'CIP',      driveId:-1,lastPM:'2026-06-15', intervalDays:30,  runHours:45,  maxHours:100, status:'OK' },
+  { id:9,  name:'Heat Exchanger',   plant:'1', plantColor:'blue-8',   type:'HEX',      driveId:-1,lastPM:'2026-01-10', intervalDays:180, runHours:820, maxHours:900, status:'Due Soon' },
+  { id:10, name:'Dosing Pump D1',   plant:'3', plantColor:'indigo-8', type:'Pump',     driveId:-1,lastPM:'2026-06-20', intervalDays:45,  runHours:22,  maxHours:150, status:'OK' },
 ])
 
 const enriched = computed(() => equipment.value.map(e => {
@@ -240,4 +330,12 @@ const hoursOptions = {
 .pm-card{ background:#120c00;border:1px solid #3a2000;border-radius:12px;height:100%; }
 .pm-row{ padding:3px 0;border-bottom:1px solid #120c00; }
 .pm-row:last-child{ border:none; }
+/* Drive Health cards */
+.pm-drive-card { border-radius:8px;border:1px solid;transition:all 0.3s; }
+.pm-drive-ok   { background:#0a1a0a;border-color:#22c55e; }
+.pm-drive-warn { background:#1a1200;border-color:#f59e0b; }
+.pm-drive-critical { background:#1a0a00;border-color:#ef4444; }
+.pm-drive-fault    { background:#200000;border-color:#ef4444;animation:pm-pulse 2s infinite; }
+.pm-dm { background:#0a0000;border-radius:4px;padding:3px 4px; }
+@keyframes pm-pulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)} 50%{box-shadow:0 0 0 5px rgba(239,68,68,0)} }
 </style>

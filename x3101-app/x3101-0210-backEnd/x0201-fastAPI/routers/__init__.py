@@ -21,6 +21,7 @@ from .router_server_station import router as server_station_router
 from .router_remote_server import router as remote_server_router
 from .router_plc import router as plc_router
 from .router_edge import router as edge_router
+from .router_drive_health import router as drive_health_router
 
 __all__ = [
     "auth_router",
@@ -39,5 +40,6 @@ __all__ = [
     "server_station_router",
     "remote_server_router",
     "plc_router",
-    "edge_router"
+    "edge_router",
+    "drive_health_router"
 ]
