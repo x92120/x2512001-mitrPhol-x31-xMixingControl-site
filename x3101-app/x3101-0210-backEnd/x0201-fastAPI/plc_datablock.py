@@ -90,14 +90,17 @@ def _empty_process(index: int) -> Dict[str, Any]:
     }
 
 
-def _sku_step_to_udt(step: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a single SKU step record to UDT_ProcessStep format."""
+def _sku_step_to_udt(step: Dict[str, Any], scale_factor: float = 1.0) -> Dict[str, Any]:
+    """Convert a single SKU step record to UDT_ProcessStep format.
+    scale_factor: batch_size / standard_recipe_total — scales Require to actual batch qty.
+    """
+    raw_require = _parse_float(step.get("require"), 0.0)
     return {
         "StepNo": _parse_int(step.get("sub_step"), 0),
         "ActionCode": str(step.get("action_code") or step.get("action") or "")[:20],
         "ReCode": str(step.get("re_code") or "")[:20],
         "Destination": _parse_int(step.get("destination"), 0),
-        "Require": _parse_float(step.get("require"), 0.0),
+        "Require": round(raw_require * scale_factor, 4) if raw_require > 0 else 0.0,
         "LowTol": _parse_float(step.get("low_tol"), 0.0),
         "HighTol": _parse_float(step.get("high_tol"), 0.0),
         "Temperature": _parse_float(step.get("temperature"), 0.0),
@@ -153,6 +156,16 @@ def build_recipe_payload(
         key=lambda x: _parse_int(x[0], 9999)
     )
 
+    # --- Compute scale_factor: batch_size / sum(require) across all steps ---
+    # Matches frontend productionRequire() fallback logic for consistency with DB1520
+    _std_total = sum(
+        _parse_float(s.get("require"), 0.0)
+        for s in sku_steps
+        if _parse_float(s.get("require"), 0.0) > 0
+    )
+    _batch_size = _parse_float(batch_size, 0.0)
+    scale_factor = (_batch_size / _std_total) if (_std_total > 0 and _batch_size > 0) else 1.0
+
     # --- Build 32 process slots ---
     processes = []
     for i in range(MAX_PROCESSES):
@@ -167,7 +180,7 @@ def build_recipe_payload(
             # Build UDT steps (pad to 8)
             udt_steps = []
             for s in active_steps:
-                udt_steps.append(_sku_step_to_udt(s))
+                udt_steps.append(_sku_step_to_udt(s, scale_factor=scale_factor))
             while len(udt_steps) < MAX_STEPS_PER_PROCESS:
                 udt_steps.append(_empty_step())
 

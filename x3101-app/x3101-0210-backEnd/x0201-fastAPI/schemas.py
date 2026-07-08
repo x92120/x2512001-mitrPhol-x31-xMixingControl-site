@@ -259,6 +259,10 @@ class SkuStepBase(BaseModel):
     
     action_description: Optional[str] = None
 
+    # PLC interlock fields (added from migration)
+    plc_step_no: Optional[int] = 0
+    phase_type_code: Optional[int] = 0
+
 class SkuStepCreate(SkuStepBase):
     pass
 

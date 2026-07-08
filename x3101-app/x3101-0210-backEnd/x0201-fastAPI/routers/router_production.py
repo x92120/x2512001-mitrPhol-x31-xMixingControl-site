@@ -2313,6 +2313,7 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
         return _re.sub(r'^(p)(0+)', lambda m: m.group(1), s) if s else s
 
     recipe_map: dict = {}
+    recipe_steps: dict = {}
     if sku_id:
         for ss in db.query(models.SkuStep).filter(models.SkuStep.sku_id == sku_id).all():
             pid   = str(ss.phase_id    or '').strip()
@@ -2323,6 +2324,8 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             if pnum:  recipe_map[(pnum,  sub)] = ss
             if pnorm and pnorm != pnum:
                 recipe_map[(pnorm, sub)] = ss  # p010 key for legacy log match
+            if sub is not None:
+                recipe_steps[sub] = ss
 
     def fmt_ts(dt):
         return dt.isoformat() if dt else None
@@ -2343,6 +2346,116 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
         seen[key] = log  # overwrite → last one wins (logs already sorted by completed_at ASC)
     deduped_logs = list(seen.values())  # dict preserves insertion order (Python 3.7+)
 
+    # Query all intake lot IDs and map to vendor lot_id for this batch
+    re_code_lots = {}
+    try:
+        items = db.query(models.PreBatchItem).filter(
+            models.PreBatchItem.batch_id == batch_id_str,
+            models.PreBatchItem.wh.in_(['SPP', 'FH', 'spp', 'fh'])
+        ).all()
+        recs = db.query(models.PreBatchRec).join(
+            models.PreBatchReq, models.PreBatchRec.req_id == models.PreBatchReq.id
+        ).filter(
+            models.PreBatchRec.batch_record_id.like(f"{batch_id_str}%"),
+            models.PreBatchReq.wh.in_(['SPP', 'FH', 'spp', 'fh'])
+        ).all()
+        
+        intake_lot_ids = set()
+        for item in items:
+            if item.intake_lot_id:
+                intake_lot_ids.add(item.intake_lot_id)
+            for org in item.origins:
+                if org.intake_lot_id:
+                    intake_lot_ids.add(org.intake_lot_id)
+        for rec in recs:
+            if rec.intake_lot_id:
+                intake_lot_ids.add(rec.intake_lot_id)
+            for org in rec.origins:
+                if org.intake_lot_id:
+                    intake_lot_ids.add(org.intake_lot_id)
+                    
+        lot_map = {}
+        if intake_lot_ids:
+            intake_rows = db.query(
+                models.IngredientIntakeList.intake_lot_id,
+                models.IngredientIntakeList.lot_id
+            ).filter(models.IngredientIntakeList.intake_lot_id.in_(list(intake_lot_ids))).all()
+            for r_lot in intake_rows:
+                if r_lot.lot_id:
+                    lot_map[r_lot.intake_lot_id] = r_lot.lot_id
+                    
+        for item in items:
+            r_code = item.re_code
+            if not r_code:
+                continue
+            if r_code not in re_code_lots:
+                re_code_lots[r_code] = set()
+            if item.intake_lot_id:
+                val = lot_map.get(item.intake_lot_id)
+                if not val and not item.intake_lot_id.startswith("intake-"):
+                    val = item.intake_lot_id
+                if val and not val.startswith("intake-"):
+                    re_code_lots[r_code].add(val)
+            for org in item.origins:
+                if org.intake_lot_id:
+                    val = lot_map.get(org.intake_lot_id)
+                    if not val and not org.intake_lot_id.startswith("intake-"):
+                        val = org.intake_lot_id
+                    if val and not val.startswith("intake-"):
+                        re_code_lots[r_code].add(val)
+                    
+        for rec in recs:
+            r_code = rec.re_code
+            if not r_code:
+                continue
+            if r_code not in re_code_lots:
+                re_code_lots[r_code] = set()
+            if rec.intake_lot_id:
+                val = lot_map.get(rec.intake_lot_id)
+                if not val and not rec.intake_lot_id.startswith("intake-"):
+                    val = rec.intake_lot_id
+                if val and not val.startswith("intake-"):
+                    re_code_lots[r_code].add(val)
+            for org in rec.origins:
+                if org.intake_lot_id:
+                    val = lot_map.get(org.intake_lot_id)
+                    if not val and not org.intake_lot_id.startswith("intake-"):
+                        val = org.intake_lot_id
+                    if val and not val.startswith("intake-"):
+                        re_code_lots[r_code].add(val)
+    except Exception as e:
+        logger.error(f"Error mapping lot numbers for batch {batch_id_str}: {e}")
+
+    # Build normalized re_code map for lookup
+    norm_map = {}
+    for rc, lots in re_code_lots.items():
+        if not rc:
+            continue
+        norm = "".join(c.lower() for c in rc if c.isalnum())
+        if norm:
+            norm_map[norm] = lots
+
+    def get_lots_for_re_code(log_rc: str):
+        if not log_rc:
+            return set()
+        log_rc_norm = "".join(c.lower() for c in log_rc if c.isalnum())
+        if not log_rc_norm:
+            return set()
+        # 1. Try exact normalized match
+        if log_rc_norm in norm_map:
+            return norm_map[log_rc_norm]
+        # 2. Try prefix/substring match
+        for norm_key, lots in norm_map.items():
+            if norm_key.startswith(log_rc_norm) or log_rc_norm.startswith(norm_key):
+                return lots
+        # 3. Fallback: try case-insensitive prefix match on raw strings
+        log_rc_lower = log_rc.lower().strip()
+        for raw_rc, lots in re_code_lots.items():
+            raw_rc_lower = raw_rc.lower().strip()
+            if raw_rc_lower.startswith(log_rc_lower) or log_rc_lower.startswith(raw_rc_lower):
+                return lots
+        return set()
+
     result_logs = []
     for log in deduped_logs:
 
@@ -2350,6 +2463,14 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
         # Try all possible recipe matches (raw, normalized)
         recipe = (recipe_map.get((pid, log.step_id)) or
                   recipe_map.get((norm_pnum(pid), log.step_id)))
+        
+        log_re_code = log.re_code or (recipe.re_code if recipe else None)
+        lot_no_str = None
+        if log_re_code:
+            lots = get_lots_for_re_code(log_re_code)
+            if lots:
+                lot_no_str = ", ".join(sorted(list(lots)))
+
         result_logs.append({
             "phase_id":           log.phase_id,
             "phase_description":  phase_desc_map.get(str(log.phase_id or '').strip())
@@ -2360,7 +2481,8 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "action":             recipe.action             if recipe else None,
             "action_description": (recipe.action_description if recipe else None)
                                   or action_map.get(str(log.action_code or '')),
-            "re_code":            log.re_code or (recipe.re_code if recipe else None),
+            "re_code":            log_re_code,
+            "lot_no":             lot_no_str,
             "target_value":       log.target_value or (recipe.require if recipe else None),
             "actual_value":       log.actual_value,
             "uom":                (recipe.uom if recipe else None) or "kg",
@@ -2377,28 +2499,48 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "operator2":          log.operator2,
         })
 
+    def check_qc_val_ok(actual_val, target_val, sp_str, default_tol):
+        if actual_val is None:
+            return None
+        if sp_str:
+            s = str(sp_str).strip()
+            if '-' in s:
+                parts = s.split('-')
+                if len(parts) == 2:
+                    try:
+                        low = float(parts[0].strip())
+                        high = float(parts[1].strip())
+                        return (low <= actual_val <= high)
+                    except ValueError:
+                        pass
+        if target_val is not None:
+            return abs(actual_val - target_val) <= default_tol
+        return None
+
+    qc_response = []
+    for qc in qc_records:
+        ss = recipe_steps.get(qc.step_id)
+        brix_sp = ss.brix_sp if ss else None
+        ph_sp = ss.ph_sp if ss else None
+        qc_response.append({
+            "id":          qc.id,
+            "batch_id":    qc.batch_id,
+            "step_id":     qc.step_id,
+            "brix_target": qc.brix_target,
+            "brix_actual": qc.brix_actual,
+            "brix_ok":     check_qc_val_ok(qc.brix_actual, qc.brix_target, brix_sp, 0.5),
+            "ph_target":   qc.ph_target,
+            "ph_actual":   qc.ph_actual,
+            "ph_ok":       check_qc_val_ok(qc.ph_actual, qc.ph_target, ph_sp, 0.1),
+            "recorded_at": fmt_ts(qc.recorded_at),
+            "operator":    qc.operator,
+        })
+
     return {
         "batch_id":   batch_id_str,
         "sku_id":     sku_id,
         "logs":       result_logs,
-        "qc_records": [
-            {
-                "id":          qc.id,
-                "batch_id":    qc.batch_id,
-                "step_id":     qc.step_id,
-                "brix_target": qc.brix_target,
-                "brix_actual": qc.brix_actual,
-                "brix_ok":     (abs(qc.brix_actual - qc.brix_target) <= 0.5)
-                               if (qc.brix_actual is not None and qc.brix_target is not None) else None,
-                "ph_target":   qc.ph_target,
-                "ph_actual":   qc.ph_actual,
-                "ph_ok":       (abs(qc.ph_actual - qc.ph_target) <= 0.1)
-                               if (qc.ph_actual is not None and qc.ph_target is not None) else None,
-                "recorded_at": fmt_ts(qc.recorded_at),
-                "operator":    qc.operator,
-            }
-            for qc in qc_records
-        ],
+        "qc_records": qc_response,
     }
 
 

@@ -33,7 +33,7 @@ class DB1510StepCommand(BaseModel):
     DB1510: Step Command (App → PLC)
     Matches the 88-byte type_StepCommand on PLC at 192.168.21.210.
     
-    Byte Map (88 bytes):
+    Byte Map (94 bytes) — matches TIA Portal type_StepCommand:
       +0    Batch_ID       String[20](22)
       +22   HMI_Command    Int(2)
       +24   Step_No        Int(2)
@@ -46,8 +46,11 @@ class DB1510StepCommand(BaseModel):
       +76   Agitator_SP    Real(4)
       +80   HighShear_SP   Real(4)
       +84   Step_Time      Int(2)
-      +86   Cmd_NewStep    Bool(1)
-      +87   Padding        Byte(1)
+      +86.0 Cmd_NewStep    Bool (bit 0)
+      +86.1 Free-SCAN      Bool (bit 1) — PLC controlled, send 0
+      +87   PHASE_TYPE     Byte(1)   — PLC writes this, send 0
+      +88   Action_Code    DInt(4)   — numeric signed int e.g. 10030
+      +92   z              Int(2)    — spare
     """
     Batch_ID: str = Field("", max_length=20)
     HMI_Command: int = 0         # 0=IDLE, 1=START, 2=PAUSE, 3=ABORT, 9=RESET
@@ -62,12 +65,13 @@ class DB1510StepCommand(BaseModel):
     HighShear_SP: float = 0.0
     Step_Time: int = 0            # Seconds
     Cmd_NewStep: bool = False
+    Action_Code: int = 0          # Numeric action code e.g. 10030 → DInt at +88
 
     def serialize(self) -> bytes:
         """
         Convert to S7-compatible byte array for DB1510.
         Matches TIA Portal type_StepCommand layout exactly.
-        Total: 88 bytes.
+        Total: 94 bytes.
         """
         payload = b""
         payload += pack_s7_string(self.Batch_ID, 20)       # +0   String[20](22)
@@ -83,9 +87,11 @@ class DB1510StepCommand(BaseModel):
         payload += struct.pack('>f', self.HighShear_SP)    # +80  Real(4)
         payload += struct.pack('>h', self.Step_Time)       # +84  Int(2)
         payload += struct.pack('?', self.Cmd_NewStep)      # +86  Bool(1)
-        payload += b'\x00'                                 # +87  Padding(1)
-        
-        return payload  # 88 bytes
+        payload += struct.pack("B", 0)                     # +87  PHASE_TYPE Byte — PLC writes this
+
+        payload += struct.pack(">i", self.Action_Code)     # +88  Action_Code DInt signed(4)
+        payload += struct.pack(">h", 0)                    # +92  z Int(2) spare
+        return payload  # 94 bytes
 
 
 # =============================================================================

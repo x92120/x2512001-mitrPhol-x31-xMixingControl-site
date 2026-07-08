@@ -375,6 +375,7 @@ const buildCurrentStepPayload = () => {
         Step_Status: 1,
         Material_ID: s.mat_sap_code || '',
         Re_Code_ID: s.re_code || '',
+        Free_Scan: s.re_code && (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH') ? true : false,
         Req_Qty: productionRequire(s),
         TT_SP: [Number(s.temperature || 0)],
         Agitator_Speed: Number(s.agitator_rpm || 0),
@@ -981,6 +982,20 @@ onUnmounted(() => {
 // Prebatch items contain the actual production weights (required_volume)
 // which are already calculated for the specific batch size.
 const prebatchWeightMap = ref<Record<string, number>>({})
+const prebatchIdMap = ref<Record<string, string>>({})
+const prebatchWhMap = ref<Record<string, string>>({})
+
+const getStepWh = (step: any): string => {
+    const rc = (step.re_code || '').trim()
+    if (!rc) return ''
+    if (prebatchWhMap.value[rc]) return prebatchWhMap.value[rc]
+    const lower = rc.toLowerCase()
+    if (prebatchWhMap.value[lower]) return prebatchWhMap.value[lower]
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const rcNorm = norm(rc)
+    const key = Object.keys(prebatchWhMap.value).find(k => norm(k) === rcNorm)
+    return key ? prebatchWhMap.value[key] : ''
+}
 
 const fetchPrebatchWeights = async (batchId: string) => {
     try {
@@ -989,18 +1004,43 @@ const fetchPrebatchWeights = async (batchId: string) => {
             headers: getAuthHeader() as Record<string, string>
         })
         const map: Record<string, number> = {}
+        const idMap: Record<string, string> = {}
+        const whMap: Record<string, string> = {}
         for (const item of (data || [])) {
             const rc = (item.re_code || '').trim()
             if (rc) {
-                // Sum volumes if same re_code appears multiple times
                 map[rc] = (map[rc] || 0) + (Number(item.required_volume) || 0)
+                if (item.batch_record_id) {
+                    if (idMap[rc] && !idMap[rc].includes(item.batch_record_id)) {
+                        idMap[rc] += `, ${item.batch_record_id}`
+                    } else {
+                        idMap[rc] = item.batch_record_id
+                    }
+                }
+                if (item.wh) {
+                    if (whMap[rc] && !whMap[rc].includes(item.wh)) {
+                        whMap[rc] += `, ${item.wh}`
+                    } else {
+                        whMap[rc] = item.wh
+                    }
+                }
             }
         }
         prebatchWeightMap.value = map
-        console.log('[Production Weights] Loaded from batch data:', map)
+        prebatchIdMap.value = idMap
+        const whMapFinal: Record<string, string> = {}
+        for (const [k, v] of Object.entries(whMap)) {
+            whMapFinal[k] = v as string
+            whMapFinal[k.toLowerCase()] = v as string
+        }
+        prebatchWhMap.value = whMapFinal
+        console.log('[Production Weights] Loaded weights:', map)
+        console.log('[Production Weights] WH map:', whMapFinal)
     } catch (e) {
         console.warn('[Production Weights] Could not fetch prebatch items, using standard recipe weights', e)
         prebatchWeightMap.value = {}
+        prebatchIdMap.value = {}
+        prebatchWhMap.value = {}
     }
 }
 

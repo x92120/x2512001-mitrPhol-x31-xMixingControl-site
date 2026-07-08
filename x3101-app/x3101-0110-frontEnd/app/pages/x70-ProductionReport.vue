@@ -191,15 +191,14 @@ const selectBatch = async (batch: any) => {
         let _startStr    = '—'
         if (s.completed_at) {
           const tNow = new Date(s.completed_at).getTime()
-          const prev = rawLogs.slice(0, i).reverse().find((p: any) => p.completed_at && p.phase_id === s.phase_id)
-          if (prev) {
+          // ── FIX: prev step overall in the batch to ensure continuous timestamps across phases
+          const prev = i > 0 ? rawLogs[i - 1] : null
+          if (prev && prev.completed_at) {
             const tPrev = new Date(prev.completed_at).getTime()
-            // Start time = previous step's completed_at (HH:MM only)
-            const dp = new Date(prev.completed_at)
-            _startStr = fmtTime(prev.completed_at)  // full DD/MM/YY HH:MM like Completed
+            _startStr = fmtTime(prev.completed_at)
             // Duration
             const sec = Math.round((tNow - tPrev) / 1000)
-            if (sec > 0) {
+            if (sec >= 0) {
               const h = Math.floor(sec / 3600)
               const m = Math.floor((sec % 3600) / 60)
               _durationStr = h > 0 ? `${h}:${pad2(m)}` : `0:${pad2(m)}`
@@ -313,24 +312,9 @@ const exportPdf = () => {
     }
     const pad2 = (n: number) => String(n).padStart(2,'0')
     const rows = phase.steps.map((s: any, i: number) => {
-      let dur      = '—'
-      let startStr = '—'
-      if (s.completed_at && i > 0) {
-        const prev = phase.steps.slice(0, i).reverse().find((p: any) => p.completed_at)
-        if (prev) {
-          const dp = new Date(prev.completed_at)
-          startStr = s._startStr || (() => {
-            const pad2i = (n: number) => String(n).padStart(2,'0')
-            return `${pad2i(dp.getDate())}/${pad2i(dp.getMonth()+1)}/${String(dp.getFullYear()).slice(-2)} ${pad2i(dp.getHours())}:${pad2i(dp.getMinutes())}`
-          })()
-          const sec = Math.round((new Date(s.completed_at).getTime() - dp.getTime()) / 1000)
-          if (sec > 0) {
-            const h = Math.floor(sec / 3600)
-            const m = Math.floor((sec % 3600) / 60)
-            dur = h > 0 ? `${h}:${pad2(m)}` : `0:${pad2(m)}`
-          }
-        }
-      }
+      // ── FIX: Use the pre-computed _startStr and _durationStr values directly
+      const dur      = s._durationStr || '—'
+      const startStr = s._startStr || '—'
       return `
       <tr>
         <td style="text-align:center;padding:2px 4px">

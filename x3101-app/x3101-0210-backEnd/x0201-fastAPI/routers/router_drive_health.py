@@ -80,8 +80,8 @@ DRIVES = [
 # Total = 40 bytes
 
 DB_HEALTH   = 150  # เปลี่ยนจาก 100 → ชนกับ DB เดิมบน PLC .51
-STRIDE      = 40   # bytes per drive
-TOTAL_BYTES = STRIDE * len(DRIVES)  # 280 bytes
+STRIDE      = 56   # bytes per drive
+TOTAL_BYTES = STRIDE * len(DRIVES)  # 392 bytes
 
 # ─── G120C Fault Code Database (from SINAMICS G120C List Manual) ─────────────
 # Source: Siemens SINAMICS G120C Operating Instructions / List Manual
@@ -217,6 +217,15 @@ def parse_drive_bytes(data: bytes, drive_idx: int, drive_info: Dict) -> Dict[str
     # StatusFlags WORD at +28: bit0=Ready, bit2=Running, bit3=Fault, bit7=Alarm, bit8=Busy, bit9=Error
     status_flags = struct.unpack_from('>H', data, base + 28)[0]
     # +30 _Pad (WORD), +32 RDREC_Status (DWORD), +36 _Pad2 (DWORD)
+    
+    # Expanded Telemetry (v2 UDT: 56 bytes)
+    try:
+        output_v   = struct.unpack_from('>f', data, base + 40)[0]
+        torque_pct = struct.unpack_from('>f', data, base + 44)[0]
+        power_kw   = struct.unpack_from('>f', data, base + 48)[0]
+        energy_kwh = struct.unpack_from('>f', data, base + 52)[0]
+    except struct.error:
+        output_v = torque_pct = power_kw = energy_kwh = 0.0
 
     ready        = bool(status_flags & (1 << 0))
     running      = bool(status_flags & (1 << 2))
@@ -247,6 +256,10 @@ def parse_drive_bytes(data: bytes, drive_idx: int, drive_info: Dict) -> Dict[str
         "current_pct":   safe_float(current_pct),   # keep for compatibility
         "temperature":   safe_float(temperature),
         "dc_voltage":    safe_float(dc_voltage),
+        "output_v":      safe_float(output_v),
+        "torque_pct":    safe_float(torque_pct),
+        "power_kw":      safe_float(power_kw),
+        "energy_kwh":    safe_float(energy_kwh),
         "op_hours":      max(0, op_hours),
         # r0945 keeps old code after clear — only show if ZSW1.bit3 (fault) is truly active
         "fault_code":    fault_code if fault else 0,

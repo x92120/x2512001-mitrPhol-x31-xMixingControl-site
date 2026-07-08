@@ -4,6 +4,11 @@
       <q-icon name="precision_manufacturing" size="3rem" color="primary" class="q-mr-md" />
       <div class="text-h3 text-grey-9 text-weight-bolder" style="letter-spacing: 1px;">Plant Production Monitor</div>
       <q-space />
+      <!-- Server & Energy Dashboard Button -->
+      <q-btn unelevated rounded color="blue-grey-9" text-color="white"
+        icon="dns" label="SERVER" class="q-mr-xs shadow-4"
+        style="font-weight:700;letter-spacing:0.5px"
+        @click="openServerDashboard" />
       <!-- OEE Dashboard Button -->
       <q-btn unelevated rounded color="deep-purple-8" text-color="white"
         icon="analytics" label="OEE" class="q-mr-xs shadow-4"
@@ -203,6 +208,12 @@ const getTempColor = (temp: number | undefined) => {
   if (t > 50) return 'text-warning'
   return 'text-green-8'
 }
+
+// Server Dashboard
+function openServerDashboard() {
+  window.open('http://192.168.121.23:9200/?v=1.3', '_blank')
+}
+
 </script>
 
 <style scoped>

@@ -88,16 +88,18 @@
               <thead>
                 <tr style="background:#c5cae9">
                   <th style="border:1px solid #9fa8da;padding:3px 6px;text-align:left">Item</th>
-                  <th style="border:1px solid #9fa8da;padding:3px;text-align:right;width:70px">Require</th>
-                  <th style="border:1px solid #9fa8da;padding:3px;text-align:right;width:70px">Actual</th>
+                  <th style="border:1px solid #9fa8da;padding:3px 4px;text-align:left;width:95px">Lot No.</th>
+                  <th style="border:1px solid #9fa8da;padding:3px;text-align:right;width:55px">Require</th>
+                  <th style="border:1px solid #9fa8da;padding:3px;text-align:right;width:55px">Actual</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="(mat, mi) in padMaterials(half, 9)" :key="mi"
                   :style="mi%2===0 ? 'background:#f9f9f9' : ''">
-                  <td style="border:1px solid #ddd;padding:2px 6px;color:#1565c0;font-weight:600">{{ mat.re_code || 'x' }}</td>
-                  <td style="border:1px solid #ddd;padding:2px 6px;text-align:right">{{ mat.target_value != null ? Number(mat.target_value).toFixed(3) : '0.000' }}</td>
-                  <td style="border:1px solid #ddd;padding:2px 6px;text-align:right;color:#2e7d32;font-weight:700">{{ mat.actual_value != null ? Number(mat.actual_value).toFixed(3) : '0.000' }}</td>
+                  <td style="border:1px solid #ddd;padding:2px 6px;color:#1565c0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px" :title="mat.re_code">{{ mat.re_code || 'x' }}</td>
+                  <td style="border:1px solid #ddd;padding:2px 4px;color:#555;font-size:7.5pt;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:95px" :title="mat.lot_no">{{ mat.lot_no || '—' }}</td>
+                  <td style="border:1px solid #ddd;padding:2px 6px;text-align:right">{{ mat.target_value != null && mat.re_code !== 'x' ? Number(mat.target_value).toFixed(3) : '0.000' }}</td>
+                  <td style="border:1px solid #ddd;padding:2px 6px;text-align:right;color:#2e7d32;font-weight:700">{{ mat.actual_value != null && mat.re_code !== 'x' ? Number(mat.actual_value).toFixed(3) : '0.000' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -135,7 +137,7 @@
               <!-- Brix actual/target from QC records -->
               <td style="border:1px solid #ddd;padding:3px;text-align:center">
                 <template v-if="ps.brix_actual != null">
-                  <span :style="ps.brix_target != null && Math.abs(ps.brix_actual - ps.brix_target) <= 0.5 ? 'color:#2e7d32;font-weight:700' : 'color:#c62828;font-weight:700'">
+                  <span :style="ps.brix_ok ? 'color:#2e7d32;font-weight:700' : 'color:#c62828;font-weight:700'">
                     {{ Number(ps.brix_actual).toFixed(1) }}
                   </span>
                   <span v-if="ps.brix_target != null" style="color:#999;font-size:7pt">/{{ Number(ps.brix_target).toFixed(1) }}</span>
@@ -145,7 +147,7 @@
               <!-- pH actual/target from QC records -->
               <td style="border:1px solid #ddd;padding:3px;text-align:center">
                 <template v-if="ps.ph_actual != null">
-                  <span :style="ps.ph_target != null && Math.abs(ps.ph_actual - ps.ph_target) <= 0.1 ? 'color:#1565c0;font-weight:700' : 'color:#c62828;font-weight:700'">
+                  <span :style="ps.ph_ok ? 'color:#1565c0;font-weight:700' : 'color:#c62828;font-weight:700'">
                     {{ Number(ps.ph_actual).toFixed(2) }}
                   </span>
                   <span v-if="ps.ph_target != null" style="color:#999;font-size:7pt">/{{ Number(ps.ph_target).toFixed(2) }}</span>
@@ -155,7 +157,7 @@
               <!-- OK/NG -->
               <td style="border:1px solid #ddd;padding:3px;text-align:center;font-weight:700">
                 <template v-if="ps.brix_actual != null || ps.ph_actual != null">
-                  <span v-if="(ps.brix_actual == null || (ps.brix_target != null && Math.abs(ps.brix_actual - ps.brix_target) <= 0.5)) && (ps.ph_actual == null || (ps.ph_target != null && Math.abs(ps.ph_actual - ps.ph_target) <= 0.1))" style="color:#2e7d32">OK</span>
+                  <span v-if="(ps.brix_actual == null || ps.brix_ok) && (ps.ph_actual == null || ps.ph_ok)" style="color:#2e7d32">OK</span>
                   <span v-else style="color:#c62828">NG</span>
                 </template>
               </td>
@@ -257,17 +259,30 @@ const processSteps = computed(() => {
     }
   }
 
-  // Sort phases by startMs (chronological order)
+  // Sort phases by stopMs (MAX completed_at) — ensures interleaved phases
+  // like A1020 (which overlaps p059) are ordered by actual completion time.
   const phaseEntries = Object.entries(phaseMap).sort(
-    ([, a], [, b]) => a.startMs - b.startMs
+    ([, a], [, b]) => a.stopMs - b.stopMs
   )
 
-  // For temp-controlled phases (step_time=0, startMs===stopMs):
-  // Estimate duration = this phase's stopMs − previous phase's stopMs
+  // ── FIX v3: Start of each phase = Stop of the previous phase ─────────────
+  // Phases are sorted by stopMs so interleaved steps (e.g. A1020 inside p059)
+  // are in the correct completion order. prev.stopMs is always <= cur.stopMs.
   for (let i = 1; i < phaseEntries.length; i++) {
-    const [, cur] = phaseEntries[i]
+    const [, cur]  = phaseEntries[i]
     const [, prev] = phaseEntries[i - 1]
-    if (cur.totalSec === 0 && cur.startMs === cur.stopMs && prev.stopMs) {
+    if (prev.stopMs) {
+      cur.startMs  = prev.stopMs
+      cur.startRaw = prev.stopRaw
+    }
+  }
+
+  // Infer duration for single-log phases (startMs===stopMs after fix)
+  // Calculates duration as actual time gap since the previous phase ended.
+  for (let i = 1; i < phaseEntries.length; i++) {
+    const [, cur]  = phaseEntries[i]
+    const [, prev] = phaseEntries[i - 1]
+    if (cur.startMs === cur.stopMs && prev.stopMs) {
       const inferredSec = Math.round((cur.stopMs - prev.stopMs) / 1000)
       if (inferredSec > 0 && inferredSec < 86400) {   // sanity: < 24 h
         cur.inferredSec = inferredSec
@@ -309,25 +324,27 @@ const processSteps = computed(() => {
     const start = ps.startRaw ? fmtHM(ps.startRaw) : '—'
     const stop  = ps.stopRaw  ? fmtHM(ps.stopRaw)  : '—'
     // Duration priority:
-    // 1) Σ step_time from recipe (timer-based steps)
-    // 2) inferred from prev-phase stop (temp-controlled steps)
-    // 3) stop-start diff (multi-step phases)
+    // 1) Actual elapsed time of this phase: stopMs - startMs (if stop != start)
+    // 2) Inferred duration from previous phase completion (if start == stop)
+    // 3) Fallback: Σ step_time from recipe configuration
     let dur: string | null = null
-    if (ps.totalSec > 0) {
-      dur = fmtHMS(ps.totalSec)
-    } else if (ps.inferredSec) {
-      dur = fmtHMS(ps.inferredSec)
-    } else if (ps.startMs && ps.stopMs && ps.startMs !== ps.stopMs) {
+    if (ps.startMs && ps.stopMs && ps.stopMs !== ps.startMs) {
       const sec = Math.round((ps.stopMs - ps.startMs) / 1000)
       if (sec > 0) dur = fmtHMS(sec)
+    } else if (ps.inferredSec) {
+      dur = fmtHMS(ps.inferredSec)
+    } else if (ps.totalSec > 0) {
+      dur = fmtHMS(ps.totalSec)
     }
     const qc = qcByPhase[pid] || null
     return {
       ...ps, start, stop, duration: dur,
       brix_actual: qc?.brix_actual ?? null,
       brix_target: qc?.brix_target ?? null,
+      brix_ok:     qc?.brix_ok     ?? null,
       ph_actual:   qc?.ph_actual   ?? null,
       ph_target:   qc?.ph_target   ?? null,
+      ph_ok:       qc?.ph_ok       ?? null,
     }
   })
 })
@@ -374,7 +391,7 @@ function fmtHMS(sec: number) {
 }
 function padMaterials(arr: any[], n: number) {
   const out = [...arr]
-  while (out.length < n) out.push({ re_code: 'x', target_value: 0, actual_value: 0 })
+  while (out.length < n) out.push({ re_code: 'x', target_value: 0, actual_value: 0, lot_no: null })
   return out
 }
 

@@ -65,7 +65,7 @@ def sync_batch_to_edge(
                 VALUES (:sku, :phase, :phase_id, :step_id, :rw, :rt, :rar, :rph, :rb, :rtime)
             """), {
                 "sku": sku_code,
-                "phase": step.phase_number or 1,
+                "phase": int(''.join(c for c in str(step.phase_number) if c.isdigit())) if step.phase_number and any(c.isdigit() for c in str(step.phase_number)) else 1,
                 "phase_id": step.phase_id or "UNKNOWN",
                 "step_id": step.sub_step,
                 "rw": step.require or 0,

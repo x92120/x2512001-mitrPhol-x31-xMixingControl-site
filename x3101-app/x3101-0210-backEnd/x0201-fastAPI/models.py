@@ -4,7 +4,7 @@ SQLAlchemy ORM Models
 All database tables and read-only views for the xMixing system.
 """
 from sqlalchemy import (  # type: ignore[import-untyped]
-    Column, Integer, String, Enum, TIMESTAMP, text, DateTime,
+    Column, Integer, SmallInteger, String, Enum, TIMESTAMP, text, DateTime,
     JSON, Float, ForeignKey, Date, Boolean, func,
 )
 from sqlalchemy.orm import relationship  # type: ignore[import-untyped]
@@ -209,6 +209,8 @@ class SkuStep(Base):
     brix_sp = Column(String(50))
     ph_sp = Column(String(50))
     action_description = Column(String(200))
+    plc_step_no = Column(SmallInteger, default=0)
+    phase_type_code = Column(SmallInteger, default=0)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), onupdate=func.now())
     sku = relationship("Sku", back_populates="steps", foreign_keys=[sku_id], primaryjoin="Sku.sku_id == SkuStep.sku_id")
