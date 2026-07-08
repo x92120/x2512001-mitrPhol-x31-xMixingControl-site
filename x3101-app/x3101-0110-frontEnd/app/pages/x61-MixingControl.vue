@@ -37,6 +37,32 @@ const plcStepDescriptions: Record<number, string> = {
   28: "End STEP"
 }
 
+// ── Phase_Type + Action_Code → PLC Step Number (Even: 2,4,6...28) ──
+const getPlcStepNumber = (phaseType: number, actionCode: number): number => {
+  switch (phaseType) {
+    case 1: // A1010 — Auto Batching Major
+      return actionCode < 20000 ? 4 : 6
+    case 2: // A1020 — High Shear / Preblend
+      return 8
+    case 3: // D1010 — Dissolve Minor
+      return 14
+    case 4: // D1030 — Disperse Third
+      return 18
+    case 5: // x1010 — Process 1
+      if (actionCode === 30500) return 12        // Pre-Heat
+      if (actionCode === 20020 || actionCode === 20050) return 22  // QC
+      return 14                                  // Minor fill
+    case 6: // x1020 — Process 2
+      return 16
+    case 7: // x1030 — Process 3
+      return actionCode === 30600 ? 26 : 20      // Transfer or Pasteurize
+    case 8: // x1040 — Transfer/End
+      return 26
+    default:
+      return 0   // Stand By
+  }
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -377,6 +403,7 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
                     id: seq, // Prevent undefined === undefined bug
                     phase_number: 'p' + String(s.phase_no).padStart(3, '0'),
                     phase_id: s.phase_id,
+                    phase_type_code: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String(s.phase_id||'').includes(k))||'')] ?? 0,
                     sub_step: s.sub_step,
                     action_code: s.action_code,
                     action_description: dbActionMap.value[s.action_code] || '',
@@ -420,7 +447,9 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
                         const key = `${pnum}__${ds.sub_step}`
                         brixPhMap[key] = { brix_sp: ds.brix_sp, ph_sp: ds.ph_sp,
                                            operation_brix_record: ds.operation_brix_record,
-                                           operation_ph_record: ds.operation_ph_record }
+                                           operation_ph_record: ds.operation_ph_record,
+                                           phase_type_code: ds.phase_type_code ?? 0,
+                                           plc_step_no: ds.plc_step_no ?? 0 }
                     }
                     skuSteps.value = skuSteps.value.map((s: any) => {
                         const key = `${s.phase_number}__${s.sub_step}`
@@ -711,6 +740,7 @@ const buildCurrentStepPayload = () => {
         Step_Status: 1,
         Material_ID: s.mat_sap_code || '',
         Re_Code_ID: s.re_code || '',
+        Free_Scan: s.re_code && (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH') ? true : false,
         Req_Qty: productionRequire(s),
         TT_SP: [Number(s.temperature || 0)],
         Agitator_Speed: Number(s.agitator_rpm || 0),
@@ -850,7 +880,8 @@ const handlePlcMessage = (topic: string, payload: any) => {
             const requiredWeight = productionRequire(currentCompletedStep)
             if (requiredWeight > 0) {
                 // Prefer scanned volume (SPP/FH), then live step scale weight
-                const scannedVol = scannedVolumeMap.value[rc]
+                const scanKey = `${currentCompletedStep.phase_number}|${rc}`
+                const scannedVol = scannedVolumeMap.value[scanKey]
                 const actualWeight = scannedVol != null
                     ? scannedVol
                     : getStepLiveWeight(currentCompletedStep)
@@ -1011,6 +1042,13 @@ const sendStepToPLC = (index: number) => {
         PH_Target: Number(s.ph_sp || 0),
         Brix_Target: Number(s.brix_sp || 0),
         
+        // Phase type + action code (for PLC interlock)
+        Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? Number((s as any).phase_type_code || 0),
+        Action_Code: Number((s as any).action_code || 0),
+        Step_OF_PLC: getPlcStepNumber(
+          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
+          Number((s as any).action_code || 0)
+        ),
         // Command Flags
         HMI_Command: 1, // 1=START
         Cmd_NewStep: true,
@@ -1393,27 +1431,55 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
 
     // 4. Brix — manual lab input, only check if step requires QC Brix record
     //    operation_brix_record=1 → lab must input actualBrix before confirm
-    if (step.operation_brix_record && parseSP(step.brix_sp) > 0) {
-        const brixSP  = parseSP(step.brix_sp)
-        const brixTol = brixSP * 0.05
+    if (step.operation_brix_record && step.brix_sp) {
         const brixAct = Number(actualBrix.value || 0)
         if (brixAct <= 0) {
             failed.push(`Brix: not recorded — lab must enter Brix before confirming`)
-        } else if (Math.abs(brixAct - brixSP) > brixTol) {
-            failed.push(`Brix: ${brixAct.toFixed(2)} ≠ SP ${formatSP(step.brix_sp)} (±5%)`)
+        } else {
+            const spStr = String(step.brix_sp).trim()
+            if (spStr.includes('-') && spStr.split('-').length === 2) {
+                const parts = spStr.split('-').map(Number)
+                if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+                    if (brixAct < parts[0] || brixAct > parts[1]) {
+                        failed.push(`Brix: ${brixAct.toFixed(2)} is out of SP range ${spStr}`)
+                    }
+                }
+            } else {
+                const brixSP  = parseSP(step.brix_sp)
+                if (brixSP > 0) {
+                    const brixTol = brixSP * 0.05
+                    if (Math.abs(brixAct - brixSP) > brixTol) {
+                        failed.push(`Brix: ${brixAct.toFixed(2)} ≠ SP ${formatSP(step.brix_sp)} (±5%)`)
+                    }
+                }
+            }
         }
     }
 
     // 5. pH — manual lab input, only check if step requires QC pH record
     //    operation_ph_record=1 → lab must input actualPh before confirm
-    if (step.operation_ph_record && parseSP(step.ph_sp) > 0) {
-        const phSP  = parseSP(step.ph_sp)
-        const phTol = 0.3
+    if (step.operation_ph_record && step.ph_sp) {
         const phAct = Number(actualPh.value || 0)
         if (phAct <= 0) {
             failed.push(`pH: not recorded — lab must enter pH before confirming`)
-        } else if (Math.abs(phAct - phSP) > phTol) {
-            failed.push(`pH: ${phAct.toFixed(2)} ≠ SP ${formatSP(step.ph_sp)} (±${phTol})`)
+        } else {
+            const spStr = String(step.ph_sp).trim()
+            if (spStr.includes('-') && spStr.split('-').length === 2) {
+                const parts = spStr.split('-').map(Number)
+                if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+                    if (phAct < parts[0] || phAct > parts[1]) {
+                        failed.push(`pH: ${phAct.toFixed(2)} is out of SP range ${spStr}`)
+                    }
+                }
+            } else {
+                const phSP  = parseSP(step.ph_sp)
+                if (phSP > 0) {
+                    const phTol = 0.3
+                    if (Math.abs(phAct - phSP) > phTol) {
+                        failed.push(`pH: ${phAct.toFixed(2)} ≠ SP ${formatSP(step.ph_sp)} (±${phTol})`)
+                    }
+                }
+            }
         }
     }
 
@@ -1595,6 +1661,45 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         High_Shear_SP: Number(step.high_shear_rpm || 0),
         PH_Target: Number(step.ph_sp || 0),
         Brix_Target: Number(step.brix_sp || 0),
+        Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? Number((step as any).phase_type_code || 0),
+        Action_Code: Number((step as any).action_code || 0),
+        Step_OF_PLC: getPlcStepNumber(
+          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
+          Number((step as any).action_code || 0)
+        ),
+        // A1010 auto batching: send Material[1-4].Req for Process-PLC DB0501
+        // Backend writes these to 192.168.21.51 only when Phase_Type=1 + a1010_materials present
+        ...((() => {
+          const phaseKey = ['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040']
+            .find(k => String((step as any).phase_id || '').includes(k)) || ''
+          if (phaseKey !== 'A1010') return {}
+          // Map A1010 steps by re_code to fixed PLC Material slots:
+          //   Material[1]=IBC, Material[2]=LS, Material[3]=MIS, Material[4]=RO-WATER
+          // PLC Slot → Physical pipe mapping (DB500-502):
+          //   Slot 0 = Material[1] +1120 = IBC valve  → WLS, IBC, W100
+          //   Slot 1 = Material[2] +1136 = LS pipe    → LS, LS in Line
+          //   Slot 2 = Material[3] +1152 = MIS pipe   → MIS
+          //   Slot 3 = Material[4] +1168 = RO pipe    → RO-Water
+          const RE_CODE_SLOT: Record<string, number> = {
+            'IBC': 0, 'WLS': 0,
+            'LS': 1, 'LS IN LINE': 1,
+            'MIS': 2,
+            'RO-WATER': 3, 'RO_WATER': 3, 'ROWATER': 3, 'RO': 3
+          }
+          const phaseNum = (step as any).phase_number || ''
+          const a1010Mats = [{ req: 0 }, { req: 0 }, { req: 0 }, { req: 0 }]
+          skuSteps.value
+            .filter((s: any) => s.phase_number === phaseNum && String(s.phase_id || '').includes('A1010'))
+            .forEach((s: any) => {
+              const rc = String(s.re_code || '').toUpperCase().trim()
+              const slotKey = Object.keys(RE_CODE_SLOT).find(k => rc.includes(k))
+              if (slotKey !== undefined) {
+                a1010Mats[RE_CODE_SLOT[slotKey]].req = productionRequire(s)  // scaled qty like Req_Qty
+              }
+            })
+          const hasAny = a1010Mats.some(m => m.req > 0)
+          return hasAny ? { a1010_materials: a1010Mats } : {}
+        })()),
         Cmd_NewStep: true
     }
     
@@ -3125,6 +3230,8 @@ onMounted(async () => {
                     // Step-level execution parameters using exact DB column names
                     sub_step: Number(s.sub_step || 0),
                     action_code: Number(s.action_code || 0),
+                    // step_of_plc NOT sent in heartbeat — only sent in step_cmd (confirmStep)
+                    // Free-SCAN steps should NOT trigger PLC step change
                     step_time: Number(s.step_time || 0),
                     material_code: String(s.mat_sap_code || '').substring(0, 20),
                     re_code: String(s.re_code || '').substring(0, 20),
@@ -3650,8 +3757,8 @@ onUnmounted(() => {
                                >
                                <q-tooltip>Manual Override (Provide Reason)</q-tooltip>
                         </q-btn>
-                        <!-- QC Brix/pH Entry: shown on any step with brix_sp or ph_sp set -->
-                        <q-btn v-if="step.brix_sp || step.ph_sp"
+                        <!-- QC Brix/pH Entry: shown on any step with brix_sp or ph_sp set OR record flags enabled -->
+                        <q-btn v-if="step.brix_sp || step.ph_sp || step.operation_brix_record || step.operation_ph_record"
                                dense flat color="indigo-7" icon="science"
                                @click.stop="() => { pendingQcStep = step; actualBrix = step.actual_brix ?? ''; actualPh = step.actual_ph ?? ''; qcDialog = true; }"
                                >

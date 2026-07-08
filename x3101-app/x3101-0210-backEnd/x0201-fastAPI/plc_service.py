@@ -142,6 +142,86 @@ class PLCConnection:
 # ─── Singleton PLC Instance ─────────────────────────────────────────────────
 plc = PLCConnection()
 
+# ─── Process PLC Connection (192.168.21.51) ──────────────────────────────────
+# Hosts FB0501/502/503 (FB_BATCHING) with sBatchDetail.Material[x].Req
+# Used for A1010 (Auto Batching Major) weight targets
+PROC_PLC_IP   = os.getenv("PROC_PLC_IP", "192.168.21.51")
+PROC_PLC_RACK = int(os.getenv("PROC_PLC_RACK", "0"))
+PROC_PLC_SLOT = int(os.getenv("PROC_PLC_SLOT", "1"))
+
+proc_plc = PLCConnection(ip=PROC_PLC_IP, rack=PROC_PLC_RACK, slot=PROC_PLC_SLOT)
+
+# DB0501 layout constants (FB0501_Batching_Mix_02 instance DB)
+# sBatchDetail.Material[x].Req = Real (4 bytes)
+# Offset formula: 1108 + (material_index_0based * 20)
+_BATCHING_DB_BASE    = 500          # DB500=Plant1, DB501=Plant2, DB502=Plant3
+_MAT_REQ_BASE_OFFSET = 1120         # Material[1].Req start offset
+_MAT_BLOCK_SIZE      = 16           # bytes per Material struct (Req+Tar+Act+Err+pad)
+_SCAN_FLAG_DB        = 1507         # DB1507_FLAGINTERFACE on Process-PLC
+_SCAN_FLAG_BYTE      = 8            # byte offset
+_SCAN_FLAG_BIT       = 4            # bit position (DBX8.4 = yFLG_RAWMAT[5])
+
+
+def get_batching_db(plant_id: int) -> int:
+    """DB500=Plant1, DB501=Plant2, DB502=Plant3"""
+    return 499 + int(plant_id)
+
+
+def check_scan_bit(plant_id: int = 1) -> bool:
+    """
+    Returns True if Scan bit is ON (new App method active).
+    Returns False if Scan=OFF (old system — safe to write DB0501).
+    DB1507.DBX8.4 on Process-PLC.
+    """
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+        d = proc_plc.db_read(_SCAN_FLAG_DB, _SCAN_FLAG_BYTE, 1)
+        if d:
+            return bool(d[0] & (1 << (7 - _SCAN_FLAG_BIT)))
+    except Exception as e:
+        logger.warning(f"[Scan check] Error reading Scan bit: {e}")
+    return False  # fail-safe: assume OFF (safe)
+
+
+def write_a1010_material_req(plant_id: int, materials: list) -> bool:
+    """
+    Write Material[x].Req weights to Process-PLC DB0501/502/503.
+    Called before starting A1010 phase (Auto Batching Major).
+
+    Args:
+        plant_id: 1, 2, or 3
+        materials: list of dicts [{'req': float}, ...] max 4 items; 0.0 = skip slot.
+    Returns:
+        True if all writes succeeded, False otherwise.
+
+    Note: Scan bit is a SCADA button controlled by operator — App does NOT check it.
+          Operator presses Scan ON to enable App method, OFF to use old system.
+    """
+    db = get_batching_db(plant_id)
+    ok_all = True
+
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+
+        for i, mat in enumerate(materials[:4]):
+            req_val = float(mat.get('req', 0.0) if isinstance(mat, dict) else mat)
+            offset = _MAT_REQ_BASE_OFFSET + i * _MAT_BLOCK_SIZE
+            data = struct.pack('>f', req_val)
+            ok = proc_plc.db_write(db, offset, data)
+            logger.info(
+                f"[A1010] Plant {plant_id} DB{db}+{offset} Material[{i+1}].Req = {req_val:.3f} kg — {'OK' if ok else 'FAIL'}"
+            )
+            if not ok:
+                ok_all = False
+
+    except Exception as e:
+        logger.error(f"[A1010] write_a1010_material_req error: {e}")
+        ok_all = False
+
+    return ok_all
+
 
 # ─── Recipe Step Serialization (78 bytes per step) ──────────────────────────
 def serialize_recipe_step(step: Dict[str, Any]) -> bytes:

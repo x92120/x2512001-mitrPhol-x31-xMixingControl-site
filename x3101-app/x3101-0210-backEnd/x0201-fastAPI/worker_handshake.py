@@ -24,7 +24,7 @@ from typing import Optional, Dict
 
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from plc_service import read_handshake, read_telemetry, plc, get_db_number, unpack_s7_string
+from plc_service import read_handshake, read_telemetry, plc, get_db_number, unpack_s7_string, write_a1010_material_req, check_scan_bit
 import paho.mqtt.publish as publish
 import paho.mqtt.client as mqtt_client
 import json
@@ -385,17 +385,24 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
         except Exception as user_err:
             logger.warning(f"Could not query latest active user: {user_err}")
 
-        # Fetch recheck_by from prebatch_items for the scan user (operator)
+        # Fetch recheck_by, wh, required_volume, net_volume from prebatch_items
         scan_user = active_user
+        wh_type = None
+        required_val_db = None
+        net_val_db = None
         if re_code and batch_id:
             try:
                 row_item = db.execute(text("""
-                    SELECT recheck_by FROM prebatch_items
+                    SELECT recheck_by, wh, required_volume, net_volume FROM prebatch_items
                     WHERE batch_id = :batch_id AND re_code = :re_code LIMIT 1
                 """), {"batch_id": batch_id, "re_code": re_code}).fetchone()
-                if row_item and row_item[0]:
-                    scan_user = row_item[0]
-                    logger.info(f"Logged step operator (scan) retrieved from prebatch_items: {scan_user}")
+                if row_item:
+                    if row_item[0]:
+                        scan_user = row_item[0]
+                    wh_type = row_item[1]
+                    required_val_db = row_item[2]
+                    net_val_db = row_item[3]
+                    logger.info(f"Logged step operator (scan) retrieved from prebatch_items: {scan_user}, wh_type={wh_type}")
             except Exception as e:
                 logger.warning(f"Could not query recheck_by from prebatch_items: {e}")
 
@@ -413,6 +420,17 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
                     logger.info(f"📊 Plant {plant_id} Step {step_no}: actual_weight from DB1517 = {actual_val} kg (end_weight DB1513 = {end_weight} kg)")
         except Exception as db17_err:
             logger.warning(f"Could not read DB1517 actuals for step {step_no}: {db17_err} — using end_weight fallback")
+
+        # ── OVERRIDE: If scanned step (SPP/FH), use pre-pack weighed values instead of scale weight
+        if wh_type in ('SPP', 'FH'):
+            if wh_type == 'FH' and net_val_db is not None:
+                actual_val = net_val_db
+                logger.info(f"⚖️ Scan step (FH) Plant {plant_id} Step {step_no} ({re_code}): overriding actual_val = {actual_val} kg")
+            elif required_val_db is not None:
+                actual_val = required_val_db
+                logger.info(f"⚖️ Scan step (SPP) Plant {plant_id} Step {step_no} ({re_code}): overriding actual_val = {actual_val} kg")
+            else:
+                actual_val = target_value
 
         # 6b. Upsert log into production_step_logs (prevent duplicates from repeated confirms)
         db.execute(text("""
@@ -503,13 +521,79 @@ def _on_step_cmd_message(client, userdata, message):
             )
             return
 
-        # ── Handle step_cmd topic (log step details to database) ─────────────
+        # ── Handle step_cmd topic: WRITE TO PLC + log to DB ──────────────────
         batch_id  = str(payload.get("Batch_ID") or "").strip()
         phase_id  = str(payload.get("Phase_ID") or payload.get("Confirm_Phase") or "").strip()
         step_id   = int(payload.get("Step_ID") or payload.get("Confirm_Step") or 0)
         action_code = str(payload.get("HMI_Command") or "").strip()
         re_code   = str(payload.get("Re_Code_ID") or "").strip()
         target_val = float(payload.get("Req_Qty") or 0)
+        phase_type  = int(payload.get("Phase_Type", 0) or 0)
+
+        # ── A1010 Auto Batching: pre-load Material[x].Req → Process-PLC DB0501 ─
+        # Phase_Type=1 = A1010 (Fill Major Ingredient, auto sequential)
+        # App sends 'a1010_materials': [{'req': float}, ...] max 4 items
+        # PLC reads these weights when Scan=ON; ignored when Scan=OFF (old system)
+        if phase_type == 1:
+            a1010_mats = payload.get("a1010_materials", [])
+            if a1010_mats:
+                ok_mat = write_a1010_material_req(plant_id, a1010_mats)
+                logger.info(
+                    f"[A1010] Plant {plant_id} Material pre-load: {'OK' if ok_mat else 'FAIL/SKIP'}"
+                )
+
+        # ── Write Action_Code + Cmd_NewStep to PLC DB1510/1520/1530 ──────────
+        # This is the CRITICAL write: Action_Code must arrive BEFORE Cmd_NewStep
+        # so PLC latches the correct value on rising edge.
+        try:
+            from plc_interface import DB1510StepCommand, pack_s7_string
+            db1510 = get_db_number('step_cmd', plant_id)
+            db1511 = get_db_number('full_recipe', plant_id)
+
+            # 1. Write Action_Code at +88 (DInt, BEFORE Cmd_NewStep)
+            # Step_OF_PLC: PLC step number (2,4,6...28) computed from Phase_Type
+            # Falls back to Action_Code if Step_OF_PLC not present (legacy support)
+            step_of_plc_raw = payload.get("Step_OF_PLC", None)
+            ac_raw = payload.get("Action_Code", 0)
+            try:
+                step_of_plc = int(str(step_of_plc_raw).strip()) if step_of_plc_raw is not None else 0
+            except Exception:
+                step_of_plc = 0
+
+            try:
+                ac_int = int(str(ac_raw).strip()) if ac_raw else 0
+            except Exception:
+                ac_int = 0
+
+            # Write Step_OF_PLC (PLC step cmd) at +88 — priority over raw action_code
+            write_val = step_of_plc if step_of_plc > 0 else 0
+            if write_val > 0:
+                ok_ac = plc.db_write(db1510, 88, struct.pack('>i', write_val))
+            else:
+                ok_ac = None
+
+            # 2. Write Step_No at +24
+            step_no = int(payload.get("Step_ID") or 0)
+            ok_sn = plc.db_write(db1510, 24, struct.pack('>h', step_no))
+
+            # 3. Write HMI_Command=1 (START pulse) at +22
+            hmi_cmd = int(payload.get("HMI_Command", 1)) if isinstance(payload.get("HMI_Command"), int) else 1
+            ok_hmi = plc.db_write(db1510, 22, struct.pack('>h', hmi_cmd))
+
+            # 4. Write Cmd_NewStep=TRUE at +86 (LAST — rising edge trigger)
+            cmd_new = bool(payload.get("Cmd_NewStep", True))
+            ok_new = plc.db_write(db1510, 86, struct.pack('?', cmd_new))
+
+            logger.info(
+                f"[STEP_CMD→PLC] Plant {plant_id} | Step={step_no} Step_OF_PLC={step_of_plc} Action_Code={ac_int} "
+                f"HMI_Cmd={hmi_cmd} Cmd_NewStep={cmd_new} "
+                f"| DB{db1510}+88={'OK' if ok_ac else ('SKIP(0)' if ac_int==0 else 'FAIL')} "
+                f"| DB{db1510}+24={'OK' if ok_sn else 'FAIL'} "
+                f"| DB{db1510}+22={'OK' if ok_hmi else 'FAIL'} "
+                f"| DB{db1510}+86={'OK' if ok_new else 'FAIL'}"
+            )
+        except Exception as plc_err:
+            logger.error(f"[STEP_CMD→PLC] PLC write error: {plc_err}")
 
         if not batch_id or batch_id == "-":
             logger.debug(f"step_cmd received but no valid Batch_ID, skipping DB log")
@@ -572,16 +656,23 @@ def _sync_log_step_cmd(
         except Exception:
             pass
 
-        # 2. Query prebatch_items for recheck_by if re_code exists
+        # 2. Query prebatch_items for recheck_by, wh, required_volume, net_volume
         scan_user = active_user
+        wh_type = None
+        required_val_db = None
+        net_val_db = None
         if re_code and batch_id:
             try:
                 row_item = db.execute(text("""
-                    SELECT recheck_by FROM prebatch_items
+                    SELECT recheck_by, wh, required_volume, net_volume FROM prebatch_items
                     WHERE batch_id = :batch_id AND re_code = :re_code LIMIT 1
                 """), {"batch_id": batch_id, "re_code": re_code}).fetchone()
-                if row_item and row_item[0]:
-                    scan_user = row_item[0]
+                if row_item:
+                    if row_item[0]:
+                        scan_user = row_item[0]
+                    wh_type = row_item[1]
+                    required_val_db = row_item[2]
+                    net_val_db = row_item[3]
             except Exception:
                 pass
 
@@ -619,6 +710,14 @@ def _sync_log_step_cmd(
         except Exception as e:
             logger.warning(f"Could not read actuals for command log: {e}")
 
+        # ── OVERRIDE: If scanned step (SPP/FH), use pre-pack weighed values
+        if wh_type in ('SPP', 'FH'):
+            if wh_type == 'FH' and net_val_db is not None:
+                actual_val = net_val_db
+            elif required_val_db is not None:
+                actual_val = required_val_db
+            else:
+                actual_val = target_value
 
         db.execute(text("""
             INSERT INTO production_step_logs
@@ -757,21 +856,31 @@ def _on_put_message(client, userdata, message):
 
         hmi_command   = int(payload.get('hmi_command',   2))  # Default HOLD(2), not RUN(1)
         next_step_cmd = int(payload.get('next_step_cmd', 0))
+        # NOTE: Step_OF_PLC is NOT written in heartbeat (MIX-PUT)
+        # It is ONLY written in step_cmd handler when operator advances a step.
+        # Free-SCAN and App-only steps must NOT update DB15x0+88.
+        action_code_raw = payload.get('action_code', 0)
+        try:
+            action_code = int(str(action_code_raw).strip()) if action_code_raw else 0
+        except (ValueError, TypeError):
+            action_code = 0
 
         # 1. Write to DB1511 offset +44 (main PLC — recipe header HMI_Command)
         db1511 = get_db_number('full_recipe', plant_id)
         ok1 = plc.db_write(db1511, 44, struct.pack('>h', hmi_command))
 
-        # 2. ALSO write to DB1510 offset +22 (Control Equipment PLC via PUT-GET)
-        #    DB1510 layout: +0=Batch_ID(String[20]=22bytes), +22=HMI_Command(Int16), +24=Step_No(Int16)
+        # 2. Write to DB1510 offset +22 (Control Equipment PLC via PUT-GET)
+        #    DB1510 layout: +22=HMI_Command(Int16), +24=Step_No(Int16)
         #    NOTE: Do NOT write at +0 — that overwrites the Batch_ID S7 string field!
         db1510 = get_db_number('step_cmd', plant_id)
         ok2 = plc.db_write(db1510, 22, struct.pack('>h', hmi_command))
 
-        logger.info(
-            f"[PUT] Plant {plant_id} | hmi_command={hmi_command} next_step_cmd={next_step_cmd} "
-            f"| DB{db1511}+44={'OK' if ok1 else 'FAIL'} "
-            f"| DB{db1510}+22={'OK' if ok2 else 'FAIL'}"
+        # +88 (Step_OF_PLC) NOT written in heartbeat — only via step_cmd on step advance
+        # Free-SCAN / App-only steps must NOT touch PLC step register
+        logger.debug(
+            f"[PUT] Plant {plant_id} | hmi_command={hmi_command} next={next_step_cmd}"
+            f" | DB{db1511}+44={'OK' if ok1 else 'FAIL'}"
+            f" | DB{db1510}+22={'OK' if ok2 else 'FAIL'} | +88=skip"
         )
 
     except Exception as e:
