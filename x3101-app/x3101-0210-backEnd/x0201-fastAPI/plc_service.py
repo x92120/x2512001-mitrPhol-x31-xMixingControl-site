@@ -157,9 +157,10 @@ proc_plc = PLCConnection(ip=PROC_PLC_IP, rack=PROC_PLC_RACK, slot=PROC_PLC_SLOT)
 _BATCHING_DB_BASE    = 500          # DB500=Plant1, DB501=Plant2, DB502=Plant3
 _MAT_REQ_BASE_OFFSET = 1120         # Material[1].Req start offset
 _MAT_BLOCK_SIZE      = 16           # bytes per Material struct (Req+Tar+Act+Err+pad)
-_SCAN_FLAG_DB        = 1507         # DB1507_FLAGINTERFACE on Process-PLC
-_SCAN_FLAG_BYTE      = 8            # byte offset
-_SCAN_FLAG_BIT       = 4            # bit position (DBX8.4 = yFLG_RAWMAT[5])
+# SCAN interlock bit: DB500.DBX498.0 (Plant1), DB501.DBX498.0 (Plant2), DB502.DBX498.0 (Plant3)
+# When SCAN=OFF → write blocked (old system uses SCADA DB0102 values instead)
+_SCAN_FLAG_BYTE      = 498          # byte offset within Batching DB
+_SCAN_FLAG_BIT       = 0            # bit 0 = LSB (DBX498.0)
 
 
 def get_batching_db(plant_id: int) -> int:
@@ -170,17 +171,18 @@ def get_batching_db(plant_id: int) -> int:
 def check_scan_bit(plant_id: int = 1) -> bool:
     """
     Returns True if Scan bit is ON (new App method active).
-    Returns False if Scan=OFF (old system — safe to write DB0501).
-    DB1507.DBX8.4 on Process-PLC.
+    Reads DB500.DBX498.0 / DB501.DBX498.0 / DB502.DBX498.0 (per plant).
+    When SCAN=OFF → App must NOT write Material.Req to PLC (old system keeps control).
     """
+    db = get_batching_db(plant_id)
     try:
         if not proc_plc.is_connected:
             proc_plc.connect()
-        d = proc_plc.db_read(_SCAN_FLAG_DB, _SCAN_FLAG_BYTE, 1)
+        d = proc_plc.db_read(db, _SCAN_FLAG_BYTE, 1)
         if d:
-            return bool(d[0] & (1 << (7 - _SCAN_FLAG_BIT)))
+            return bool(d[0] & (1 << _SCAN_FLAG_BIT))  # bit 0 = LSB
     except Exception as e:
-        logger.warning(f"[Scan check] Error reading Scan bit: {e}")
+        logger.warning(f"[Scan check] Error reading DB{db}.DBX{_SCAN_FLAG_BYTE}.{_SCAN_FLAG_BIT}: {e}")
     return False  # fail-safe: assume OFF (safe)
 
 
@@ -195,9 +197,17 @@ def write_a1010_material_req(plant_id: int, materials: list) -> bool:
     Returns:
         True if all writes succeeded, False otherwise.
 
-    Note: Scan bit is a SCADA button controlled by operator — App does NOT check it.
-          Operator presses Scan ON to enable App method, OFF to use old system.
+    Note: SCAN interlock — DB5xx.DBX498.0 must be TRUE before write is allowed.
+          If SCAN=OFF → returns False immediately, no write occurs (old system keeps control).
     """
+    # ── SCAN interlock check ────────────────────────────────────────────────
+    if not check_scan_bit(plant_id):
+        db = get_batching_db(plant_id)
+        logger.warning(
+            f"[A1010] BLOCKED — Plant {plant_id} DB{db}.DBX{_SCAN_FLAG_BYTE}.{_SCAN_FLAG_BIT} (SCAN) is OFF. "            f"Operator must enable SCAN on SCADA HMI before auto batching."
+        )
+        return False
+
     db = get_batching_db(plant_id)
     ok_all = True
 
