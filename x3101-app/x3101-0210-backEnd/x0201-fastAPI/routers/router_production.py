@@ -1434,6 +1434,57 @@ def pack_item(item_id: int, data: schemas.PreBatchItemPack, db: Session = Depend
                 batch.status = "Prepared"
 
     db.commit()
+
+    # ── Free-Scan Auto-Advance: advance DB15X7 SEQ when all FH/SPP items done ──
+    # Triggered after each scan so the moment last item is packed → PLC auto-next
+    try:
+        if item.wh in ("FH", "SPP") and item.status == 2 and item.batch_id:
+            # Check if ALL FH/SPP items for this batch are now done
+            fh_spp_items = db.query(models.PreBatchItem).filter(
+                models.PreBatchItem.batch_id == item.batch_id,
+                models.PreBatchItem.wh.in_(["FH", "SPP"])
+            ).all()
+
+            all_done = all(i.status == 2 for i in fh_spp_items)
+
+            if all_done and fh_spp_items:
+                # Derive plant_id from batch.plant field ("PLANT 1/2/3" or "1/2/3")
+                plant_str = (batch.plant or "") if batch else ""
+                plant_id = 1  # default
+                for ch in plant_str:
+                    if ch.isdigit():
+                        plant_id = int(ch)
+                        break
+
+                # Read current DB15X7 SEQ → write SEQ+1 → pulse Cmd_NewStep
+                from plc_service import read_full_actuals, get_db_number
+                from plc_service import plc as plc_client
+                import struct
+
+                actuals = read_full_actuals(plant_id)
+                if actuals:
+                    current_seq = actuals.get("current_seq", 0)
+                    next_seq = current_seq + 1
+                    db_actual = get_db_number("actual", plant_id)
+
+                    # Write next_seq to DB15X7 offset +46 (Int = 2 bytes)
+                    seq_bytes = struct.pack(">h", next_seq)
+                    plc_client.db_write(db_actual, 46, bytearray(seq_bytes))
+
+                    # Pulse Cmd_NewStep in DB15X0 (step command DB)
+                    db_cmd = get_db_number("step_command", plant_id)
+                    plc_client.db_write(db_cmd, 86, bytearray([0x80]))  # bit 0 = TRUE pulse
+                    import time; time.sleep(0.1)
+                    plc_client.db_write(db_cmd, 86, bytearray([0x00]))  # reset
+
+                    logger.info(
+                        f"[FreeScan AutoAdvance] Plant={plant_id} batch={item.batch_id} "
+                        f"ALL FH/SPP done → SEQ {current_seq}→{next_seq} | Cmd_NewStep pulsed"
+                    )
+    except Exception as fs_adv_err:
+        logger.warning(f"[FreeScan AutoAdvance] non-critical error: {fs_adv_err}")
+    # ─────────────────────────────────────────────────────────────────────────────
+
     db.refresh(item)
     return schemas.PreBatchItem.model_validate(item)
 
