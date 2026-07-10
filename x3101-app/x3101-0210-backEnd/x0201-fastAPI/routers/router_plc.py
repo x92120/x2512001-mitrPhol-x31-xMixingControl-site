@@ -281,6 +281,20 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
             detail=f"Real hardware communication failed: snap7 error: {str(e)}"
         )
 
+    # ── P2: Save local cache for emergency fallback (DB DOWN scenario) ────────
+    try:
+        from batch_cache_service import save_batch_cache
+        save_batch_cache(batch.batch_id, {
+            "batch_id": batch.batch_id,
+            "sku_id": plan.sku_id,
+            "plant_id": plant_id,
+            "total_steps": len(step_dicts),
+            "steps": step_dicts,
+        })
+    except Exception as cache_err:
+        logger.warning(f"[BatchCache] non-critical save error: {cache_err}")
+    # ────────────────────────────────────────────────────────────────────────────
+
     return {
         "status": "success",
         "message": f"Recipe successfully written and verified on real PLC for batch {batch_id}",
@@ -574,3 +588,104 @@ def reset_batch_soft(
         "message": "Soft reset complete. PLC memory cleared, step logs deleted, batch → Pending. Prebatch records preserved."
         if all_ok else "Some steps failed — check results for details."
     }
+
+
+@router.post("/plant/{plant_id}/force-next-step")
+def force_next_step(
+    plant_id: int = Path(..., title="Plant ID 1/2/3"),
+    reason: str = "manual_bypass",
+    db: Session = Depends(get_db)
+):
+    """
+    [Emergency] Force advance to next PLC step — bypasses Free-Scan validation.
+    Used when DB is down or operator needs to skip a stuck step.
+    Writes DB15X7.SEQ+1 and pulses Cmd_NewStep.
+    """
+    import struct, time
+    from plc_service import read_full_actuals, get_db_number, plc as plc_client
+
+    try:
+        actuals = read_full_actuals(plant_id)
+        if not actuals:
+            raise HTTPException(status_code=503, detail="Cannot read PLC actuals — PLC offline?")
+
+        current_seq = actuals.get("current_seq", 0)
+        batch_id    = actuals.get("batch_id", "-")
+        next_seq    = current_seq + 1
+
+        # Write SEQ+1 → DB15X7 offset +46 (Int, big-endian)
+        db_actual = get_db_number("actual", plant_id)
+        plc_client.db_write(db_actual, 46, bytearray(struct.pack(">h", next_seq)))
+
+        # Pulse Cmd_NewStep → DB15X0 offset +86 (Bool bit)
+        db_cmd = get_db_number("step_command", plant_id)
+        plc_client.db_write(db_cmd, 86, bytearray([0x80]))
+        time.sleep(0.15)
+        plc_client.db_write(db_cmd, 86, bytearray([0x00]))
+
+        logger.warning(
+            f"[ForceNextStep] Plant={plant_id} batch={batch_id} "            f"SEQ {current_seq}→{next_seq} | reason={reason}"
+        )
+
+        # Log to DB (non-critical)
+        try:
+            from sqlalchemy import text as sa_text
+            db.execute(sa_text("""
+                INSERT INTO batch_event_logs (batch_id, plant_id, event_type, detail, created_at)
+                VALUES (:bid, :pid, :etype, :detail, NOW())
+            """), {
+                "bid": batch_id, "pid": plant_id,
+                "etype": "FORCE_NEXT_STEP",
+                "detail": f"SEQ {current_seq}→{next_seq} | reason={reason}"
+            })
+            db.commit()
+        except Exception:
+            pass  # Table may not exist yet — non-critical
+
+        return {
+            "success": True,
+            "plant_id": plant_id,
+            "batch_id": batch_id,
+            "prev_seq": current_seq,
+            "next_seq": next_seq,
+            "reason": reason,
+            "message": f"Force advanced SEQ {current_seq} → {next_seq}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ForceNextStep] Plant={plant_id} error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# P2: LOCAL BATCH CACHE — Emergency fallback when DB is DOWN
+# =============================================================================
+
+@router.get("/batch-cache/list")
+def list_batch_caches():
+    """List all locally cached batches (emergency recovery reference)."""
+    from batch_cache_service import list_cached_batches
+    return {"cached_batches": list_cached_batches()}
+
+@router.get("/batch-cache/{batch_id}")
+def get_batch_cache(batch_id: str):
+    """
+    Retrieve locally cached recipe for a batch.
+    Used as fallback when MySQL is unreachable.
+    """
+    from batch_cache_service import load_batch_cache
+    data = load_batch_cache(batch_id)
+    if not data:
+        raise HTTPException(status_code=404, detail=f"No local cache for batch {batch_id}")
+    return {"source": "local_cache", "data": data}
+
+@router.get("/batch-cache/latest/auto")
+def get_latest_batch_cache():
+    """Get most recent cached batch — used after server crash when batch_id unknown."""
+    from batch_cache_service import get_latest_cache
+    data = get_latest_cache()
+    if not data:
+        raise HTTPException(status_code=404, detail="No local cache found")
+    return {"source": "local_cache", "data": data}
