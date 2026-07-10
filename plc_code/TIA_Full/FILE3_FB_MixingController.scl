@@ -1,0 +1,198 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE 3: FB_MixingController.scl — v3.1
+// Plant 1
+//
+// CASE interlock ใช้ Phase_Type (Byte 1-8) จาก DB1510.RECIPE
+// PLC ไม่ต้อง maintain mapping SKU → step เอง
+// App ส่ง Phase_Type มาตรงๆ ทุก step
+//
+// Phase_Type:
+//   1=A1010 (Batching)   2=A1020 (HighShear)
+//   3=D1010 (Dissolve)   4=D1030 (SecDissolve)
+//   5=x1010 (Heat/Fill)  6=x1020 (Pasteurizer)
+//   7=x1030 (QC/Trans)   8=x1040 (Transfer)
+// ═══════════════════════════════════════════════════════════════════════════
+
+FUNCTION_BLOCK "FB_MixingController"
+TITLE = 'xMixing Controller Plant 1 v3.1'
+VERSION : 3.1
+
+VAR_OUTPUT
+    SP_Agit_RPM    : Real;
+    SP_HS_RPM      : Real;
+    SP_Temp        : Real;
+    Q_Steam_Valve  : Bool;
+    Q_CTW_Valve    : Bool;
+    Q_HighShear_En : Bool;
+    Q_Batch_Pump   : Bool;
+END_VAR
+
+VAR
+    stepTimer      : TON_TIME;
+    pulseTimer     : TP_TIME;
+    stepElapsed    : Int;
+    stepStarted    : Bool;
+    curSeq         : Int;
+    initialized    : Bool;
+END_VAR
+
+VAR_TEMP
+    curPhaseType : Int;
+    curCmd       : Int;
+    stepTimePT   : TIME;
+    remainMs     : DINT;
+END_VAR
+
+BEGIN
+
+// ── 0. Plant Stamp ─────────────────────────────────────────────────────────
+IF NOT #initialized THEN
+    "DB1512".RECIPE.PLC_State := 1;   // Plant 1 stamp
+    #initialized := TRUE;
+END_IF;
+
+// ── 1. Watchdog ────────────────────────────────────────────────────────────
+IF "DB1512".RECIPE.Watchdog >= 32000 THEN
+    "DB1512".RECIPE.Watchdog := 0;
+ELSE
+    "DB1512".RECIPE.Watchdog := "DB1512".RECIPE.Watchdog + 1;
+END_IF;
+
+// ── 2. Read current command & phase ───────────────────────────────────────
+#curCmd       := "DB1510".RECIPE.HMI_Command;
+#curPhaseType := BYTE_TO_INT("DB1510".RECIPE.Phase_Type);
+
+// Mirror status → App
+"DB1513".RECIPE.HMI_Status    := #curCmd;
+"DB1512".RECIPE.Current_Step  := "DB1510".RECIPE.Step_No;
+
+// ── 3. HMI_Command CASE ────────────────────────────────────────────────────
+CASE #curCmd OF
+
+    0:  // Idle — kill all
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepStarted:=FALSE; #stepElapsed:=0;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    1:  // Running — interlock จาก Phase_Type
+        // SP setpoints
+        #SP_Temp     := "DB1510".RECIPE.Temp_SP;
+        #SP_Agit_RPM := "DB1510".RECIPE.Agitator_SP;
+        #SP_HS_RPM   := "DB1510".RECIPE.HighShear_SP;
+
+        // ── Phase interlock CASE ────────────────────────────────────────
+        CASE #curPhaseType OF
+
+            1:  // A1010 — Batching Auto (Fill Major / Start)
+                #Q_Batch_Pump:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            2:  // A1020 — High Shear active
+                #Q_HighShear_En:=TRUE;
+                #Q_Batch_Pump:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            3:  // D1010 — Preblending / Dissolve tank
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            4:  // D1030 — First Confirm / Secondary dissolve
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            5:  // x1010 — Pre Heat / Fill Minor / Second Heat / Fill Third
+                #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            6:  // x1020 — Pasteurizer
+                #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+
+            7:  // x1030 — Waiting QC / QC Confirm / Ready Transfer
+                // Hold — ไม่เปลี่ยน output รอ App confirm
+                ;
+
+            8:  // x1040 — Transferring
+                #Q_CTW_Valve:=TRUE;
+                #Q_Steam_Valve:=FALSE; #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+
+            ELSE:  // Unknown phase → safe state
+                #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        END_CASE;
+
+        // Step timer
+        IF "DB1510".RECIPE.Step_Time > 0 THEN
+            #stepTimePT := DINT_TO_TIME(
+                INT_TO_DINT("DB1510".RECIPE.Step_Time) * DINT#1000);
+            #stepTimer(IN:=TRUE, PT:=#stepTimePT);
+            #remainMs := TIME_TO_DINT(#stepTimePT - #stepTimer.ET);
+            "DB1512".RECIPE.Step_Timer := DINT_TO_INT(#remainMs / DINT#1000);
+        END_IF;
+
+        IF NOT #stepStarted THEN #stepStarted:=TRUE; #stepElapsed:=0; END_IF;
+        IF #stepElapsed < 32000 THEN #stepElapsed:=#stepElapsed+1; END_IF;
+
+    2:  // Pause
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    3:  // Emergency
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        "DB1513".RECIPE.Error_Flag:=TRUE; "DB1513".RECIPE.Error_Code:=3;
+
+    4,5:  // Step Complete / Override — รอ Proc_Step_Done จาก Process PLC
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        IF "DB1513".RECIPE.Proc_Step_Done THEN
+            "DB1513".RECIPE.Finished_Step := "DB1512".RECIPE.Current_Step;
+            "DB1513".RECIPE.End_Temp      := "DB1512".RECIPE.MixTank_Temp;
+            "DB1513".RECIPE.End_Weight    := "DB1512".RECIPE.MixTank_Weight;
+            "DB1513".RECIPE.Error_Flag    := FALSE; "DB1513".RECIPE.Error_Code:=0;
+            #curSeq := "DB1511".RECIPE.Active_Step - 1;
+            IF #curSeq >= 0 AND #curSeq <= 31 THEN
+                "DB1517".RECIPE.Steps[#curSeq].Step_Index    := "DB1512".RECIPE.Current_Step;
+                "DB1517".RECIPE.Steps[#curSeq].Actual_Weight := "DB1512".RECIPE.MixTank_Weight;
+                "DB1517".RECIPE.Steps[#curSeq].Actual_Temp   := "DB1512".RECIPE.MixTank_Temp;
+                "DB1517".RECIPE.Steps[#curSeq].Actual_Agit   := "DB1512".RECIPE.Agitator_Act;
+                "DB1517".RECIPE.Steps[#curSeq].Actual_HS     := "DB1512".RECIPE.HighShear_Act;
+                "DB1517".RECIPE.Steps[#curSeq].Duration_Sec  := INT_TO_DINT(#stepElapsed);
+                "DB1517".RECIPE.Steps[#curSeq].Status_Code   := #curCmd;
+                "DB1517".RECIPE.Current_Seq := "DB1511".RECIPE.Active_Step;
+            END_IF;
+            #pulseTimer(IN:=TRUE, PT:=T#1S);
+            "DB1513".RECIPE.Step_Complete  := #pulseTimer.Q;
+            "DB1513".RECIPE.Proc_Step_Done := FALSE;
+            #stepStarted:=FALSE; #stepElapsed:=0;
+        END_IF;
+
+    9:  // Error
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        "DB1513".RECIPE.Error_Flag:=TRUE;
+
+END_CASE;
+
+IF NOT "DB1513".RECIPE.Step_Complete THEN
+    #pulseTimer(IN:=FALSE, PT:=T#1S);
+END_IF;
+
+// ── 4. Free Scan ACK ───────────────────────────────────────────────────────
+IF "DB1516".RECIPE.Scan_Trigger AND NOT "DB1516".RECIPE.Scan_ACK THEN
+    "DB1516".RECIPE.Scan_Timestamp := INT_TO_DINT("DB1512".RECIPE.Watchdog);
+    "DB1516".RECIPE.Scan_ACK       := TRUE;
+    "DB1516".RECIPE.Scan_Trigger   := FALSE;
+END_IF;
+IF NOT "DB1516".RECIPE.Scan_Trigger THEN "DB1516".RECIPE.Scan_ACK:=FALSE; END_IF;
+
+// ── 5. DB1517 Header ───────────────────────────────────────────────────────
+IF #curCmd = 1 THEN
+    "DB1517".RECIPE.Batch_Status := 1;
+    "DB1517".RECIPE.Total_Steps  := "DB1511".RECIPE.Total_Steps;
+END_IF;
+
+END_FUNCTION_BLOCK

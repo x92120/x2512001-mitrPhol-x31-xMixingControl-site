@@ -1,0 +1,307 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE 5: FB_Plant2_Plant3.scl — v3.1  (Phase_Type CASE interlock)
+// Plant 2: DB1520/1521/1522/1523/1526/1527
+// Plant 3: DB1530/1531/1532/1533/1536/1537
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANT 2
+// ═══════════════════════════════════════════════════════════════════════════
+FUNCTION_BLOCK "FB_MixingController_P2"
+TITLE = 'xMixing Controller Plant 2 v3.1'
+VERSION : 3.1
+
+VAR_OUTPUT
+    SP_Agit_RPM    : Real;
+    SP_HS_RPM      : Real;
+    SP_Temp        : Real;
+    Q_Steam_Valve  : Bool;
+    Q_CTW_Valve    : Bool;
+    Q_HighShear_En : Bool;
+    Q_Batch_Pump   : Bool;
+END_VAR
+VAR
+    stepTimer   : TON_TIME;
+    pulseTimer  : TP_TIME;
+    stepElapsed : Int;
+    stepStarted : Bool;
+    curSeq      : Int;
+    initialized : Bool;
+END_VAR
+VAR_TEMP
+    curPhaseType : Int;
+    curCmd       : Int;
+    stepTimePT   : TIME;
+    remainMs     : DINT;
+END_VAR
+
+BEGIN
+
+IF NOT #initialized THEN
+    "DB1522".RECIPE.PLC_State := 2;   // Plant 2 stamp
+    #initialized := TRUE;
+END_IF;
+
+IF "DB1522".RECIPE.Watchdog >= 32000 THEN
+    "DB1522".RECIPE.Watchdog := 0;
+ELSE
+    "DB1522".RECIPE.Watchdog := "DB1522".RECIPE.Watchdog + 1;
+END_IF;
+
+#curCmd       := "DB1520".RECIPE.HMI_Command;
+#curPhaseType := BYTE_TO_INT("DB1520".RECIPE.Phase_Type);
+"DB1523".RECIPE.HMI_Status   := #curCmd;
+"DB1522".RECIPE.Current_Step := "DB1520".RECIPE.Step_No;
+
+CASE #curCmd OF
+
+    0:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepStarted:=FALSE; #stepElapsed:=0;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    1:
+        #SP_Temp     := "DB1520".RECIPE.Temp_SP;
+        #SP_Agit_RPM := "DB1520".RECIPE.Agitator_SP;
+        #SP_HS_RPM   := "DB1520".RECIPE.HighShear_SP;
+
+        CASE #curPhaseType OF
+            1:  #Q_Batch_Pump:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            2:  #Q_HighShear_En:=TRUE;
+                #Q_Batch_Pump:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            3:  #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            4:  #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            5:  #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+            6:  #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+            7:  ;
+            8:  #Q_CTW_Valve:=TRUE;
+                #Q_Steam_Valve:=FALSE; #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+            ELSE:
+                #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        END_CASE;
+
+        IF "DB1520".RECIPE.Step_Time > 0 THEN
+            #stepTimePT := DINT_TO_TIME(INT_TO_DINT("DB1520".RECIPE.Step_Time)*DINT#1000);
+            #stepTimer(IN:=TRUE, PT:=#stepTimePT);
+            #remainMs := TIME_TO_DINT(#stepTimePT - #stepTimer.ET);
+            "DB1522".RECIPE.Step_Timer := DINT_TO_INT(#remainMs / DINT#1000);
+        END_IF;
+        IF NOT #stepStarted THEN #stepStarted:=TRUE; #stepElapsed:=0; END_IF;
+        IF #stepElapsed < 32000 THEN #stepElapsed:=#stepElapsed+1; END_IF;
+
+    2:  #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    3:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        "DB1523".RECIPE.Error_Flag:=TRUE; "DB1523".RECIPE.Error_Code:=3;
+
+    4,5:
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        IF "DB1523".RECIPE.Proc_Step_Done THEN
+            "DB1523".RECIPE.Finished_Step := "DB1522".RECIPE.Current_Step;
+            "DB1523".RECIPE.End_Temp      := "DB1522".RECIPE.MixTank_Temp;
+            "DB1523".RECIPE.End_Weight    := "DB1522".RECIPE.MixTank_Weight;
+            "DB1523".RECIPE.Error_Flag:=FALSE; "DB1523".RECIPE.Error_Code:=0;
+            #curSeq := "DB1521".RECIPE.Active_Step - 1;
+            IF #curSeq>=0 AND #curSeq<=31 THEN
+                "DB1527".RECIPE.Steps[#curSeq].Step_Index   :="DB1522".RECIPE.Current_Step;
+                "DB1527".RECIPE.Steps[#curSeq].Actual_Weight:="DB1522".RECIPE.MixTank_Weight;
+                "DB1527".RECIPE.Steps[#curSeq].Actual_Temp  :="DB1522".RECIPE.MixTank_Temp;
+                "DB1527".RECIPE.Steps[#curSeq].Actual_Agit  :="DB1522".RECIPE.Agitator_Act;
+                "DB1527".RECIPE.Steps[#curSeq].Actual_HS    :="DB1522".RECIPE.HighShear_Act;
+                "DB1527".RECIPE.Steps[#curSeq].Duration_Sec :=INT_TO_DINT(#stepElapsed);
+                "DB1527".RECIPE.Steps[#curSeq].Status_Code  :=#curCmd;
+                "DB1527".RECIPE.Current_Seq:="DB1521".RECIPE.Active_Step;
+            END_IF;
+            #pulseTimer(IN:=TRUE, PT:=T#1S);
+            "DB1523".RECIPE.Step_Complete  := #pulseTimer.Q;
+            "DB1523".RECIPE.Proc_Step_Done := FALSE;
+            #stepStarted:=FALSE; #stepElapsed:=0;
+        END_IF;
+
+    9:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        "DB1523".RECIPE.Error_Flag:=TRUE;
+
+END_CASE;
+
+IF NOT "DB1523".RECIPE.Step_Complete THEN #pulseTimer(IN:=FALSE, PT:=T#1S); END_IF;
+
+IF "DB1526".RECIPE.Scan_Trigger AND NOT "DB1526".RECIPE.Scan_ACK THEN
+    "DB1526".RECIPE.Scan_Timestamp:=INT_TO_DINT("DB1522".RECIPE.Watchdog);
+    "DB1526".RECIPE.Scan_ACK:=TRUE; "DB1526".RECIPE.Scan_Trigger:=FALSE;
+END_IF;
+IF NOT "DB1526".RECIPE.Scan_Trigger THEN "DB1526".RECIPE.Scan_ACK:=FALSE; END_IF;
+
+IF #curCmd=1 THEN
+    "DB1527".RECIPE.Batch_Status:=1;
+    "DB1527".RECIPE.Total_Steps:="DB1521".RECIPE.Total_Steps;
+END_IF;
+
+END_FUNCTION_BLOCK
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANT 3
+// ═══════════════════════════════════════════════════════════════════════════
+FUNCTION_BLOCK "FB_MixingController_P3"
+TITLE = 'xMixing Controller Plant 3 v3.1'
+VERSION : 3.1
+
+VAR_OUTPUT
+    SP_Agit_RPM    : Real;
+    SP_HS_RPM      : Real;
+    SP_Temp        : Real;
+    Q_Steam_Valve  : Bool;
+    Q_CTW_Valve    : Bool;
+    Q_HighShear_En : Bool;
+    Q_Batch_Pump   : Bool;
+END_VAR
+VAR
+    stepTimer   : TON_TIME;
+    pulseTimer  : TP_TIME;
+    stepElapsed : Int;
+    stepStarted : Bool;
+    curSeq      : Int;
+    initialized : Bool;
+END_VAR
+VAR_TEMP
+    curPhaseType : Int;
+    curCmd       : Int;
+    stepTimePT   : TIME;
+    remainMs     : DINT;
+END_VAR
+
+BEGIN
+
+IF NOT #initialized THEN
+    "DB1532".RECIPE.PLC_State := 3;   // Plant 3 stamp
+    #initialized := TRUE;
+END_IF;
+
+IF "DB1532".RECIPE.Watchdog >= 32000 THEN
+    "DB1532".RECIPE.Watchdog := 0;
+ELSE
+    "DB1532".RECIPE.Watchdog := "DB1532".RECIPE.Watchdog + 1;
+END_IF;
+
+#curCmd       := "DB1530".RECIPE.HMI_Command;
+#curPhaseType := BYTE_TO_INT("DB1530".RECIPE.Phase_Type);
+"DB1533".RECIPE.HMI_Status   := #curCmd;
+"DB1532".RECIPE.Current_Step := "DB1530".RECIPE.Step_No;
+
+CASE #curCmd OF
+
+    0:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepStarted:=FALSE; #stepElapsed:=0;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    1:
+        #SP_Temp     := "DB1530".RECIPE.Temp_SP;
+        #SP_Agit_RPM := "DB1530".RECIPE.Agitator_SP;
+        #SP_HS_RPM   := "DB1530".RECIPE.HighShear_SP;
+
+        CASE #curPhaseType OF
+            1:  #Q_Batch_Pump:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            2:  #Q_HighShear_En:=TRUE;
+                #Q_Batch_Pump:=FALSE; #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            3:  #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            4:  #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+            5:  #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+            6:  #Q_Steam_Valve:=TRUE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE; #Q_CTW_Valve:=FALSE;
+            7:  ;
+            8:  #Q_CTW_Valve:=TRUE;
+                #Q_Steam_Valve:=FALSE; #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+            ELSE:
+                #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+                #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+                #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        END_CASE;
+
+        IF "DB1530".RECIPE.Step_Time > 0 THEN
+            #stepTimePT := DINT_TO_TIME(INT_TO_DINT("DB1530".RECIPE.Step_Time)*DINT#1000);
+            #stepTimer(IN:=TRUE, PT:=#stepTimePT);
+            #remainMs := TIME_TO_DINT(#stepTimePT - #stepTimer.ET);
+            "DB1532".RECIPE.Step_Timer := DINT_TO_INT(#remainMs / DINT#1000);
+        END_IF;
+        IF NOT #stepStarted THEN #stepStarted:=TRUE; #stepElapsed:=0; END_IF;
+        IF #stepElapsed < 32000 THEN #stepElapsed:=#stepElapsed+1; END_IF;
+
+    2:  #stepTimer(IN:=FALSE, PT:=T#1S);
+
+    3:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        "DB1533".RECIPE.Error_Flag:=TRUE; "DB1533".RECIPE.Error_Code:=3;
+
+    4,5:
+        #stepTimer(IN:=FALSE, PT:=T#1S);
+        IF "DB1533".RECIPE.Proc_Step_Done THEN
+            "DB1533".RECIPE.Finished_Step := "DB1532".RECIPE.Current_Step;
+            "DB1533".RECIPE.End_Temp      := "DB1532".RECIPE.MixTank_Temp;
+            "DB1533".RECIPE.End_Weight    := "DB1532".RECIPE.MixTank_Weight;
+            "DB1533".RECIPE.Error_Flag:=FALSE; "DB1533".RECIPE.Error_Code:=0;
+            #curSeq := "DB1531".RECIPE.Active_Step - 1;
+            IF #curSeq>=0 AND #curSeq<=31 THEN
+                "DB1537".RECIPE.Steps[#curSeq].Step_Index   :="DB1532".RECIPE.Current_Step;
+                "DB1537".RECIPE.Steps[#curSeq].Actual_Weight:="DB1532".RECIPE.MixTank_Weight;
+                "DB1537".RECIPE.Steps[#curSeq].Actual_Temp  :="DB1532".RECIPE.MixTank_Temp;
+                "DB1537".RECIPE.Steps[#curSeq].Actual_Agit  :="DB1532".RECIPE.Agitator_Act;
+                "DB1537".RECIPE.Steps[#curSeq].Actual_HS    :="DB1532".RECIPE.HighShear_Act;
+                "DB1537".RECIPE.Steps[#curSeq].Duration_Sec :=INT_TO_DINT(#stepElapsed);
+                "DB1537".RECIPE.Steps[#curSeq].Status_Code  :=#curCmd;
+                "DB1537".RECIPE.Current_Seq:="DB1531".RECIPE.Active_Step;
+            END_IF;
+            #pulseTimer(IN:=TRUE, PT:=T#1S);
+            "DB1533".RECIPE.Step_Complete  := #pulseTimer.Q;
+            "DB1533".RECIPE.Proc_Step_Done := FALSE;
+            #stepStarted:=FALSE; #stepElapsed:=0;
+        END_IF;
+
+    9:
+        #SP_Agit_RPM:=0.0; #SP_HS_RPM:=0.0; #SP_Temp:=0.0;
+        #Q_Steam_Valve:=FALSE; #Q_CTW_Valve:=FALSE;
+        #Q_HighShear_En:=FALSE; #Q_Batch_Pump:=FALSE;
+        "DB1533".RECIPE.Error_Flag:=TRUE;
+
+END_CASE;
+
+IF NOT "DB1533".RECIPE.Step_Complete THEN #pulseTimer(IN:=FALSE, PT:=T#1S); END_IF;
+
+IF "DB1536".RECIPE.Scan_Trigger AND NOT "DB1536".RECIPE.Scan_ACK THEN
+    "DB1536".RECIPE.Scan_Timestamp:=INT_TO_DINT("DB1532".RECIPE.Watchdog);
+    "DB1536".RECIPE.Scan_ACK:=TRUE; "DB1536".RECIPE.Scan_Trigger:=FALSE;
+END_IF;
+IF NOT "DB1536".RECIPE.Scan_Trigger THEN "DB1536".RECIPE.Scan_ACK:=FALSE; END_IF;
+
+IF #curCmd=1 THEN
+    "DB1537".RECIPE.Batch_Status:=1;
+    "DB1537".RECIPE.Total_Steps:="DB1531".RECIPE.Total_Steps;
+END_IF;
+
+END_FUNCTION_BLOCK

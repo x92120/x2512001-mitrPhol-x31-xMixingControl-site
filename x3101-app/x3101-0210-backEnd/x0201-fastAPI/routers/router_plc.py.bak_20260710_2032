@@ -406,58 +406,21 @@ def update_plc_telemetry(data: DB1512Telemetry):
 from plc_service import read_recipe_from_plc, read_full_actuals
 
 @router.get("/plant/{plant_id}/recipe-status")
-def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
+def get_plant_recipe_status(plant_id: str):
     """
     Read the Recipe (Target) and Actual Results directly from the PLC via snap7 based on plant_id.
-    Also returns free_scan_progress: pending FH/SPP prebatch items for server-crash restore.
     """
     try:
         from plc_service import get_db_number
-        from sqlalchemy import text as sa_text
         recipe_db = get_db_number('full_recipe', int(plant_id))
-
+        
         target = read_recipe_from_plc(recipe_db)
         actual = read_full_actuals(int(plant_id))
-
-        # ── Free-Scan Restore: check pending FH/SPP prebatch items ─────────
-        # Used when server crashes mid Free-Scan so operator can resume scanning
-        free_scan_progress = None
-        batch_id = (actual or {}).get("batch_id", "")
-        if batch_id and batch_id not in ("-", ""):
-            try:
-                rows = db.execute(sa_text("""
-                    SELECT
-                        pi.id,
-                        pi.re_code,
-                        pi.wh,
-                        pi.status,
-                        COUNT(ps.id) AS scanned_count,
-                        pi.require
-                    FROM prebatch_items pi
-                    LEFT JOIN prebatch_scans ps ON ps.item_id = pi.id
-                    WHERE pi.batch_id = :bid
-                      AND pi.wh IN ('FH','SPP')
-                    GROUP BY pi.id, pi.re_code, pi.wh, pi.status, pi.require
-                """), {"bid": batch_id}).fetchall()
-
-                items = [dict(r._mapping) for r in rows]
-                pending = [i for i in items if i["status"] != 2]  # status=2 = done
-                free_scan_progress = {
-                    "batch_id": batch_id,
-                    "total_items": len(items),
-                    "pending_count": len(pending),
-                    "is_complete": len(pending) == 0,
-                    "items": items
-                }
-            except Exception as fs_err:
-                logger.warning(f"[FreeScan restore] batch {batch_id}: {fs_err}")
-        # ────────────────────────────────────────────────────────────────────
-
+        
         return {
             "success": True,
             "target": target,
-            "actual": actual,
-            "free_scan_progress": free_scan_progress
+            "actual": actual
         }
     except Exception as e:
         logger.error(f"Failed to read recipe status from PLC: {e}")

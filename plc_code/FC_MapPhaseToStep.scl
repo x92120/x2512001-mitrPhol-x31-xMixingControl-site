@@ -1,0 +1,250 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// FC_MapPhaseToStep  —  v1.0  (2026-07-06)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// PURPOSE:
+//   แปลง phase_id (String) + action_code (Int) จาก DB1510 ให้เป็น
+//   PLC Step Number (0-28) ตาม plcStepDescriptions ใน Frontend
+//
+// STEP TABLE (เลขคู่ = Active State, เลขคี่ = Transitioning):
+//
+//   0  Stand By                 ← IDLE / Initial
+//   1  Starting Program         ← (transitioning)
+//   2  Start Program            ← A1010: Batching RO/MIS/LS/WLS (10010/10020/10030/10040)
+//   3  Filling Major Ingredient ← (transitioning)
+//   4  Fill Major Ingredient    ← A1010: Manual Add (30010/20040)
+//   5  Filling Major Done       ← (transitioning)
+//   6  Fill Major Done          ← A1020: High Shear / Pre-blend (10010/20030/30010/30020)
+//   7  Preblending              ← (transitioning)
+//   8  Preblending              ← D1010: Dissolve/Pour (20010/20040/10001/30010)
+//   9  Waiting First Confirm    ← D1010: กลั้วภาชนะ/Rinse (20020)
+//  10  First Confirm            ← D1030: Secondary Dissolve (all action codes)
+//  11  Pre Heating              ← (transitioning)
+//  12  Pre Heats                ← x1010: Heating temp < 83°C (30500 low temp)
+//  13  Filling Minor Ingredient ← (transitioning)
+//  14  Fill Minor Ingredient    ← x1010: Add Brix water or minor (20050/20020)
+//  15  Second Heating           ← (transitioning)
+//  16  Second Heat              ← x1010: Heating temp >= 83°C (30500 high temp)
+//  17  Filling Third Ingredient ← (transitioning)
+//  18  Fill Third Ingredient    ← x1010: Timed hold on heat (30500 + step_time > 0)
+//  19  Pasteurizing             ← (transitioning)
+//  20  Pasteurizer              ← x1020: All action codes (30500)
+//  21  Waiting QC Confirm       ← x1030: Holding manual confirm (30010)
+//  22  QC Confirm               ← x1030: Extended hold high temp >= 83°C (30500)
+//  23  Preparing Transfer       ← (transitioning)
+//  24  Ready To Transfer        ← x1030: Cooling start < 83°C (30500/30600)
+//  25  Transferring             ← (transitioning)
+//  26  Transferring             ← x1040: Final Cooling (30600/all)
+//  27  Ending STEP              ← (transitioning)
+//  28  End STEP                 ← Is_Last_Step = TRUE / Batch Complete
+//
+// DATA SOURCES:
+//   DB1510 (DB_STEP_CMD):  Phase_ID, Action_Code_Int, Temp_SP, Step_Time
+//   DB1512 (DB_TELEMETRY): Current_Step ← OUTPUT of this function
+//
+// USAGE IN FB / OB1:
+//   "DB_TELEMETRY".Current_Step := "FC_MapPhaseToStep"(
+//       Phase_ID     := "DB_STEP_CMD".Phase_ID,
+//       Action_Code  := "DB_STEP_CMD".Action_Code_Int,
+//       Temp_SP      := "DB_STEP_CMD".Temp_SP,
+//       Step_Time    := "DB_STEP_CMD".Step_Time,
+//       Is_Last_Step := myLastStepFlag
+//   );
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+
+FUNCTION "FC_MapPhaseToStep" : Int
+TITLE = 'Map Phase+ActionCode to PLC Step No (0-28)'
+VERSION : 1.0
+{ S7_Optimized_Access := 'TRUE' }
+
+VAR_INPUT
+    Phase_ID     : String[10];   // phase_id (e.g. 'A1010', 'x1010', 'D1010')
+    Action_Code  : Int;          // action_code as Int (e.g. 30500, 10010)
+    Temp_SP      : Real;         // Temperature Setpoint (°C)
+    Step_Time    : Int;          // Step Time (seconds), 0 = no timer
+    Is_Last_Step : Bool;         // TRUE = last step of batch → returns 28
+END_VAR
+
+VAR_TEMP
+    result : Int;
+END_VAR
+
+BEGIN
+
+// ── Default: Stand By ─────────────────────────────────────────────────────────
+#result := 0;
+
+// ── Last Step Override → End STEP (28) ───────────────────────────────────────
+IF #Is_Last_Step THEN
+    "FC_MapPhaseToStep" := 28;
+    RETURN;
+END_IF;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE A1010 — Batching Tank (RO / Major Ingredients / Manual)
+//  → Step 2 : Auto Batching   (10010 / 10020 / 10030 / 10040)
+//  → Step 4 : Manual Add      (30010 / 20040)
+// ═══════════════════════════════════════════════════════════════════════════
+IF #Phase_ID = 'A1010' THEN
+
+    CASE #Action_Code OF
+        10010,     // RO Batching
+        10020,     // MIS Batching
+        10030,     // LS Batching
+        10040:     // WLS Batching
+            #result := 2;  // Start Program
+
+        30010,     // Manual add Ingredient to Mixing Tank
+        20040:     // ยกเท (pour)
+            #result := 4;  // Fill Major Ingredient
+
+        ELSE
+            #result := 2;  // default → auto batching
+    END_CASE;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE A1020 — High Shear / Pre-blend
+//  → Step 6 : All action codes (High Shear active)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'A1020' THEN
+
+    // All A1020 actions map to step 6 (Fill Major Done / High Shear)
+    #result := 6;  // Fill Major Done — High Shear running
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE D1010 — Dissolve Tank 1 (Main dissolve vessel)
+//  → Step 8 : Dissolve / Pour  (20010 / 20040 / 10001 / 30010 / 30020)
+//  → Step 9 : Rinse & Wait     (20020 — กลั้วภาชนะ)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'D1010' THEN
+
+    CASE #Action_Code OF
+        20020:     // กลั้วภาชนะด้วย RO water (rinse vessel → wait confirm)
+            #result := 9;  // Waiting First Confirm
+
+        20010,     // ละลาย Ingredient (dissolve)
+        20040,     // ยกเท (pour dissolved)
+        10001,     // น้ำสำหรับละลาย-กลั้ว
+        30010,     // Manual add
+        30020:     // special dissolve
+            #result := 8;  // Preblending — dissolve tank active
+
+        ELSE
+            #result := 8;
+    END_CASE;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE D1030 — Dissolve Tank 2 (Secondary dissolve vessel)
+//  → Step 10 : All action codes (Secondary dissolve = First Confirm zone)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'D1030' THEN
+
+    // All D1030 actions = step 10 (First Confirm)
+    #result := 10;  // First Confirm — secondary dissolve tank
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE x1010 — Heating Phase
+//  → Step 12 : Pre Heats      (30500, temp < 83°C, no timer)
+//  → Step 14 : Fill Minor     (20050 Brix water / 20020 rinse during heat)
+//  → Step 16 : Second Heat    (30500, temp >= 83°C, no timer)
+//  → Step 18 : Timed Hold     (30500, step_time > 0 = hold on heat)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'x1010' THEN
+
+    CASE #Action_Code OF
+
+        20050:  // เติมน้ำปรับบริกซ์ (add Brix correction water)
+            #result := 14;  // Fill Minor Ingredient
+
+        20020:  // กลั้วภาชนะด้วย RO water (rinse during heating)
+            #result := 14;  // Fill Minor Ingredient
+
+        30010:  // Heating (manual-confirm type, no auto timer)
+            IF #Temp_SP >= 83.0 THEN
+                #result := 16;  // Second Heat — target temp reached
+            ELSE
+                #result := 12;  // Pre Heats — warming up
+            END_IF;
+
+        30500:  // Heats Up (standard auto heating)
+            IF #Step_Time > 0 THEN
+                // มี timer → hold at temperature
+                #result := 18;  // Fill Third Ingredient (timed heat hold)
+            ELSIF #Temp_SP >= 83.0 THEN
+                #result := 16;  // Second Heat — high target
+            ELSE
+                #result := 12;  // Pre Heats — low target
+            END_IF;
+
+        ELSE
+            #result := 12;  // default: Pre Heats
+    END_CASE;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE x1020 — Pasteurization (คงอุณหภูมิฆ่าเชื้อ สูง 83-97°C)
+//  → Step 20 : Pasteurizer (all action codes)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'x1020' THEN
+
+    #result := 20;  // Pasteurizer
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE x1030 — Holding / Start Cooling
+//  → Step 21 : Waiting QC Confirm  (30010 — manual hold at 83°C)
+//  → Step 22 : QC Confirm          (30500, temp >= 83°C — extended hold)
+//  → Step 24 : Ready To Transfer   (30500, temp < 83°C / 30600 / 30020)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'x1030' THEN
+
+    CASE #Action_Code OF
+
+        30010:  // Holding (manual confirm = QC wait)
+            #result := 21;  // Waiting QC Confirm
+
+        30500:  // Heats Up / Holding
+            IF #Temp_SP >= 83.0 THEN
+                #result := 22;  // QC Confirm — still at high hold temp
+            ELSE
+                // temp < 83°C = cooling has begun
+                #result := 24;  // Ready To Transfer — cooling start
+            END_IF;
+
+        30600,  // Cooling (explicit cool action)
+        30020:  // transition/rinse
+            #result := 24;  // Ready To Transfer
+
+        ELSE
+            #result := 22;  // default: QC Confirm zone
+    END_CASE;
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE x1040 — Final Cooling (ลดอุณหภูมิสุดท้าย 33-53°C)
+//  → Step 26 : Transferring / Final Cool (all action codes)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSIF #Phase_ID = 'x1040' THEN
+
+    #result := 26;  // Transferring — Final Cooling
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  UNKNOWN PHASE → Stand By (0)
+// ═══════════════════════════════════════════════════════════════════════════
+ELSE
+    #result := 0;  // Stand By
+
+END_IF;
+
+
+// ── Output ────────────────────────────────────────────────────────────────────
+"FC_MapPhaseToStep" := #result;
+
+END_FUNCTION

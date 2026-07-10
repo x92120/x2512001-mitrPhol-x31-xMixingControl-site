@@ -1,0 +1,266 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE 1: UDT_All.scl  — v2.0 (2026-07-06)
+// Layout ตรงกับ plc_interface.py + plc_service.py ของจริง
+//
+// Import ลำดับแรกใน TIA Portal
+// คลิกขวา "External source files" → "Add new external file"
+//   → คลิกขวา → "Generate blocks from source"
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─── UDT: DB1510 — Step Command (App → PLC) ──────────────────────────────────
+// Total: 94 bytes  (layout จริงใน TIA Portal)
+//
+//   +0    Batch_ID      String[20]   22 bytes
+//   +22   HMI_Command   Int           2 bytes  0=Idle,1=Run,2=Pause,3=Emg,4=Complete,5=Override,9=Error
+//   +24   Step_No       Int           2 bytes  phase sequence (p010=10, p020=20...)
+//   +26   Phase_ID      String[10]   12 bytes  sequential phase no (p010, p020...)
+//   +38   Re_Code       String[20]   22 bytes
+//   +60   Target_Weight Real          4 bytes
+//   +64   Temp_SP       Real          4 bytes
+//   +68   Temp_Low      Real          4 bytes
+//   +72   Temp_High     Real          4 bytes
+//   +76   Agitator_SP   Real          4 bytes
+//   +80   HighShear_SP  Real          4 bytes
+//   +84   Step_Time     Int           2 bytes  (seconds)
+//   +86.0 Cmd_NewStep   Bool          bit      new step trigger
+//   +86.1 Free_Scan     Bool          bit      free scan trigger
+//   +87   Phase_Type    Byte          1 byte   1-8 phase type code (FB CASE interlock)
+//   +88   Action_Code   DInt          4 bytes  action code: 10010, 30500, 20040...
+//   +92   z             Int           2 bytes  spare
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase_Type encoding (Int) สำหรับ CASE statement ใน FB:
+//   1 = A1010  Batching Auto (Fill Major / Start)
+//   2 = A1020  High Shear active
+//   3 = D1010  Preblending / Dissolve tank
+//   4 = D1030  First Confirm / Secondary dissolve
+//   5 = x1010  Pre Heat / Fill Minor / Second Heat / Fill Third
+//   6 = x1020  Pasteurizer
+//   7 = x1030  Waiting QC / QC Confirm / Ready Transfer
+//   8 = x1040  Transferring
+//   0 = Unknown / Stand By
+// ─────────────────────────────────────────────────────────────────────────────
+TYPE "type_StepCommand"
+TITLE = 'DB1510 : Step Command from App'
+VERSION : 3.3
+   STRUCT
+      Batch_ID      : String[20];   // +0
+      HMI_Command   : Int;          // +22
+      Step_No       : Int;          // +24  Phase sequence (p010=10, p020=20...)
+      Phase_ID      : String[10];   // +26  sequential phase no (p010, p020...)
+      Re_Code       : String[20];   // +38
+      Target_Weight : Real;         // +60
+      Temp_SP       : Real;         // +64
+      Temp_Low      : Real;         // +68
+      Temp_High     : Real;         // +72
+      Agitator_SP   : Real;         // +76
+      HighShear_SP  : Real;         // +80
+      Step_Time     : Int;          // +84 (seconds)
+      Cmd_NewStep   : Bool;         // +86.0  new step trigger
+      Free_Scan     : Bool;         // +86.1  free scan trigger
+      Phase_Type    : Byte;         // +87    1-8 phase type code (FB CASE interlock)
+      Action_Code   : DInt;         // +88    action code: 10010, 30500, 20040...
+      z             : Int;          // +92    spare
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1511 Step (ใน Full Recipe Array) ─────────────────────────────────
+// Per step: 78 bytes  (ตรงกับ DB1511RecipeStep.serialize())
+//
+//   +0   Seq           Int           2
+//   +2   Phase_No      Int           2  (10,20,30...)
+//   +4   Sub_Step      Int           2
+//   +6   Action_Code   String[10]   12
+//   +18  Phase_ID      String[10]   12
+//   +30  Re_Code       String[20]   22
+//   +52  Target_Weight Real          4
+//   +56  Temp_SP       Real          4
+//   +60  Temp_Low      Real          4
+//   +64  Temp_High     Real          4
+//   +68  Agitator_SP   Real          4
+//   +72  HighShear_SP  Real          4
+//   +76  Step_Time     Int           2
+// Total = 78 bytes
+// ─────────────────────────────────────────────────────────────────────────────
+TYPE "type_RecipeStep"
+TITLE = 'DB1511 : One Recipe Step (78 bytes)'
+VERSION : 2.0
+   STRUCT
+      Seq           : Int;          // +0   Flat sequence (1-128)
+      Phase_No      : Int;          // +2   Phase number (10,20,30...)
+      Sub_Step      : Int;          // +4   Sub-step within phase
+      Action_Code   : String[10];   // +6   action_code string
+      Phase_ID      : String[10];   // +18  phase_id (x1010, A1010...)
+      Re_Code       : String[20];   // +30  ingredient re_code
+      Target_Weight : Real;         // +52
+      Temp_SP       : Real;         // +56
+      Temp_Low      : Real;         // +60
+      Temp_High     : Real;         // +64
+      Agitator_SP   : Real;         // +68
+      HighShear_SP  : Real;         // +72
+      Step_Time     : Int;          // +76  (seconds)
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1511 — Full Recipe Header + Array ────────────────────────────────
+// Header: 52 bytes + Steps[32 × 78] = 2,548 bytes  (ลดจาก 128 เหลือ 32)
+// ประหยัดได้ 7,488 bytes ต่อ Plant
+TYPE "type_FullRecipe"
+TITLE = 'DB1511 : Full Recipe Header + 32 Steps'
+VERSION : 2.1
+   STRUCT
+      Batch_ID       : String[20];                   // +0
+      SKU_ID         : String[20];                   // +22
+      HMI_Command    : Int;                          // +44
+      Total_Steps    : Int;                          // +46
+      Active_Step    : Int;                          // +48  (1-based)
+      Cmd_LoadRecipe : Bool;                         // +50
+      Steps          : Array[0..31] OF "type_RecipeStep"; // +52
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1512 — Telemetry (PLC → App) ─────────────────────────────────────
+// Total: 28 bytes  (ตรงกับ read_telemetry() offset)
+//
+//   +0   Watchdog       Int     2   นับขึ้นทุก scan
+//   +2   PLC_State      Int     2   0=Idle,1=Run,2=Hold,9=Error
+//   +4   Current_Step   Int     2   Step 0-28
+//   +6   Step_Timer     Int     2   countdown (วินาที)
+//   +8   MixTank_Temp   Real    4
+//   +12  MixTank_Weight Real    4
+//   +16  Agitator_Act   Real    4
+//   +20  HighShear_Act  Real    4
+//   +24  Hopper_Weight  Real    4
+// ─────────────────────────────────────────────────────────────────────────────
+TYPE "type_Telemetry"
+TITLE = 'DB1512 : Telemetry to App (28 bytes)'
+VERSION : 2.0
+   STRUCT
+      Watchdog       : Int;    // +0
+      PLC_State      : Int;    // +2   0=Idle,1=Run,2=Hold,9=Error
+      Current_Step   : Int;    // +4   Step 0-28
+      Step_Timer     : Int;    // +6   countdown seconds
+      MixTank_Temp   : Real;   // +8
+      MixTank_Weight : Real;   // +12
+      Agitator_Act   : Real;   // +16
+      HighShear_Act  : Real;   // +20
+      Hopper_Weight  : Real;   // +24
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1513 — Handshake (PLC → App) ─────────────────────────────────────
+// Total: 16 bytes  (ตรงกับ read_handshake() offset)
+//
+//   +0   Step_Complete  Bool    1   Pulse เมื่อ step จบ
+//   +1   Padding        Byte    1
+//   +2   Finished_Step  Int     2   Step ที่จบ
+//   +4   End_Temp       Real    4
+//   +8   End_Weight     Real    4
+//   +12  Error_Flag     Bool    1
+//   +13  Padding        Byte    1
+//   +14  Error_Code     Int     2
+// ─────────────────────────────────────────────────────────────────────────────
+// HMI_Command (DB1510 App→PLC interlock):
+//   0 = Idle / รอ
+//   1 = Running (กำลังรัน step)
+//   2 = Pause
+//   3 = Emergency (kill ทุก output ทันที)
+//   4 = Step Complete (App ยืนยัน target ได้แล้ว รอ Process PLC ส่ง step done)
+//   5 = Step Override (App override รอ Process PLC ส่ง step done)
+//   9 = Error
+//
+// Proc_Step_Done: Process PLC เขียนผ่าน PUT-GET เมื่อ step hardware เสร็จ
+// ─────────────────────────────────────────────────────────────────────────────
+TYPE "type_Handshake"
+TITLE = 'DB1513 : Step Handshake (18 bytes)'
+VERSION : 2.1
+   STRUCT
+      Step_Complete  : Bool;   // +0   FB pulse ให้ App (App next step)
+      Proc_Step_Done : Bool;   // +1   Process PLC เขียน TRUE เมื่อ hardware done
+      Finished_Step  : Int;    // +2   Step ที่จบ
+      End_Temp       : Real;   // +4
+      End_Weight     : Real;   // +8
+      Error_Flag     : Bool;   // +12
+      Error_Code     : Int;    // +14
+      HMI_Status     : Int;    // +16  mirror HMI_Command ปัจจุบัน (App อ่าน)
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1517 Step Actual (ใน Actual Results Array) ───────────────────────
+// Per step: 60 bytes  (ตรงกับ read_full_actuals() step_size=60)
+//
+//   +0   Step_Index     Int     2
+//   +2   Phase_Number   Int     2
+//   +4   Sub_Step       Int     2
+//   +6   Actual_Weight  Real    4
+//   +10  Actual_Temp    Real    4
+//   +14  Actual_Agit    Real    4
+//   +18  Actual_HS      Real    4
+//   +22  Actual_Brix    Real    4
+//   +26  Actual_PH      Real    4
+//   +30  Time_Start     DTL    12   Siemens DTL format
+//   +42  Time_End       DTL    12
+//   +54  Duration_Sec   DInt    4
+//   +58  Status_Code    Int     2
+// ─────────────────────────────────────────────────────────────────────────────
+TYPE "type_ActualStep"
+TITLE = 'DB1517 : One Actual Step Result (60 bytes)'
+VERSION : 2.0
+   STRUCT
+      Step_Index     : Int;    // +0   Flat seq (1-128)
+      Phase_Number   : Int;    // +2   Phase number (10,20,30...)
+      Sub_Step       : Int;    // +4
+      Actual_Weight  : Real;   // +6
+      Actual_Temp    : Real;   // +10
+      Actual_Agit    : Real;   // +14
+      Actual_HS      : Real;   // +18
+      Actual_Brix    : Real;   // +22
+      Actual_PH      : Real;   // +26
+      Time_Start     : DTL;    // +30  12 bytes
+      Time_End       : DTL;    // +42  12 bytes
+      Duration_Sec   : DInt;   // +54
+      Status_Code    : Int;    // +58
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1517 — Full Actual Results (Header + Array) ──────────────────────
+// Header: 50 bytes + Steps[32 × 60] = 1,970 bytes  (ลดจาก 128 เหลือ 32)
+// ประหยัดได้ 5,760 bytes ต่อ Plant
+TYPE "type_FullActuals"
+TITLE = 'DB1517 : Full Actual Results Header + 32 Steps'
+VERSION : 2.1
+   STRUCT
+      Batch_ID       : String[20];                    // +0
+      SKU_ID         : String[20];                    // +22
+      Total_Steps    : Int;                           // +44
+      Current_Seq    : Int;                           // +46
+      Batch_Status   : Int;                           // +48
+      Steps          : Array[0..31] OF "type_ActualStep"; // +50
+   END_STRUCT;
+END_TYPE
+
+
+// ─── UDT: DB1516 — Free Scan Log (WH SPP/FH → PLC) ──────────────────────────
+TYPE "type_FreeScanLog"
+TITLE = 'DB1516 : Free Scan Log from WH SPP/FH'
+VERSION : 1.0
+   STRUCT
+      Scan_Trigger   : Bool;        // Node-RED เขียน: TRUE เมื่อ scan เกิด
+      Scan_OK        : Bool;        // TRUE=ถูก recipe
+      WH_Type        : Int;         // 1=SPP, 2=FH
+      Current_Step   : Int;         // Step_No ขณะ scan (0-28)
+      Phase_ID       : String[10];  // phase_id ขณะ scan
+      Re_Code        : String[20];  // ingredient ที่ scan
+      Scan_Weight    : Real;        // น้ำหนักที่ scan (kg)
+      Target_Weight  : Real;        // น้ำหนัก recipe (kg)
+      Scan_ACK       : Bool;        // PLC เขียน: รับทราบแล้ว
+      Scan_Timestamp : DInt;        // PLC เขียน: Watchdog snapshot
+   END_STRUCT;
+END_TYPE

@@ -1,0 +1,90 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE 2: DB_All.scl  — v2.3
+// แต่ละ DB มี field "RECIPE" ห่อ struct ไว้
+// Access pattern: "DB15xx".RECIPE.FieldName
+// ═══════════════════════════════════════════════════════════════════════════
+
+DATA_BLOCK "DB1510"
+TITLE = 'DB1510 : Step Command Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT
+      RECIPE : "type_StepCommand";
+   END_STRUCT;
+BEGIN
+   RECIPE.HMI_Command := 0;
+   RECIPE.Step_No     := 0;
+   RECIPE.Cmd_NewStep := FALSE;
+END_DATA_BLOCK
+
+
+DATA_BLOCK "DB1511"
+TITLE = 'DB1511 : Full Recipe Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT
+      RECIPE : "type_FullRecipe";
+   END_STRUCT;
+BEGIN
+   RECIPE.HMI_Command    := 0;
+   RECIPE.Total_Steps    := 0;
+   RECIPE.Active_Step    := 1;
+   RECIPE.Cmd_LoadRecipe := FALSE;
+END_DATA_BLOCK
+
+
+DATA_BLOCK "DB1512"
+TITLE = 'DB1512 : Telemetry Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT
+      RECIPE : "type_Telemetry";
+   END_STRUCT;
+BEGIN
+   RECIPE.Watchdog     := 0;
+   RECIPE.PLC_State    := 0;
+   RECIPE.Current_Step := 0;
+   RECIPE.Step_Timer   := 0;
+END_DATA_BLOCK
+
+
+DATA_BLOCK "DB1513"
+TITLE = 'DB1513 : Handshake Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT
+      RECIPE : "type_Handshake";
+   END_STRUCT;
+BEGIN
+   RECIPE.Step_Complete := FALSE;
+   RECIPE.Finished_Step := 0;
+   RECIPE.Error_Flag    := FALSE;
+   RECIPE.Error_Code    := 0;
+END_DATA_BLOCK
+
+
+DATA_BLOCK "DB1516"
+TITLE = 'DB1516 : Free Scan Log Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 1.0 NON_RETAIN
+   STRUCT
+      RECIPE : "type_FreeScanLog";
+   END_STRUCT;
+BEGIN
+   RECIPE.Scan_Trigger := FALSE;
+   RECIPE.Scan_ACK     := FALSE;
+END_DATA_BLOCK
+
+
+DATA_BLOCK "DB1517"
+TITLE = 'DB1517 : Actual Results Plant 1'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3
+   STRUCT
+      RECIPE : "type_FullActuals";
+   END_STRUCT;
+BEGIN
+   RECIPE.Total_Steps  := 0;
+   RECIPE.Current_Seq  := 0;
+   RECIPE.Batch_Status := 0;
+END_DATA_BLOCK

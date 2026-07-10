@@ -565,9 +565,11 @@ def _on_step_cmd_message(client, userdata, message):
             except Exception:
                 ac_int = 0
 
-            # Write Step_OF_PLC (PLC step cmd) at +88 — priority over raw action_code
-            write_val = step_of_plc if step_of_plc > 0 else 0
-            if write_val > 0:
+            # +88 = Action_Code (DInt) per PLC type_StepCommand definition
+            # PLC reads Action_Code from +88 to determine what operation to run
+            # Write Action_Code directly — this is the CORRECT value for this register
+            write_val = ac_int if ac_int != 0 else 0
+            if write_val != 0:
                 ok_ac = plc.db_write(db1510, 88, struct.pack('>i', write_val))
             else:
                 ok_ac = None

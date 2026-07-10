@@ -1,0 +1,82 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// DB1516 — Free Scan Log (WH SPP/FH → PLC Log Only)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// PURPOSE:
+//   รับ event จาก WH Operator (SPP/FH) ที่ scan ยืนยัน ingredient
+//   ตาม recipe อย่างอิสระ (Free Scan)
+//   PLC ทำแค่ ACK + snapshot timestamp — ไม่ควบคุม actuator ใดๆ
+//
+// WRITE BY: Node-RED (เมื่อ scan เกิดขึ้น)
+// READ BY : Node-RED (เพื่อ confirm ACK และบันทึก report)
+//
+// HOW TO USE IN TIA PORTAL:
+//   1. สร้าง UDT "type_FreeScanLog" ก่อน
+//   2. สร้าง DB1516 "DB_FREESCAN_LOG" ใช้ UDT นี้
+//   3. UNCHECK "Optimized block access"
+//   4. ใส่ handler ใน FB หลัก (ดูโค้ดด้านล่าง)
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+// ─── UDT: Free Scan Log ──────────────────────────────────────────────────────
+TYPE "type_FreeScanLog"
+TITLE = 'Free Scan Event from WH SPP/FH'
+VERSION : 0.1
+   STRUCT
+      // ── Written by Node-RED (trigger) ──────────────────────
+      Scan_Trigger   : Bool;          // Pulse TRUE เมื่อ scan สำเร็จ
+      Scan_OK        : Bool;          // TRUE=ถูก recipe, FALSE=ผิด
+      WH_Type        : Int;           // 1=SPP, 2=FH
+      Current_Step   : Int;           // PLC Step_No ขณะ scan (0-28)
+      Phase_ID       : String[10];    // phase_id ขณะ scan (เช่น x1010)
+      Re_Code        : String[20];    // ingredient re_code ที่ scan
+      Scan_Weight    : Real;          // น้ำหนักที่ scan ได้ (kg)
+      Target_Weight  : Real;          // น้ำหนักที่ recipe กำหนด (kg)
+
+      // ── Written by PLC (response) ──────────────────────────
+      Scan_ACK       : Bool;          // PLC รับทราบแล้ว (ack pulse)
+      Scan_Timestamp : DInt;          // Watchdog ณ เวลาที่ PLC รับ scan
+   END_STRUCT;
+END_TYPE
+
+
+// ─── Data Block: DB1516 ──────────────────────────────────────────────────────
+DATA_BLOCK "DB_FREESCAN_LOG"
+TITLE = 'DB1516 : Free Scan Log from WH SPP/FH'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW'
+FAMILY : 'MIX'
+VERSION : 0.1
+NON_RETAIN
+   "type_FreeScanLog"
+BEGIN
+END_DATA_BLOCK
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FB Handler — ใส่ใน FB หลัก (FB_Step_Handshake หรือ OB1)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// FUNCTION_BLOCK "FB_Step_Handshake"
+// ...
+//
+// ── Free Scan ACK Handler ────────────────────────────────────────────────────
+//
+//   IF "DB_FREESCAN_LOG".Scan_Trigger
+//      AND NOT "DB_FREESCAN_LOG".Scan_ACK THEN
+//
+//       // Snapshot เวลา PLC ไว้ใน log
+//       "DB_FREESCAN_LOG".Scan_Timestamp := "DB_TELEMETRY".Watchdog;
+//
+//       // ACK กลับให้ Node-RED รู้ว่า PLC รับแล้ว
+//       "DB_FREESCAN_LOG".Scan_ACK     := TRUE;
+//       "DB_FREESCAN_LOG".Scan_Trigger := FALSE;
+//
+//   END_IF;
+//
+//   // Reset ACK เมื่อ Node-RED เคลียร์ Trigger แล้ว
+//   IF NOT "DB_FREESCAN_LOG".Scan_Trigger THEN
+//       "DB_FREESCAN_LOG".Scan_ACK := FALSE;
+//   END_IF;
+//
+// ════════════════════════════════════════════════════════════════════════════

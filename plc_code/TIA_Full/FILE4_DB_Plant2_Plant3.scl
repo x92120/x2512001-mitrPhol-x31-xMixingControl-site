@@ -1,0 +1,101 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// FILE 4: DB_Plant2_Plant3.scl  — v2.3  (RECIPE nested struct)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Plant 2 ──────────────────────────────────────────────────────────────
+DATA_BLOCK "DB1520"
+TITLE = 'DB1520 : Step Command Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_StepCommand"; END_STRUCT;
+BEGIN RECIPE.HMI_Command:=0; RECIPE.Step_No:=0; RECIPE.Cmd_NewStep:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1521"
+TITLE = 'DB1521 : Full Recipe Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_FullRecipe"; END_STRUCT;
+BEGIN RECIPE.HMI_Command:=0; RECIPE.Total_Steps:=0; RECIPE.Active_Step:=1; RECIPE.Cmd_LoadRecipe:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1522"
+TITLE = 'DB1522 : Telemetry Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_Telemetry"; END_STRUCT;
+BEGIN RECIPE.Watchdog:=0; RECIPE.PLC_State:=0; RECIPE.Current_Step:=0; RECIPE.Step_Timer:=0;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1523"
+TITLE = 'DB1523 : Handshake Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_Handshake"; END_STRUCT;
+BEGIN RECIPE.Step_Complete:=FALSE; RECIPE.Finished_Step:=0; RECIPE.Error_Flag:=FALSE; RECIPE.Error_Code:=0;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1526"
+TITLE = 'DB1526 : Free Scan Log Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 1.0 NON_RETAIN
+   STRUCT RECIPE : "type_FreeScanLog"; END_STRUCT;
+BEGIN RECIPE.Scan_Trigger:=FALSE; RECIPE.Scan_ACK:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1527"
+TITLE = 'DB1527 : Actual Results Plant 2'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3
+   STRUCT RECIPE : "type_FullActuals"; END_STRUCT;
+BEGIN RECIPE.Total_Steps:=0; RECIPE.Current_Seq:=0; RECIPE.Batch_Status:=0;
+END_DATA_BLOCK
+
+// ── Plant 3 ──────────────────────────────────────────────────────────────
+DATA_BLOCK "DB1530"
+TITLE = 'DB1530 : Step Command Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_StepCommand"; END_STRUCT;
+BEGIN RECIPE.HMI_Command:=0; RECIPE.Step_No:=0; RECIPE.Cmd_NewStep:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1531"
+TITLE = 'DB1531 : Full Recipe Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_FullRecipe"; END_STRUCT;
+BEGIN RECIPE.HMI_Command:=0; RECIPE.Total_Steps:=0; RECIPE.Active_Step:=1; RECIPE.Cmd_LoadRecipe:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1532"
+TITLE = 'DB1532 : Telemetry Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_Telemetry"; END_STRUCT;
+BEGIN RECIPE.Watchdog:=0; RECIPE.PLC_State:=0; RECIPE.Current_Step:=0; RECIPE.Step_Timer:=0;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1533"
+TITLE = 'DB1533 : Handshake Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3 NON_RETAIN
+   STRUCT RECIPE : "type_Handshake"; END_STRUCT;
+BEGIN RECIPE.Step_Complete:=FALSE; RECIPE.Finished_Step:=0; RECIPE.Error_Flag:=FALSE; RECIPE.Error_Code:=0;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1536"
+TITLE = 'DB1536 : Free Scan Log Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 1.0 NON_RETAIN
+   STRUCT RECIPE : "type_FreeScanLog"; END_STRUCT;
+BEGIN RECIPE.Scan_Trigger:=FALSE; RECIPE.Scan_ACK:=FALSE;
+END_DATA_BLOCK
+
+DATA_BLOCK "DB1537"
+TITLE = 'DB1537 : Actual Results Plant 3'
+{ S7_Optimized_Access := 'FALSE' }
+AUTHOR : 'AW' FAMILY : 'MIX' VERSION : 2.3
+   STRUCT RECIPE : "type_FullActuals"; END_STRUCT;
+BEGIN RECIPE.Total_Steps:=0; RECIPE.Current_Seq:=0; RECIPE.Batch_Status:=0;
+END_DATA_BLOCK
