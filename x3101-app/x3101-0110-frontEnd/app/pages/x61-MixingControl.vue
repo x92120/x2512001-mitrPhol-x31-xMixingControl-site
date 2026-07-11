@@ -1418,8 +1418,11 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
     const failed: string[] = []
 
     // 1. Temperature ±5°C (only if SP is set)
+    //    A1010 steps (action_code starts with 1) skip temp check
+    //    continuous batching raises temp above SP naturally
+    const _isA1010step = String(step.action_code || "").startsWith("1")
     const tempSP = Number(step.temperature || 0)
-    if (tempSP > 0) {
+    if (tempSP > 0 && !_isA1010step) {
         const tempTol = 5  // ±5°C
         if (Math.abs(actualTankTemp.value - tempSP) > tempTol) {
             failed.push(`Temp: ${actualTankTemp.value.toFixed(1)}°C ≠ SP ${tempSP}°C (±${tempTol})`)
