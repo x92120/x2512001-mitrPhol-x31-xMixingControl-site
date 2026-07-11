@@ -321,6 +321,7 @@ class ProductionStepLog(Base):
     re_code = Column(String(50))
     target_value = Column(Float)
     actual_value = Column(Float)
+    actual_temp = Column(Float, nullable=True)
     completed_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     operator = Column(String(50))
     operator2 = Column(String(50))
