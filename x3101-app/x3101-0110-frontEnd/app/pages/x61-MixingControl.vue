@@ -1991,7 +1991,8 @@ watch(() => skuSteps.value.length, (newLen, oldLen) => {
             const step = skuSteps.value[idx]
             if (step) expandedPhases.value[step.phase_number || '0'] = true
         }
-        scrollToActiveStep()
+        // Wait for DOM render before scrolling (after refresh DOM not ready yet)
+        nextTick(() => setTimeout(() => scrollToActiveStep(), 500))
     }
 })
 

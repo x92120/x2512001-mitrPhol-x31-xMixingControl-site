@@ -435,11 +435,12 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
         # 6b. Upsert log into production_step_logs (prevent duplicates from repeated confirms)
         db.execute(text("""
             INSERT INTO production_step_logs 
-                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, completed_at, operator, operator2)
+                (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, actual_temp, completed_at, operator, operator2)
             VALUES 
-                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :completed_at, :operator, :operator2)
+                (:batch_id, :phase_id, :step_id, :action_code, :re_code, :target_value, :actual_value, :actual_temp, :completed_at, :operator, :operator2)
             ON DUPLICATE KEY UPDATE
                 actual_value = VALUES(actual_value),
+                actual_temp  = VALUES(actual_temp),
                 completed_at = VALUES(completed_at),
                 operator     = VALUES(operator),
                 operator2    = VALUES(operator2)
@@ -451,6 +452,7 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
             "re_code": re_code,
             "target_value": target_value,
             "actual_value": actual_val,  # ← DB1517 actual_weight (matches x61 display)
+            "actual_temp": float(end_temp) if end_temp else None,  # ← actual temp at step complete
             "completed_at": datetime.now(),
             "operator": scan_user,
             "operator2": active_user
