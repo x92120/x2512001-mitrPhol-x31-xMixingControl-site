@@ -96,7 +96,8 @@ export function useMQTT() {
                 clientId: `xmixing-plants-${Math.random().toString(16).substring(2, 10)}`,
                 username: MQTT_USERNAME,
                 password: MQTT_PASSWORD,
-                reconnectPeriod: 5000,
+                reconnectPeriod: 3000,
+                keepalive: 30,
                 clean: true,
                 connectTimeout: 30000,
                 protocolVersion: 4,
@@ -329,6 +330,12 @@ export function useMQTT() {
             mqttClient.on('close', () => {
                 isConnected.value = false
                 connectionStatus.value = 'Disconnected'
+                // Auto-reconnect immediately if tab is visible (browser throttle recovery)
+                if (typeof document !== 'undefined' && !document.hidden) {
+                    setTimeout(() => {
+                        if (!mqttClient?.connected) connect()
+                    }, 1000)
+                }
             })
         } catch (error) {
             connectionStatus.value = `Failed: ${error && (error as any).message}`

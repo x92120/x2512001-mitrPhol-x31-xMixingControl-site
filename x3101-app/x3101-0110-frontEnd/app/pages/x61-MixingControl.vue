@@ -3319,8 +3319,18 @@ watch(selectedBatchId, (newBatchId) => {
     }
 })
 
+// ── Reconnect MQTT when tab becomes visible again (browser throttle recovery) ──
+const _onVisibilityChange = () => {
+    if (!document.hidden && !plcConnectedGlobal.value) {
+        console.log('[x61] Tab visible — forcing MQTT reconnect')
+        connect()
+    }
+}
+document.addEventListener('visibilitychange', _onVisibilityChange)
+
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
+    document.removeEventListener('visibilitychange', _onVisibilityChange)
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     offMessage(handlePlcMessage)
     stopStampRefresh()
