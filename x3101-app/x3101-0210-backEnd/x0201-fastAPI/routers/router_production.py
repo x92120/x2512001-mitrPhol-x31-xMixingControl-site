@@ -2400,16 +2400,21 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
     # Query all intake lot IDs and map to vendor lot_id for this batch
     re_code_lots = {}
     try:
+        # Get ALL items (all wh types) for lot_no lookup + actual_value backfill
         items = db.query(models.PreBatchItem).filter(
             models.PreBatchItem.batch_id == batch_id_str,
-            models.PreBatchItem.wh.in_(['SPP', 'FH', 'spp', 'fh'])
         ).all()
         recs = db.query(models.PreBatchRec).join(
             models.PreBatchReq, models.PreBatchRec.req_id == models.PreBatchReq.id
         ).filter(
             models.PreBatchRec.batch_record_id.like(f"{batch_id_str}%"),
-            models.PreBatchReq.wh.in_(['SPP', 'FH', 'spp', 'fh'])
         ).all()
+        # Build re_code -> net_volume map for actual_value backfill
+        re_code_net_vol = {}
+        for item in items:
+            if item.re_code and item.net_volume:
+                rc = item.re_code
+                re_code_net_vol[rc] = re_code_net_vol.get(rc, 0) + float(item.net_volume)
         
         intake_lot_ids = set()
         for item in items:
@@ -2535,7 +2540,7 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "re_code":            log_re_code,
             "lot_no":             lot_no_str,
             "target_value":       log.target_value or (recipe.require if recipe else None),
-            "actual_value":       log.actual_value,
+            "actual_value":       log.actual_value if (log.actual_value is not None and log.actual_value != 0) else (re_code_net_vol.get(log_re_code or "") if log_re_code else None),
             "uom":                (recipe.uom if recipe else None) or "kg",
             "temperature":        recipe.temperature    if recipe else None,
             "agitator_rpm":       recipe.agitator_rpm   if recipe else None,
