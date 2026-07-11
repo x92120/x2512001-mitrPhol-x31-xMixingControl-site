@@ -677,10 +677,12 @@ const currentStepIndex = computed(() => {
     // → Use Math.max so UI always shows the furthest step the operator has reached.
     if (mqttBatchOk && pPhase && pStep && skuSteps.value.length > 0) {
         const rawPhase = String(pPhase).replace(/\0/g, '').trim()
-        const cleanPPhase = rawPhase.match(/^(p\d+)/i)?.[1]?.toLowerCase() || rawPhase.toLowerCase()
+        // Normalize to integer: p015/p0015/p15 all → 15 for robust cross-format matching
+        const mqttPhaseNum = (() => { const m = rawPhase.match(/^p(\d+)/i); return m ? parseInt(m[1], 10) : null })()
         const mqttIdx = skuSteps.value.findIndex(s => {
-            const cleanSPhase = String(s.phase_number || s.phase).trim().toLowerCase()
-            return cleanSPhase === cleanPPhase && Number(s.sub_step) === pStep
+            const sPhaseRaw = String(s.phase_number || s.phase).trim()
+            const sPhaseNum = (() => { const m = sPhaseRaw.match(/^p(\d+)/i); return m ? parseInt(m[1], 10) : null })()
+            return sPhaseNum !== null && mqttPhaseNum !== null && sPhaseNum === mqttPhaseNum && Number(s.sub_step) === pStep
         })
         if (mqttIdx !== -1) {
             // Take the HIGHER of MQTT index and localStepIndex — UI must not step backwards

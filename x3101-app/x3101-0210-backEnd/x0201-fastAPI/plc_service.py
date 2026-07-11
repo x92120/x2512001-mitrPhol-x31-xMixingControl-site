@@ -545,7 +545,7 @@ def read_full_actuals(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     if current_seq > 0:
         for s in steps:
             if s["step_index"] == current_seq:
-                current_phase_id = f"p{str(s['phase_number']).zfill(3)}"
+                current_phase_id = f"p{str(s['phase_number']).zfill(4)}"
                 current_step_id = s["sub_step"]
                 break
 
