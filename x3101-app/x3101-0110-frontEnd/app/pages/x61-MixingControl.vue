@@ -1958,6 +1958,10 @@ watch(currentStepIndex, (newIdx, oldIdx) => {
         localStepIndex.value = newIdx
         const step = skuSteps.value[newIdx]
         if (step) expandedPhases.value[step.phase_number || '0'] = true
+        // Persist latest step -> instant restore on refresh (no MQTT wait)
+        if (selectedBatchId.value && newIdx > 0) {
+            try { localStorage.setItem("stepIdx_" + selectedBatchId.value, String(newIdx)) } catch (e) {}
+        }
         if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
         
         // Reset confirm/bypass flags and pulse run command (1) for 3 seconds when step index advances
@@ -2286,6 +2290,18 @@ const restoreBatchFromPlc = async (batchId: string) => {
         // This handles PLC reset scenarios where all PLC data sources show wrong seq.
         if (restoredIdx === -1 || restoredIdx === 0) {
             try {
+                // Fast path: check localStorage for last known step (survives refresh)
+                const lsKey = 
+                const lsIdx = parseInt(localStorage.getItem(lsKey) || '-1', 10)
+                if (lsIdx > 0 && lsIdx < skuSteps.value.length) {
+                    restoredIdx = lsIdx
+                    console.log()
+                    localStepIndex.value = restoredIdx
+                    const restoredStep = skuSteps.value[restoredIdx]
+                    if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
+                    await nextTick()
+                    setTimeout(() => scrollToActiveStep(), 300)
+                }
                 const remoteApiBaseUrl = appConfig.apiBaseUrl
                 const logsData = await $fetch<any>(
                     `${remoteApiBaseUrl}/production-batches/${batchId}/logs`,
@@ -2335,6 +2351,8 @@ const restoreBatchFromPlc = async (batchId: string) => {
             localStepIndex.value = restoredIdx
             const restoredStep = skuSteps.value[restoredIdx]
             if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
+            // Persist to localStorage so next refresh restores instantly without waiting for MQTT
+            try { localStorage.setItem(, String(restoredIdx)) } catch {}
             // Scroll after DOM update — use 600ms to wait for all async renders (brix/pH fetch etc)
             await nextTick()
             setTimeout(() => scrollToActiveStep(), 600)
