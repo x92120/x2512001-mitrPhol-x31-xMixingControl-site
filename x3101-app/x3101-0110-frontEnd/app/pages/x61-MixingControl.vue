@@ -2352,7 +2352,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
             const restoredStep = skuSteps.value[restoredIdx]
             if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
             // Persist to localStorage so next refresh restores instantly without waiting for MQTT
-            try { localStorage.setItem(, String(restoredIdx)) } catch {}
+            try { localStorage.setItem('stepIdx_' + batchId, String(restoredIdx)) } catch {}
             // Scroll after DOM update — use 600ms to wait for all async renders (brix/pH fetch etc)
             await nextTick()
             setTimeout(() => scrollToActiveStep(), 600)
