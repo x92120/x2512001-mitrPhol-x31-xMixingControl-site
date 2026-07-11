@@ -3326,7 +3326,11 @@ const _onVisibilityChange = () => {
         connect()
     }
 }
-document.addEventListener('visibilitychange', _onVisibilityChange)
+
+onMounted(() => {
+    // Register visibilitychange only on client side (not SSR)
+    document.addEventListener('visibilitychange', _onVisibilityChange)
+})
 
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
