@@ -2434,11 +2434,15 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
         if intake_lot_ids:
             intake_rows = db.query(
                 models.IngredientIntakeList.intake_lot_id,
-                models.IngredientIntakeList.lot_id
+                models.IngredientIntakeList.lot_id,
+                models.IngredientIntakeList.manufacturing_date
             ).filter(models.IngredientIntakeList.intake_lot_id.in_(list(intake_lot_ids))).all()
             for r_lot in intake_rows:
-                if r_lot.lot_id:
-                    lot_map[r_lot.intake_lot_id] = r_lot.lot_id
+                if r_lot.lot_id and r_lot.lot_id.strip():
+                    lot_map[r_lot.intake_lot_id] = r_lot.lot_id.strip()
+                elif r_lot.manufacturing_date:
+                    # Fallback: use manufacturing_date as lot reference when lot_id is empty
+                    lot_map[r_lot.intake_lot_id] = r_lot.manufacturing_date.strftime(%d/%m/%Y)
                     
         for item in items:
             r_code = item.re_code
