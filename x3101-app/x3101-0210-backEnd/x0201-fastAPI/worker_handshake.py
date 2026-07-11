@@ -342,11 +342,11 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
                     
                     if 0 <= (step_no - 1) < len(sorted_steps):
                         matched_step = sorted_steps[step_no - 1]
-                        # Use the actual phase_id from SKU step (e.g. 'A1010', 'D1010', 'x1010')
-                        # Fallback to a normalized phase_number (p010 style) if phase_id is missing
+                        # Use phase_number (unique per phase, e.g. p015, p045) as phase_id for step logs.
+                        # phase_id (action group like x1010) is shared across phases so MUST NOT be used as key.
                         _pnum_raw = str(matched_step["phase_number"] or '').strip()
                         _pnum_norm = re.sub(r'^(p)(0+)', lambda m: m.group(1), _pnum_raw) if _pnum_raw else ''
-                        phase_id = matched_step["phase_id"] or _pnum_norm or f"step_{step_no}"
+                        phase_id = _pnum_norm or matched_step["phase_id"] or f"step_{step_no}"
                         step_log_id = matched_step["sub_step"] or step_no   # 10, 20, 30...
                         action_code = matched_step["action_code"] or ""
                         re_code = matched_step["re_code"] or ""
