@@ -1942,23 +1942,11 @@ const scrollToActiveStep = async () => {
 }
 
 const doScroll = (el: HTMLElement) => {
-    const cont = stepTableScroll.value || (el.closest('.scroll') as HTMLElement)
-    if (cont && cont.scrollHeight > cont.clientHeight) {
-        // Use getBoundingClientRect — correctly relative to viewport regardless of offsetParent chain
-        const containerRect = cont.getBoundingClientRect()
-        const elRect = el.getBoundingClientRect()
-        // Position of element relative to the top of the scroll container
-        const relTop = elRect.top - containerRect.top
-        // Desired scrollTop to center the active row
-        const newScrollTop = cont.scrollTop + relTop - cont.clientHeight / 2 + elRect.height / 2
-        cont.scrollTop = Math.max(0, newScrollTop)
-        console.log('[Scroll] ✅ scrollTop set to:', Math.max(0, newScrollTop),
-            '| relTop:', relTop, '| cont.scrollTop was:', cont.scrollTop,
-            '| scrollHeight:', cont.scrollHeight, '| clientHeight:', cont.clientHeight)
-    } else {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        console.log('[Scroll] fallback scrollIntoView — no overflow')
-    }
+    // Use scrollIntoView — works correctly at all positions (near top, middle, bottom)
+    const rect = el.getBoundingClientRect()
+    const inView = rect.top >= 80 && rect.bottom <= (window.innerHeight - 80)
+    el.scrollIntoView({ behavior: 'smooth', block: inView ? 'nearest' : 'center' })
+    console.log('[Scroll] scrollIntoView block:', inView ? 'nearest' : 'center')
 }
 
 // Ensure active step expands and scrolls into view when currentStepIndex changes
