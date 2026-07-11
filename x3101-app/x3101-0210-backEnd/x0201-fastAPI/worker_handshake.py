@@ -877,12 +877,27 @@ def _on_put_message(client, userdata, message):
         db1510 = get_db_number('step_cmd', plant_id)
         ok2 = plc.db_write(db1510, 22, struct.pack('>h', hmi_command))
 
+        # 3. hmi_command=4 or 5 = App confirms step complete + interlocks green
+        #    Set DB15X3.Proc_Step_Done (byte0 bit1 = 0x02) so TIA FB fires step done sequence
+        #    This replaces .51 Process PLC for auto/non-hardware steps (A1010, FreeScan, etc.)
+        ok3 = False
+        if hmi_command in (4, 5):
+            db1513 = get_db_number('handshake', plant_id)
+            try:
+                cur = plc.db_read(db1513, 0, 1)
+                proc_byte = cur[0] | 0x02  # set bit1 (Proc_Step_Done), keep bit0 (Step_Complete)
+                ok3 = plc.db_write(db1513, 0, bytearray([proc_byte]))
+                logger.info(f"[PUT] Plant {plant_id} hmi_command={hmi_command} → DB{db1513}+0 Proc_Step_Done=TRUE")
+            except Exception as proc_err:
+                logger.warning(f"[PUT] Could not set Proc_Step_Done: {proc_err}")
+
         # +88 (Step_OF_PLC) NOT written in heartbeat — only via step_cmd on step advance
         # Free-SCAN / App-only steps must NOT touch PLC step register
         logger.debug(
             f"[PUT] Plant {plant_id} | hmi_command={hmi_command} next={next_step_cmd}"
             f" | DB{db1511}+44={'OK' if ok1 else 'FAIL'}"
-            f" | DB{db1510}+22={'OK' if ok2 else 'FAIL'} | +88=skip"
+            f" | DB{db1510}+22={'OK' if ok2 else 'FAIL'}"
+            f" | Proc_Step_Done={'SET' if ok3 else 'skip' if hmi_command not in (4,5) else 'FAIL'}"
         )
 
     except Exception as e:
