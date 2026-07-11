@@ -38,7 +38,7 @@ def get_db_number(base_type: str, plant_id: int) -> int:
     offset = 1500 + (int(plant_id) * 10)
     if base_type == 'step_cmd': return offset + 0
     if base_type == 'full_recipe': return offset + 1
-    if base_type == 'telemetry': return offset + 2
+    if base_type == "telemetry": return 5010 + int(plant_id)  # DB5011/5012/5013 — PLC actual feedback (replaces DB1512/22/32)
     if base_type == 'handshake': return offset + 3
     if base_type == 'actual': return offset + 7
     return offset
