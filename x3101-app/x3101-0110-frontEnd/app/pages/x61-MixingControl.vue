@@ -2291,11 +2291,11 @@ const restoreBatchFromPlc = async (batchId: string) => {
         if (restoredIdx === -1 || restoredIdx === 0) {
             try {
                 // Fast path: check localStorage for last known step (survives refresh)
-                const lsKey = 
+                const lsKey = 'stepIdx_' + batchId
                 const lsIdx = parseInt(localStorage.getItem(lsKey) || '-1', 10)
                 if (lsIdx > 0 && lsIdx < skuSteps.value.length) {
                     restoredIdx = lsIdx
-                    console.log()
+                    console.log("[Restore] LOCAL: index", lsIdx)
                     localStepIndex.value = restoredIdx
                     const restoredStep = skuSteps.value[restoredIdx]
                     if (restoredStep) expandedPhases.value[restoredStep.phase_number || '0'] = true
