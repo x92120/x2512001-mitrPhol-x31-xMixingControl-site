@@ -394,22 +394,24 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     """
     db_number = get_db_number('telemetry', plant_id)
     try:
-        data = plc.db_read(db_number, 0, 28)
+        data = plc.db_read(db_number, 0, 30)  # +2 bytes for PLC_Step_FC at DBW28
     except Exception as e:
         logger.error(f"PLC db_read error (DB{db_number}): {e}")
         return None
     if data is None:
         return None
 
-    watchdog = struct.unpack_from('>h', data, 0)[0]
-    plc_state = struct.unpack_from('>h', data, 2)[0]
-    current_step = struct.unpack_from('>h', data, 4)[0]
-    step_timer = struct.unpack_from('>h', data, 6)[0]
-    mix_temp = struct.unpack_from('>f', data, 8)[0]
-    mix_weight = struct.unpack_from('>f', data, 12)[0]
-    agitator_act = struct.unpack_from('>f', data, 16)[0]
+    watchdog      = struct.unpack_from('>h', data, 0)[0]
+    plc_state     = struct.unpack_from('>h', data, 2)[0]
+    current_step  = struct.unpack_from('>h', data, 4)[0]
+    step_timer    = struct.unpack_from('>h', data, 6)[0]
+    mix_temp      = struct.unpack_from('>f', data, 8)[0]
+    mix_weight    = struct.unpack_from('>f', data, 12)[0]
+    agitator_act  = struct.unpack_from('>f', data, 16)[0]
     highshear_act = struct.unpack_from('>f', data, 20)[0]
     hopper_weight = struct.unpack_from('>f', data, 24)[0]
+    # DBW28: FC_MapPhaseToStep_v2 result (0-28, even) — SKU-independent step name
+    plc_step_fc   = struct.unpack_from('>h', data, 28)[0] if len(data) >= 30 else 0
 
     return {
         "watchdog": watchdog,
@@ -429,7 +431,9 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
         "highshear_act": round(highshear_act, 2),
         "HighShear_Act": round(highshear_act, 2),
         "hopper_weight": round(hopper_weight, 2),
-        "Hopper_Weight": round(hopper_weight, 2)
+        "Hopper_Weight": round(hopper_weight, 2),
+        "plc_step_fc": int(plc_step_fc),
+        "PLC_Step_FC": int(plc_step_fc),
     }
 
 # ─── Recipe Deserialization ─────────────────────────────────────────────────

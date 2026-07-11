@@ -3393,7 +3393,7 @@ onUnmounted(() => {
                  </q-badge>
              </div>
              <q-badge color="green-3" text-color="green-10" class="text-weight-bold shadow-1 ellipsis" style="padding: 4px 6px; font-size: 11px; max-width: 220px;">
-                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />State: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
+                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />State: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[(plantData?.PLC_Step_FC ?? plantData?.plc_step_fc) || 0] || plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
              </q-badge>
           </div>
        </div>
