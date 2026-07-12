@@ -3394,6 +3394,19 @@ onMounted(() => {
                 const nextIdx   = _roStepIdx + 1
                 console.log(`[AutoRO] weight gained=${gained.toFixed(1)}/${req} → sendStepToPLC(${nextIdx})`)
                 localStepIndex.value = nextIdx
+                // Log this auto-advanced step to backend (A1020/RO-Water = no PLC step_complete signal)
+                $fetch(`${remoteApiBaseUrl}/production-batches/${activeBatchId.value}/log-step`, {
+                    method: 'POST',
+                    body: {
+                        phase_id:     String(roStep?.phase_number ?? roStep?.phase_id ?? ''),
+                        step_id:      Number(roStep?.sub_step ?? 10),
+                        action_code:  String(roStep?.action_code ?? '10010'),
+                        re_code:      String(roStep?.re_code ?? 'RO-Water'),
+                        target_value: req,
+                        actual_value: parseFloat(gained.toFixed(2)),
+                        actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
+                    }
+                }).catch(e => console.warn('[AutoRO] log-step failed:', e))
                 setTimeout(() => sendStepToPLC(nextIdx), 400)
             }
         }

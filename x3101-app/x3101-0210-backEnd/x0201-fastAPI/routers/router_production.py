@@ -293,6 +293,42 @@ def cancel_production_plan(plan_id: int, cancel_data: schemas.ProductionPlanCanc
 # PRODUCTION BATCH ENDPOINTS
 # =============================================================================
 
+
+
+# ─── Frontend step-complete logger (for auto-advance steps like A1020/RO-Water) ──
+from pydantic import BaseModel as _BM
+class StepLogRequest(_BM):
+    phase_id:     str
+    step_id:      int
+    action_code:  str   = ''
+    re_code:      str   = ''
+    target_value: float = 0.0
+    actual_value: float = 0.0
+    actual_temp:  float = 0.0
+
+@router.post("/production-batches/{batch_id}/log-step")
+def log_step_complete(batch_id: str, body: StepLogRequest, db: Session = Depends(get_db)):
+    """
+    Called by frontend when a step is auto-advanced (e.g. A1020/RO-Water by weight).
+    Inserts/updates production_step_logs so the report shows all steps.
+    """
+    from sqlalchemy import text as _t
+    db.execute(_t("""
+        INSERT INTO production_step_logs
+            (batch_id, phase_id, step_id, action_code, re_code, target_value, actual_value, actual_temp, completed_at)
+        VALUES (:bid, :pid, :sid, :ac, :rc, :tv, :av, :at, NOW())
+        ON DUPLICATE KEY UPDATE
+            actual_value = IF(VALUES(actual_value) != 0, VALUES(actual_value), actual_value),
+            actual_temp  = IF(VALUES(actual_temp)  != 0, VALUES(actual_temp),  actual_temp),
+            completed_at = NOW()
+    """), {
+        "bid": batch_id, "pid": body.phase_id, "sid": body.step_id,
+        "ac": body.action_code, "rc": body.re_code,
+        "tv": body.target_value, "av": body.actual_value, "at": body.actual_temp
+    })
+    db.commit()
+    return {"status": "logged", "batch_id": batch_id, "phase_id": body.phase_id}
+# ──────────────────────────────────────────────────────────────────────────────────
 @router.get("/production-batches/summary")
 def get_production_batches_summary(db: Session = Depends(get_db)):
     """Fast summary of all batches (id, batch_id, status only) — no JOINs.

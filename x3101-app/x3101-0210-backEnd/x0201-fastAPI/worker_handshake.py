@@ -201,14 +201,15 @@ def _sync_actuals(db: Session, batch_id: str, plant_id: int) -> int:
             av = round(float(s.get("actual_weight") or 0), 3)
             at = round(float(s.get("actual_temp")   or 0), 2)
             ts = s.get("time_end") or s.get("time_start") or datetime.now().isoformat()
+            # Only update actual_temp from DB15x7 (absolute tank weight != material added)
+            # actual_value is set by frontend step logging — do NOT overwrite it
             db.execute(_text("""
                 INSERT INTO production_step_logs
                     (batch_id, phase_id, step_id, actual_value, actual_temp, completed_at)
                 VALUES (:bid, :pid, :sid, :av, :at, :ts)
                 ON DUPLICATE KEY UPDATE
-                    actual_value = VALUES(actual_value),
-                    actual_temp  = VALUES(actual_temp),
-                    completed_at = VALUES(completed_at)
+                    actual_temp  = IF(VALUES(actual_temp) != 0, VALUES(actual_temp), actual_temp),
+                    completed_at = COALESCE(completed_at, VALUES(completed_at))
             """), {"bid": batch_id, "pid": phase_id, "sid": step_id,
                     "av": av, "at": at, "ts": ts})
             synced += 1
