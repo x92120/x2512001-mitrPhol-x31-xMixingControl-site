@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 # ─── State Tracking ─────────────────────────────────────────────────────────
 _last_finished_step: Dict[int, int] = {1: -1, 2: -1, 3: -1}
+_last_step_complete: Dict[int, bool] = {1: False, 2: False, 3: False}  # rising-edge tracking
 _last_batch_id: Dict[int, str] = {1: "", 2: "", 3: ""}  # track batch change per plant
 _running: bool = False
 _task: Optional[asyncio.Task] = None
@@ -128,7 +129,13 @@ async def _poll_handshake_loop(interval: float = 1.0):
                     # If _hdr is None (read failed / disconnected), do not treat as reset or change
                     pass
 
-                if hs["step_complete"] and hs["finished_step"] != _last_finished_step[plant_id]:
+                # Rising-edge: detect False->True transition of step_complete
+                # This correctly handles repeated step numbers (e.g. A1020 multi-phases all = step 6)
+                _was_complete = _last_step_complete.get(plant_id, False)
+                _is_complete  = bool(hs["step_complete"])
+                _last_step_complete[plant_id] = _is_complete
+
+                if _is_complete and not _was_complete:  # rising edge only
                     step_no = hs["finished_step"]
                     _last_finished_step[plant_id] = step_no
 
