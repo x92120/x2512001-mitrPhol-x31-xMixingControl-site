@@ -3339,7 +3339,7 @@ onMounted(() => {
         const pid = activePlantId.value
         if (!pid) return
         try {
-            const t = await <any>()
+            const t = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/telemetry-live`)
             if (!t || t.error) return
             const prev = plantsData.value[pid] || {}
             plantsData.value = {
