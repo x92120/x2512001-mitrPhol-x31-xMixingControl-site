@@ -3350,8 +3350,6 @@ onMounted(() => {
                     Mixing_Tank_Volume:        t.mix_tank_weight ?? prev.Mixing_Tank_Volume,
                     MixingTank_Agitator_Speed: t.agitator_act    ?? prev.MixingTank_Agitator_Speed,
                     HighShare_Speed:           t.highshear_act   ?? prev.HighShare_Speed,
-                    PH_Actual:                 t.ph_actual       ?? prev.PH_Actual,
-                    Brix_Actual:               t.brix_actual     ?? prev.Brix_Actual,
                     Hopper_Weight:             t.hopper_weight   ?? prev.Hopper_Weight,
                     Step_no:                   t.current_step    ?? prev.Step_no,
                     Step_Timer:                t.step_timer      ?? prev.Step_Timer,
