@@ -732,10 +732,12 @@ def get_recheck_box_details(box_id: str, db: Session = Depends(get_db)):
     }
 
 @router.get("/production-batches/{batch_id}", response_model=schemas.ProductionBatch)
-
-def get_production_batch(batch_id: int, db: Session = Depends(get_db)):
-    """Get a specific production batch by database ID."""
-    db_batch = crud.get_production_batch(db, batch_id=batch_id)
+def get_production_batch(batch_id: str, db: Session = Depends(get_db)):
+    """Get batch by string batch_id (e.g. P260602-01-02-001) or fallback numeric db id."""
+    from models import ProductionBatch as PBModel
+    db_batch = db.query(PBModel).filter(PBModel.batch_id == batch_id).first()
+    if not db_batch and batch_id.isdigit():
+        db_batch = db.query(PBModel).filter(PBModel.id == int(batch_id)).first()
     if not db_batch:
         raise HTTPException(status_code=404, detail="Production batch not found")
     return db_batch
