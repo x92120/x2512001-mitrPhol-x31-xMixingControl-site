@@ -24,7 +24,7 @@ from typing import Optional, Dict
 
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from plc_service import read_handshake, read_telemetry, plc, get_db_number, unpack_s7_string, write_a1010_material_req, check_scan_bit
+from plc_service import read_handshake, read_telemetry, read_full_actuals, plc, get_db_number, unpack_s7_string, write_a1010_material_req, check_scan_bit
 import paho.mqtt.publish as publish
 import paho.mqtt.client as mqtt_client
 import json
@@ -179,7 +179,42 @@ async def _poll_handshake_loop(interval: float = 1.0):
     logger.info("🛑 Handshake worker stopped")
 
 
-def check_and_complete_batch(db: Session, batch_id: str):
+def _sync_actuals(db: Session, batch_id: str, plant_id: int) -> int:
+    """Sync PLC DB15x7 actual results -> production_step_logs (makes web report = PDF)."""
+    from sqlalchemy import text as _text
+    try:
+        actuals = read_full_actuals(plant_id)
+        if not actuals or not actuals.get("steps"):
+            logger.warning(f"[Sync] DB15{plant_id}7 empty - nothing to sync")
+            return 0
+        synced = 0
+        for s in actuals["steps"]:
+            phase_id = f"p{str(s['phase_number']).zfill(4)}"
+            step_id  = s["sub_step"]
+            av = round(float(s.get("actual_weight") or 0), 3)
+            at = round(float(s.get("actual_temp")   or 0), 2)
+            ts = s.get("time_end") or s.get("time_start") or datetime.now().isoformat()
+            db.execute(_text("""
+                INSERT INTO production_step_logs
+                    (batch_id, phase_id, step_id, actual_value, actual_temp, completed_at)
+                VALUES (:bid, :pid, :sid, :av, :at, :ts)
+                ON DUPLICATE KEY UPDATE
+                    actual_value = VALUES(actual_value),
+                    actual_temp  = VALUES(actual_temp),
+                    completed_at = VALUES(completed_at)
+            """), {"bid": batch_id, "pid": phase_id, "sid": step_id,
+                    "av": av, "at": at, "ts": ts})
+            synced += 1
+        db.commit()
+        logger.info(f"✅ [Sync] DB15{plant_id}7->MySQL: {synced} steps for {batch_id}")
+        return synced
+    except Exception as e:
+        logger.error(f"[Sync] DB15x7->MySQL failed for {batch_id}: {e}")
+        db.rollback()
+        return 0
+
+
+def check_and_complete_batch(db: Session, batch_id: str, plant_id: int = 0):
     """
     Checks if the last step in the SKU steps for this batch is logged.
     If so, updates the batch status to 'Done' and done = True.
@@ -240,6 +275,8 @@ def check_and_complete_batch(db: Session, batch_id: str):
         }).fetchone()
 
         if log:
+            if plant_id > 0:
+                _sync_actuals(db, batch_id, plant_id)
             result = db.execute(text("""
                 UPDATE production_batches
                 SET status = 'Done', done = 1, updated_at = NOW()
@@ -462,7 +499,7 @@ def _sync_log_step(plant_id: int, step_no: int, end_temp: float, end_weight: flo
 
 
         # 7. Auto-complete batch when last step is done
-        check_and_complete_batch(db, batch_id)
+        check_and_complete_batch(db, batch_id, plant_id)
     except Exception as e:
         db.rollback()
         logger.error(f"Could not log step {step_no} to DB: {e}")
