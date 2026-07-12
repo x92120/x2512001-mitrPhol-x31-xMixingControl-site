@@ -2480,6 +2480,7 @@ const weightProgress = computed(() => {
 })
 
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+let _telemetryPollInterval: ReturnType<typeof setInterval> | null = null
 
 // ── Barcode Scanning Logic ──
 const scanBuffer = ref('')
@@ -3332,12 +3333,42 @@ const _onVisibilityChange = () => {
 onMounted(() => {
     // Register visibilitychange only on client side (not SSR)
     document.addEventListener('visibilitychange', _onVisibilityChange)
+
+    // Poll DB15x2 live telemetry every 500ms (S7 PUT-GET — no MQTT latency)
+    const _pollTelemetry = async () => {
+        const pid = activePlantId.value
+        if (!pid) return
+        try {
+            const t = await <any>()
+            if (!t || t.error) return
+            const prev = plantsData.value[pid] || {}
+            plantsData.value = {
+                ...plantsData.value,
+                [pid]: {
+                    ...prev,
+                    Mixing_Tank_Temperature:   t.mix_tank_temp   ?? prev.Mixing_Tank_Temperature,
+                    Mixing_Tank_Volume:        t.mix_tank_weight ?? prev.Mixing_Tank_Volume,
+                    MixingTank_Agitator_Speed: t.agitator_act    ?? prev.MixingTank_Agitator_Speed,
+                    HighShare_Speed:           t.highshear_act   ?? prev.HighShare_Speed,
+                    PH_Actual:                 t.ph_actual       ?? prev.PH_Actual,
+                    Brix_Actual:               t.brix_actual     ?? prev.Brix_Actual,
+                    Hopper_Weight:             t.hopper_weight   ?? prev.Hopper_Weight,
+                    Step_no:                   t.current_step    ?? prev.Step_no,
+                    Step_Timer:                t.step_timer      ?? prev.Step_Timer,
+                }
+            }
+        } catch { /* PLC offline — keep last value */ }
+    }
+    if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
+    _telemetryPollInterval = setInterval(_pollTelemetry, 500)
+    _pollTelemetry()
 })
 
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
     document.removeEventListener('visibilitychange', _onVisibilityChange)
     if (heartbeatInterval) clearInterval(heartbeatInterval)
+    if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
     offMessage(handlePlcMessage)
     stopStampRefresh()
     disconnect()

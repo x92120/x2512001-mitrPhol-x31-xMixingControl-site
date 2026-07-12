@@ -419,6 +419,36 @@ def update_plc_telemetry(data: DB1512Telemetry):
 
 from plc_service import read_recipe_from_plc, read_full_actuals
 
+
+
+@router.get("/plant/{plant_id}/telemetry-live")
+def get_plant_telemetry_live(plant_id: str = Path(..., description="Plant ID: 1, 2, or 3")):
+    """
+    Read live telemetry from DB15x2 (S7 PUT-GET from PLC) directly via snap7.
+    Returns actual Temp, Weight, Agitator, HighShear, PH, Brix, Hopper.
+    Frontend polls this every 500ms to display ACT values without MQTT latency.
+    """
+    try:
+        from plc_service import read_telemetry
+        pid = int(plant_id)
+        data = read_telemetry(pid)
+        if data is None:
+            return {"error": "PLC read failed", "plant_id": pid}
+        return {
+            "plant_id":       pid,
+            "mix_tank_temp":  data.get("MixTank_Temp",   0.0),
+            "mix_tank_weight":data.get("MixTank_Weight", 0.0),
+            "agitator_act":   data.get("Agitator_Act",   0.0),
+            "highshear_act":  data.get("HighShear_Act",  0.0),
+            "ph_actual":      data.get("PH_Actual",      0.0),
+            "brix_actual":    data.get("Brix_Actual",    0.0),
+            "hopper_weight":  data.get("Hopper_Weight",  0.0),
+            "current_step":   data.get("Current_Step",   0),
+            "step_timer":     data.get("Step_Timer",     0),
+        }
+    except Exception as e:
+        return {"error": str(e), "plant_id": plant_id}
+
 @router.get("/plant/{plant_id}/recipe-status")
 def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
     """
