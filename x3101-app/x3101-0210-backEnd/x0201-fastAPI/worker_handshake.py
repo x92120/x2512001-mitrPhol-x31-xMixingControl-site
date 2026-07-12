@@ -24,7 +24,7 @@ from typing import Optional, Dict
 
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from plc_service import read_handshake, read_telemetry, read_full_actuals, plc, get_db_number, unpack_s7_string, write_a1010_material_req, check_scan_bit
+from plc_service import read_handshake, read_telemetry, read_full_actuals, clear_plc_step_cmd, plc, get_db_number, unpack_s7_string, write_a1010_material_req, check_scan_bit
 import paho.mqtt.publish as publish
 import paho.mqtt.client as mqtt_client
 import json
@@ -285,6 +285,9 @@ def check_and_complete_batch(db: Session, batch_id: str, plant_id: int = 0):
             db.commit()
             if result.rowcount > 0:
                 logger.info(f"🏁 Batch {batch_id} auto-completed → Done (detected last step log)")
+                # Signal PLC to return to IDLE for this plant
+                if plant_id > 0:
+                    clear_plc_step_cmd(plant_id)
                 return True
     except Exception as e:
         logger.error(f"Failed to check batch completion for {batch_id}: {e}")
