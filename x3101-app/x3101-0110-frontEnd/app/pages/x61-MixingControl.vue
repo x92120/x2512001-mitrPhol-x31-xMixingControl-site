@@ -2482,6 +2482,13 @@ const weightProgress = computed(() => {
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 let _telemetryPollInterval: ReturnType<typeof setInterval> | null = null
 
+// ── A1020 RO-Water auto-advance state ─────────────────────────────────
+let _roWatchActive    = false   // true while monitoring weight
+let _roWeightBaseline = 0       // tank weight snapshot at step-start
+let _roStepIdx        = -1      // skuSteps index being watched
+let _roAdvancedOnce   = false   // prevents double-fire per step
+// ──────────────────────────────────────────────────────────────────────
+
 // ── Barcode Scanning Logic ──
 const scanBuffer = ref('')
 let scanTimeout: any = null
@@ -3330,6 +3337,24 @@ const _onVisibilityChange = () => {
     }
 }
 
+// ── A1020/10010 RO-Water: arm auto-advance when step becomes active ──
+watch(currentStepIndex, (newIdx) => {
+    const step = skuSteps.value[newIdx]
+    if (!step) { _roWatchActive = false; return }
+    const phaseId    = String(step.phase_id || '')
+    const actionCode = Number(step.action_code)
+    if (phaseId.includes('A1020') && actionCode === 10010) {
+        _roWeightBaseline = plantsData.value[activePlantId.value]?.Mixing_Tank_Volume ?? 0
+        _roStepIdx        = newIdx
+        _roAdvancedOnce   = false
+        _roWatchActive    = true
+        const req = step.require ?? step.target_weight ?? 0
+        console.log(`[AutoRO] Armed idx=${newIdx} baseline=${_roWeightBaseline} require=${req}`)
+    } else {
+        _roWatchActive = false
+    }
+}, { immediate: true })
+
 onMounted(() => {
     // Register visibilitychange only on client side (not SSR)
     document.addEventListener('visibilitychange', _onVisibilityChange)
@@ -3356,6 +3381,23 @@ onMounted(() => {
                 }
             }
         } catch { /* PLC offline — keep last value */ }
+
+        // ── A1020/10010 RO-Water auto-advance check ──────────────────────
+        if (_roWatchActive && !_roAdvancedOnce) {
+            const curWt  = plantsData.value[activePlantId.value]?.Mixing_Tank_Volume ?? 0
+            const gained = curWt - _roWeightBaseline
+            const roStep = skuSteps.value[_roStepIdx]
+            const req    = roStep ? Number(roStep.require ?? roStep.target_weight ?? 0) : 0
+            if (req > 0 && gained >= req * 0.97) {
+                _roAdvancedOnce = true
+                _roWatchActive  = false
+                const nextIdx   = _roStepIdx + 1
+                console.log(`[AutoRO] weight gained=${gained.toFixed(1)}/${req} → sendStepToPLC(${nextIdx})`)
+                localStepIndex.value = nextIdx
+                setTimeout(() => sendStepToPLC(nextIdx), 400)
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────
     }
     if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
     _telemetryPollInterval = setInterval(_pollTelemetry, 200)
