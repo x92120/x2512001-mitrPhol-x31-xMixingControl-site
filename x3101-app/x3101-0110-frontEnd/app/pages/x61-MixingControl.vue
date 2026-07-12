@@ -3358,7 +3358,7 @@ onMounted(() => {
         } catch { /* PLC offline — keep last value */ }
     }
     if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
-    _telemetryPollInterval = setInterval(_pollTelemetry, 500)
+    _telemetryPollInterval = setInterval(_pollTelemetry, 200)
     _pollTelemetry()
 })
 
