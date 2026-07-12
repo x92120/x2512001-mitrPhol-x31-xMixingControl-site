@@ -193,7 +193,7 @@ def check_and_complete_batch(db: Session, batch_id: str):
             SELECT sku_id, status FROM production_batches 
             WHERE batch_id = :bid LIMIT 1
         """), {"bid": batch_id}).fetchone()
-        if not batch or batch[1] != 'In-Progress':
+        if not batch or batch[1] in ('Done', 'Cancelled', 'Rejected'):
             return False
 
         sku_id = batch[0]
@@ -243,7 +243,7 @@ def check_and_complete_batch(db: Session, batch_id: str):
             result = db.execute(text("""
                 UPDATE production_batches
                 SET status = 'Done', done = 1, updated_at = NOW()
-                WHERE batch_id = :batch_id AND status = 'In-Progress'
+                WHERE batch_id = :batch_id AND status NOT IN ('Done', 'Cancelled', 'Rejected')
             """), {"batch_id": batch_id})
             db.commit()
             if result.rowcount > 0:
