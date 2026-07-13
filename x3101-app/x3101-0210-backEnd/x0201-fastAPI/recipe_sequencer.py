@@ -12,10 +12,12 @@ PLC SEQUENCE (Fixed):
   0→2→4→6→[8→10 auto]→[Batch OK]→12→14→16→18→20→22→24→26→28→0
 
 CONVERGENCE RULES:
-  Step 14 = Fill Minor (GATE) — PLC checks RECIPE_z=14 before allowing Fill Done.
-            Auto-inserted for any SKU with A1020 (step 6) even if no DB phases at step 14.
-            Includes: x1010(20050/20020) + A1020 preblend transfer + A1010 manual during heating.
-  Step 18 = Timed Hold = x1010(step_time>0) + D1010/D1030 all converge here
+  Step  4 = Batch OK Gate — operator confirms batch before pre-heat (no material addition).
+            Auto-inserted for any SKU with A1010 phases.
+  Step 14 = Fill Minor Gate — ALL manual adds (A1010+30010/20040) happen here AFTER pre-heat.
+            Auto-inserted for any SKU with A1020 (high shear) or A1010 manual-add phases.
+            Includes: ยกเท (W100, flavors...) + x1010(20050/20020) brix water + A1020 preblend transfer.
+  Step 18 = Timed Hold — x1010(step_time>0) + D1010/D1030 pre-dissolved pour converge here.
 """
 
 from typing import List, Dict, Any, Optional
@@ -30,10 +32,12 @@ PLC_STEP_SEQUENCE = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28]
 PLC_AUTO_STEPS = {8, 10}
 
 # Gate steps: always inserted in execution plan when triggered by specific phase types
-# Step 14 = Fill Minor gate: required whenever SKU has A1020 (high shear) phases
-# PLC checks RECIPE_z=14 before allowing operator Fill Done to advance
+# Step  4 = Batch OK gate: required whenever SKU has A1010 phases (operator confirms before pre-heat)
+# Step 14 = Fill Minor gate: required whenever SKU has A1020 (high shear) or A1010 manual-add phases
 PLC_GATE_STEPS = {
-    14: {2},   # step 14 gate inserted when SKU has phase_type_code=2 (A1020)
+    4:  {1},   # step 4 gate: Batch OK — triggered by any A1010 phase
+    14: {2},   # step 14 gate: Fill Minor — triggered by A1020 (high shear)
+               # Note: A1010+30010/20040 phases now map directly to step 14
 }
 
 # phase_type_code → label
@@ -68,9 +72,11 @@ def map_phase_to_plc_step(
 
     if phase_type_code == 1:   # A1010 — Auto Batching Major
         if ac in (10010, 10020, 10030, 10040):
-            return 2   # Auto pipe batching
+            return 2   # Auto pipe batching (MIS, Water, etc.)
         elif ac in (30010, 20040):
-            return 4   # Manual add / pour
+            # ยกเท (manual pour) happens AFTER pre-heat at step 14
+            # Step 4 = Batch OK gate only (no material addition)
+            return 14
         return 2
 
     elif phase_type_code == 2:  # A1020 — High Shear
