@@ -731,3 +731,62 @@ def get_latest_batch_cache():
     if not data:
         raise HTTPException(status_code=404, detail="No local cache found")
     return {"source": "local_cache", "data": data}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Recipe Sequencer Endpoints (recipe_sequencer.py)
+# ─────────────────────────────────────────────────────────────────────────────
+from recipe_sequencer import build_execution_sequence, validate_step
+
+@router.get("/recipe-sequence/{sku_id}")
+def get_recipe_sequence(sku_id: str, db: Session = Depends(get_db)):
+    """
+    Preview PLC execution sequence for a SKU.
+    Returns step groups in PLC order (2→4→6→...→28) regardless of DB entry order.
+    Also shows warnings when DB plc_step_no doesn't match calculated value.
+    """
+    from sqlalchemy import text
+    rows = db.execute(text("""
+        SELECT phase_number, phase_id, sub_step, master_step,
+               plc_step_no, phase_type_code, action_code, re_code,
+               action_description, require, uom, step_time,
+               temperature, temp_low, temp_high,
+               agitator_rpm, high_shear_rpm
+        FROM sku_steps WHERE sku_id = :sku_id
+        ORDER BY phase_number, sub_step
+    """), {"sku_id": sku_id}).fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No steps for SKU '{sku_id}'")
+
+    steps = [dict(r._mapping) for r in rows]
+    result = build_execution_sequence(steps)
+    return result
+
+
+@router.get("/recipe-validate/{sku_id}")
+def validate_recipe_steps(sku_id: str, db: Session = Depends(get_db)):
+    """
+    Validate DB plc_step_no against calculated FC_MapPhaseToStep values.
+    Returns list of mismatches — กรณีคนกรอก plc_step_no ผิด.
+    """
+    from sqlalchemy import text
+    rows = db.execute(text("""
+        SELECT phase_number, phase_id, phase_type_code, action_code,
+               re_code, temperature, step_time, plc_step_no
+        FROM sku_steps WHERE sku_id = :sku_id
+        ORDER BY phase_number, sub_step
+    """), {"sku_id": sku_id}).fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No steps for SKU '{sku_id}'")
+
+    results = [validate_step(dict(r._mapping)) for r in rows]
+    mismatches = [r for r in results if not r["ok"]]
+    return {
+        "sku_id": sku_id,
+        "total_steps": len(results),
+        "mismatches": len(mismatches),
+        "all_ok": len(mismatches) == 0,
+        "details": results,
+    }
