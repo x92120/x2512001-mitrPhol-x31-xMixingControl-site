@@ -68,11 +68,8 @@ def map_phase_to_plc_step(
         return 6
 
     elif phase_type_code == 3:  # D1010 — Dissolve Tank 1
-        # Dissolve operations that happen at step 18 in practice,
-        # but the PLC uses step 8 as the sequence placeholder.
-        # App auto-passes 8 because external pre-dissolve is used.
-        if ac == 20020:         # Rinse vessel only
-            return 9
+        # All D1010 operations map to PLC step 8 (sequence placeholder).
+        # PLC auto-advances through step 8. No step 9 in PLC sequence.
         return 8
 
     elif phase_type_code == 4:  # D1030 — Dissolve Tank 2
@@ -94,12 +91,10 @@ def map_phase_to_plc_step(
         return 20
 
     elif phase_type_code == 7:  # x1030 — Holding / Cooling
-        if ac == 30010:
-            return 21   # Waiting QC Confirm
-        elif ac in (30600, 30020):
-            return 24   # Ready to Transfer
-        elif ac == 30500:
-            return 22 if ts >= 83.0 else 24
+        # step 24 (Transfer) uses specific transfer action codes only
+        if ac in (30600, 30020):
+            return 24   # Transfer to Circulation
+        # Everything else (30500 hold, 30010 QC wait) → step 22 QC Hold/Cooling
         return 22
 
     elif phase_type_code == 8:  # x1040 — Transfer
