@@ -12,7 +12,9 @@ PLC SEQUENCE (Fixed):
   0→2→4→6→[8→10 auto]→[Batch OK]→12→14→16→18→20→22→24→26→28→0
 
 CONVERGENCE RULES:
-  Step 14 = Fill Minor = x1010(20050/20020) + A1010 manual during heating
+  Step 14 = Fill Minor (GATE) — PLC checks RECIPE_z=14 before allowing Fill Done.
+            Auto-inserted for any SKU with A1020 (step 6) even if no DB phases at step 14.
+            Includes: x1010(20050/20020) + A1020 preblend transfer + A1010 manual during heating.
   Step 18 = Timed Hold = x1010(step_time>0) + D1010/D1030 all converge here
 """
 
@@ -26,6 +28,13 @@ PLC_STEP_SEQUENCE = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28]
 
 # Steps that auto-advance (no real interlock needed)
 PLC_AUTO_STEPS = {8, 10}
+
+# Gate steps: always inserted in execution plan when triggered by specific phase types
+# Step 14 = Fill Minor gate: required whenever SKU has A1020 (high shear) phases
+# PLC checks RECIPE_z=14 before allowing operator Fill Done to advance
+PLC_GATE_STEPS = {
+    14: {2},   # step 14 gate inserted when SKU has phase_type_code=2 (A1020)
+}
 
 # phase_type_code → label
 PHASE_TYPE_LABELS = {
@@ -180,9 +189,20 @@ def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         ps = s["_plc_step"]
         groups.setdefault(ps, []).append(s)
 
+    # 2b. Determine gate steps to auto-insert
+    phase_types_used = {int(s.get("phase_type_code") or 0) for s in sku_steps}
+    auto_gate_steps = set()
+    for gate_step, trigger_types in PLC_GATE_STEPS.items():
+        if trigger_types & phase_types_used and gate_step not in groups:
+            auto_gate_steps.add(gate_step)
+            logger.info(
+                f"[Sequencer] Auto-inserting gate step {gate_step} "
+                f"(triggered by phase_types {trigger_types & phase_types_used})"
+            )
+
     # 3. Build ordered execution plan
     execution_plan = []
-    used_steps = set(groups.keys())
+    used_steps = set(groups.keys()) | auto_gate_steps
 
     for plc_step in PLC_STEP_SEQUENCE:
         if plc_step == 0:
@@ -191,6 +211,7 @@ def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
             continue  # Skip steps not in this recipe
 
         phases = groups.get(plc_step, [])
+        is_gate = plc_step in auto_gate_steps
 
         # Determine aggregated temp_sp and step_time for this step group
         # (use max temp_sp and max step_time among all phases)
@@ -200,12 +221,13 @@ def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
         group = {
             "plc_step":   plc_step,
             "auto_pass":  plc_step in PLC_AUTO_STEPS,
+            "gate_step":  is_gate,    # True = auto-inserted, no recipe phases
             "recipe_z":   plc_step,   # ← Sent as DB1510.z for interlock RECIPE_z sync
             "temp_sp":    max(temps) if temps else 0.0,
             "step_time":  max(times) if times else 0,
             "phase_label": PHASE_TYPE_LABELS.get(
                 int(phases[0].get("phase_type_code") or 0), "?"
-            ) if phases else "AUTO",
+            ) if phases else ("GATE" if is_gate else "AUTO"),
             "phases": sorted(
                 phases,
                 key=lambda p: (int(p.get("sub_step") or 0), str(p.get("phase_number") or ""))

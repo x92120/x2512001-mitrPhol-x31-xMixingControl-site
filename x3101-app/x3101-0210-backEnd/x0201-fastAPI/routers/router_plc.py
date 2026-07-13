@@ -738,30 +738,53 @@ def get_latest_batch_cache():
 # ─────────────────────────────────────────────────────────────────────────────
 from recipe_sequencer import build_execution_sequence, validate_step
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Recipe Sequencer Endpoints (recipe_sequencer.py)
+# ─────────────────────────────────────────────────────────────────────────────
+from recipe_sequencer import build_execution_sequence, validate_step
+
+def _sku_steps_to_dicts(sku_steps_orm):
+    """Convert SkuStep ORM objects to plain dicts for recipe_sequencer."""
+    return [
+        {
+            "phase_number":    s.phase_number,
+            "phase_id":        s.phase_id,
+            "sub_step":        s.sub_step,
+            "master_step":     s.master_step,
+            "plc_step_no":     s.plc_step_no,
+            "phase_type_code": s.phase_type_code,
+            "action_code":     s.action_code,
+            "re_code":         s.re_code,
+            "action_description": getattr(s, 'action_description', None),
+            "require":         getattr(s, 'require', None),
+            "uom":             getattr(s, 'uom', None),
+            "step_time":       s.step_time,
+            "temperature":     s.temperature,
+            "temp_low":        getattr(s, 'temp_low', None),
+            "temp_high":       getattr(s, 'temp_high', None),
+            "agitator_rpm":    s.agitator_rpm,
+            "high_shear_rpm":  s.high_shear_rpm,
+        }
+        for s in sku_steps_orm
+    ]
+
+
 @router.get("/recipe-sequence/{sku_id}")
 def get_recipe_sequence(sku_id: str, db: Session = Depends(get_db)):
     """
     Preview PLC execution sequence for a SKU.
     Returns step groups in PLC order (2→4→6→...→28) regardless of DB entry order.
-    Also shows warnings when DB plc_step_no doesn't match calculated value.
+    Also auto-inserts gate steps (e.g. step 14) when triggered by A1020 phases.
     """
-    from sqlalchemy import text
-    rows = db.execute(text("""
-        SELECT phase_number, phase_id, sub_step, master_step,
-               plc_step_no, phase_type_code, action_code, re_code,
-               action_description, require, uom, step_time,
-               temperature, temp_low, temp_high,
-               agitator_rpm, high_shear_rpm
-        FROM sku_steps WHERE sku_id = :sku_id
-        ORDER BY phase_number, sub_step
-    """), {"sku_id": sku_id}).fetchall()
+    sku_steps = db.query(models.SkuStep).filter(
+        models.SkuStep.sku_id == sku_id
+    ).order_by(models.SkuStep.phase_number, models.SkuStep.sub_step).all()
 
-    if not rows:
+    if not sku_steps:
         raise HTTPException(status_code=404, detail=f"No steps for SKU '{sku_id}'")
 
-    steps = [dict(r._mapping) for r in rows]
-    result = build_execution_sequence(steps)
-    return result
+    steps = _sku_steps_to_dicts(sku_steps)
+    return build_execution_sequence(steps)
 
 
 @router.get("/recipe-validate/{sku_id}")
@@ -770,23 +793,20 @@ def validate_recipe_steps(sku_id: str, db: Session = Depends(get_db)):
     Validate DB plc_step_no against calculated FC_MapPhaseToStep values.
     Returns list of mismatches — กรณีคนกรอก plc_step_no ผิด.
     """
-    from sqlalchemy import text
-    rows = db.execute(text("""
-        SELECT phase_number, phase_id, phase_type_code, action_code,
-               re_code, temperature, step_time, plc_step_no
-        FROM sku_steps WHERE sku_id = :sku_id
-        ORDER BY phase_number, sub_step
-    """), {"sku_id": sku_id}).fetchall()
+    sku_steps = db.query(models.SkuStep).filter(
+        models.SkuStep.sku_id == sku_id
+    ).order_by(models.SkuStep.phase_number, models.SkuStep.sub_step).all()
 
-    if not rows:
+    if not sku_steps:
         raise HTTPException(status_code=404, detail=f"No steps for SKU '{sku_id}'")
 
-    results = [validate_step(dict(r._mapping)) for r in rows]
-    mismatches = [r for r in results if not r["ok"]]
+    steps = _sku_steps_to_dicts(sku_steps)
+    results = [validate_step(s) for s in steps]
+    mismatches = [r for r in results if not r['ok']]
     return {
-        "sku_id": sku_id,
-        "total_steps": len(results),
-        "mismatches": len(mismatches),
-        "all_ok": len(mismatches) == 0,
-        "details": results,
+        "sku_id":        sku_id,
+        "total_steps":   len(results),
+        "mismatches":    len(mismatches),
+        "all_ok":        len(mismatches) == 0,
+        "details":       results,
     }
