@@ -109,10 +109,36 @@ def _get_active_batch_sku(plant_id: int) -> Optional[str]:
         return None
 
 
+# DB179 per-plant base offset (WORD Current_Step อยู่ที่ base+0)
+_DB179_BASE = {1: 0, 2: 48, 3: 96}
+_DB179_NUM  = 179
+
+
+def _write_step_to_db179(plant_id: int, step: int) -> bool:
+    """
+    เขียน step ตรงเข้า DB179.Current_Step (WORD, 2 bytes, big-endian).
+    ใช้แทน FC_MapPhaseToStep ที่ถูกลบออกจาก OB1 แล้ว
+    """
+    try:
+        base = _DB179_BASE.get(plant_id, 0)
+        data = bytearray(struct.pack('>H', step))   # WORD = unsigned short
+        ok = plc.db_write(_DB179_NUM, base, data)
+        if ok:
+            logger.debug(f"[StepWatcher] DB179 MX-{plant_id} Current_Step={step} ✅")
+        else:
+            logger.warning(f"[StepWatcher] DB179 MX-{plant_id} write failed")
+        return ok
+    except Exception as e:
+        logger.error(f"[StepWatcher] DB179 write error Plant={plant_id}: {e}")
+        return False
+
+
 def _do_auto_advance(plant_id: int, current_step: int, next_step: int):
     """
-    Write next step to PLC: update SEQ+1 in DB15X7 and pulse Cmd_NewStep.
-    Mirrors the logic of force_next_step endpoint.
+    Write next step to PLC:
+    1. เขียน next_step ตรงเข้า DB179.Current_Step
+    2. Update SEQ+1 ใน DB15X7
+    3. Pulse Cmd_NewStep ใน DB15X0
     """
     try:
         db_actual = get_db_number("actual", plant_id)
@@ -122,10 +148,13 @@ def _do_auto_advance(plant_id: int, current_step: int, next_step: int):
         current_seq = actuals.get("current_seq", 0) if actuals else 0
         next_seq    = current_seq + 1
 
-        # Write SEQ+1 → DB15X7 offset 46 (Int, big-endian)
+        # 1. เขียน next_step → DB179 Current_Step (WORD)
+        _write_step_to_db179(plant_id, next_step)
+
+        # 2. Write SEQ+1 → DB15X7 offset 46 (Int, big-endian)
         plc.db_write(db_actual, 46, bytearray(struct.pack(">h", next_seq)))
 
-        # Pulse Cmd_NewStep → DB15X0 offset 86
+        # 3. Pulse Cmd_NewStep → DB15X0 offset 86
         plc.db_write(db_cmd, 86, bytearray([0x80]))
         time.sleep(0.15)
         plc.db_write(db_cmd, 86, bytearray([0x00]))
@@ -147,7 +176,7 @@ def _do_auto_advance(plant_id: int, current_step: int, next_step: int):
                 "bid": actuals.get("batch_id", "-") if actuals else "-",
                 "pid": plant_id,
                 "etype": "AUTO_NEXT_STEP",
-                "detail": f"Step {current_step}→{next_step} (auto-pass)"
+                "detail": f"Step {current_step}→{next_step} (auto-pass, DB179 updated)"
             })
             db.commit()
             db.close()
@@ -170,16 +199,21 @@ async def _poll_step_watcher_loop(interval: float = POLL_INTERVAL):
     while _running:
         try:
             for plant_id in [1, 2, 3]:
-                # 1. Check SCAN bit — only act when SCAN=ON
-                if not check_scan_bit(plant_id):
-                    continue
-
-                # 2. Read telemetry
+                # 1. Read telemetry (ทำก่อนเสมอ ไม่ต้องรอ SCAN)
                 tel = read_telemetry(plant_id)
                 if not tel:
                     continue
 
                 current_step = int(tel.get("current_step", 0))
+
+                # 1b. เขียน current_step ตรงเข้า DB179 ทุก cycle
+                #     (แทน FC_MapPhaseToStep ที่ถูกลบออกจาก OB1 แล้ว)
+                if current_step > 0:
+                    _write_step_to_db179(plant_id, current_step)
+
+                # 2. Check SCAN bit — auto-advance เฉพาะตอน SCAN=ON
+                if not check_scan_bit(plant_id):
+                    continue
 
                 # 3. Is this step in AUTO_STEPS?
                 if current_step not in AUTO_STEPS:
