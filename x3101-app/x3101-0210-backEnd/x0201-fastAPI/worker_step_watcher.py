@@ -151,6 +151,10 @@ def _do_auto_advance(plant_id: int, current_step: int, next_step: int):
         # 1. เขียน next_step → DB179 Current_Step (WORD)
         _write_step_to_db179(plant_id, next_step)
 
+        # 1b. เขียน next_step → DB15X0 offset 92 (z) for PLC interlock sync
+        db_cmd_real = get_db_number('step_cmd', plant_id)
+        plc.db_write(db_cmd_real, 92, bytearray(struct.pack(">h", next_step)))
+
         # 2. Write SEQ+1 → DB15X7 offset 46 (Int, big-endian)
         plc.db_write(db_actual, 46, bytearray(struct.pack(">h", next_seq)))
 

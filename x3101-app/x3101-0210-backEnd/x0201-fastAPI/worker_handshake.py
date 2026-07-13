@@ -628,6 +628,9 @@ def _on_step_cmd_message(client, userdata, message):
             step_no = int(payload.get("Step_ID") or 0)
             ok_sn = plc.db_write(db1510, 24, struct.pack('>h', step_no))
 
+            # 2b. Write z (RECIPE_z / Step_OF_PLC) at +92 for PLC interlock sync
+            ok_z = plc.db_write(db1510, 92, struct.pack('>h', step_of_plc))
+
             # 3. Write HMI_Command=1 (START pulse) at +22
             hmi_cmd = int(payload.get("HMI_Command", 1)) if isinstance(payload.get("HMI_Command"), int) else 1
             ok_hmi = plc.db_write(db1510, 22, struct.pack('>h', hmi_cmd))
@@ -641,6 +644,7 @@ def _on_step_cmd_message(client, userdata, message):
                 f"HMI_Cmd={hmi_cmd} Cmd_NewStep={cmd_new} "
                 f"| DB{db1510}+88={'OK' if ok_ac else ('SKIP(0)' if ac_int==0 else 'FAIL')} "
                 f"| DB{db1510}+24={'OK' if ok_sn else 'FAIL'} "
+                f"| DB{db1510}+92(z)={'OK' if ok_z else 'FAIL'} "
                 f"| DB{db1510}+22={'OK' if ok_hmi else 'FAIL'} "
                 f"| DB{db1510}+86={'OK' if ok_new else 'FAIL'}"
             )
