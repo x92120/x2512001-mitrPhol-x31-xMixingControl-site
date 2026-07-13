@@ -74,16 +74,19 @@ except Exception as e:
 
 from contextlib import asynccontextmanager
 from worker_handshake import start_handshake_worker, stop_handshake_worker
+from worker_step_watcher import start_step_watcher, stop_step_watcher
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting background workers...")
     start_handshake_worker()
+    start_step_watcher()
     yield
     # Shutdown
     logger.info("Stopping background workers...")
     stop_handshake_worker()
+    stop_step_watcher()
 
 app = FastAPI(
     title="xMixing API",
