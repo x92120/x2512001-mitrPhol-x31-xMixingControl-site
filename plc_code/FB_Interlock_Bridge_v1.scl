@@ -1,0 +1,286 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// FB_Interlock_Bridge  —  v1.1  (2026-07-13)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// PURPOSE:
+//   Bridge logic ระหว่างระบบ xMixing App (Step 0-28) กับ Interlock เก่า
+//   ที่ออกแบบมาสำหรับ sequential step เท่านั้น
+//
+// FIX v1.1 (จาก v1.0):
+//   [1] เพิ่ม Prev_Step → detect step change → reset latches อัตโนมัติ
+//       ป้องกัน Confirm_Latch จาก step ก่อนหน้าค้างข้ามมา step ใหม่
+//   [2] แก้ timer function: INT_TO_TIME → DINT_TO_TIME (S7-1200/1500 ถูกต้อง)
+//                          TIME_TO_INT → TIME_TO_DINT (ถูกต้อง)
+//   [3] แก้ ELSE: → ELSE ใน CASE statement (ไม่มี colon)
+//
+// HOW TO USE:
+//   ใน OB1 หรือ FC_Main เรียก FB นี้ทุก scan cycle:
+//
+//     "iDB_InterlockBridge"."FB_Interlock_Bridge"(
+//         Current_Step  := "DB_TELEMETRY".Current_Step,
+//         Temp_PV       := "DB1522".Temp_PV,
+//         Temp_SP       := "DB1510".Temp_SP,
+//         Weight_PV     := "DB1522".Weight_PV,
+//         Weight_Target := "DB1510".Weight_Target,
+//         HMI_Command   := "DB1510".HMI_Command,
+//         Step_Time_SP  := "DB1510".Step_Time,
+//         Step_Done     => "DB1510".Proc_Step_Done,
+//         Interlock_OK  => "DB_TELEMETRY".Interlock_OK,
+//         Timer_Remaining => "DB_TELEMETRY".Timer_Remaining
+//     );
+//
+// STEP TABLE (recipe ปัจจุบัน — ไม่มี D1010/D1030):
+//   2  = A1010 Auto Batch (RO/MIS/LS/WLS)  → App confirm
+//   4  = A1010 Manual Add                  → Operator confirm
+//   6  = A1020 High Shear                  → Weight >= 97% target
+//   8  = D1010 Dissolve Tk1 (not used)     → Auto-pass
+//  10  = D1030 Dissolve Tk2 (not used)     → Auto-pass
+//  12  = x1010 Pre-Heat                    → Temp_PV >= Temp_SP - 1
+//  14  = x1010 Fill Minor / Brix Water     → Operator confirm
+//  16  = x1010 Second Heat >= 83           → Temp_PV >= Temp_SP - 1
+//  18  = x1010 Timed Hold                  → Timer done
+//  20  = x1020 Pasteurizer                 → Timer done + QC confirm
+//  22  = x1030 QC Hold                     → Operator confirm
+//  24  = x1030 Ready Transfer              → Temp cool + confirm
+//  26  = x1040 Transfer                    → Operator confirm
+//  28  = End                               → Auto-pass → App reset
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+
+FUNCTION_BLOCK "FB_Interlock_Bridge"
+TITLE = 'xMixing Interlock Bridge v1.1'
+VERSION : 1.1
+{ S7_Optimized_Access := 'TRUE' }
+
+VAR_INPUT
+    Current_Step    : Int;   // จาก FC_MapPhaseToStep (0-28)
+    Temp_PV         : Real;  // อุณหภูมิปัจจุบัน (°C)
+    Temp_SP         : Real;  // อุณหภูมิ Setpoint (°C)
+    Weight_PV       : Real;  // น้ำหนักถัง Mixing ปัจจุบัน (kg)
+    Weight_Target   : Real;  // น้ำหนักเป้าหมาย (kg)
+    HMI_Command     : Int;   // 0=None, 4=ConfirmStep, 5=ConfirmDone, 9=Reset
+    Step_Time_SP    : Int;   // Timer Setpoint (วินาที), 0 = ไม่ใช้ Timer
+    SIM_Mode        : Bool;  // TRUE = Simulation Mode (bypass Weight/Temp checks)
+END_VAR
+
+VAR_OUTPUT
+    Step_Done       : Bool;  // TRUE = step เสร็จ → App ส่ง step ต่อไป
+    Interlock_OK    : Bool;  // TRUE = ผ่าน interlock ทุกเงื่อนไข
+    Timer_Remaining : Int;   // เวลาที่เหลือ (วินาที)
+END_VAR
+
+VAR
+    // Step change detection — KEY FIX v1.1
+    Prev_Step       : Int;   // step ก่อนหน้า สำหรับ detect การเปลี่ยน step
+
+    // Step timer (TON)
+    StepTimer       : TON;
+    Timer_Running   : Bool;
+    Timer_Done_Latch: Bool;
+
+    // Rising edge detectors
+    HMI_Cmd_4_Edge  : R_TRIG;  // Confirm Step
+    HMI_Cmd_5_Edge  : R_TRIG;  // Confirm Done
+    HMI_Cmd_9_Edge  : R_TRIG;  // Reset
+
+    // Latch flags — cleared เมื่อ step เปลี่ยน
+    Confirm_Latch   : Bool;  // TRUE หลัง Operator กด confirm
+    Weight_OK_Latch : Bool;  // TRUE เมื่อน้ำหนักถึง target
+END_VAR
+
+VAR_TEMP
+    cmd4_now        : Bool;
+    cmd5_now        : Bool;
+    step_changed    : Bool;
+    step_done_temp  : Bool;
+    timer_pt_dint   : DInt;
+    elapsed_dint    : DInt;
+END_VAR
+
+BEGIN
+
+// ── 1. Rising-edge detection ──────────────────────────────────────────────────
+#cmd4_now := (#HMI_Command = 4);
+#cmd5_now := (#HMI_Command = 5);
+
+#HMI_Cmd_4_Edge(CLK := #cmd4_now);
+#HMI_Cmd_5_Edge(CLK := #cmd5_now);
+#HMI_Cmd_9_Edge(CLK := (#HMI_Command = 9));
+
+// ── 2. Detect Step Change — FIX v1.1 ─────────────────────────────────────────
+// เมื่อ step เปลี่ยน → ล้าง latch ทั้งหมด ป้องกัน carryover
+#step_changed := (#Current_Step <> #Prev_Step);
+
+IF #step_changed THEN
+    #Confirm_Latch    := FALSE;
+    #Weight_OK_Latch  := FALSE;
+    #Timer_Done_Latch := FALSE;
+    #Timer_Running    := FALSE;
+    #Step_Done        := FALSE;
+    #Interlock_OK     := FALSE;
+    #Prev_Step        := #Current_Step;  // update prev
+END_IF;
+
+// ── 3. Hard Reset (HMI_Command = 9) ──────────────────────────────────────────
+IF #HMI_Cmd_9_Edge.Q THEN
+    #Confirm_Latch    := FALSE;
+    #Weight_OK_Latch  := FALSE;
+    #Timer_Done_Latch := FALSE;
+    #Timer_Running    := FALSE;
+    #Step_Done        := FALSE;
+    #Interlock_OK     := FALSE;
+END_IF;
+
+// ── 4. Latch Inputs (เฉพาะเมื่อไม่มี step change ใน scan นี้) ───────────────
+IF NOT #step_changed THEN
+
+    // Confirm latch จาก rising edge ของ HMI_Command 4 หรือ 5
+    IF #HMI_Cmd_4_Edge.Q OR #HMI_Cmd_5_Edge.Q THEN
+        #Confirm_Latch := TRUE;
+    END_IF;
+
+    // Weight latch — 97% of target
+    IF (#Weight_Target > 0.0) AND (#Weight_PV >= (#Weight_Target * 0.97)) THEN
+        #Weight_OK_Latch := TRUE;
+    END_IF;
+
+END_IF;
+
+// ── 5. Step Timer — FIX v1.1: ใช้ DINT_TO_TIME / TIME_TO_DINT ───────────────
+IF (#Step_Time_SP > 0) AND #Timer_Running THEN
+
+    // แปลง Int วินาที → DInt มิลลิวินาที → TIME
+    #timer_pt_dint := INT_TO_DINT(#Step_Time_SP) * 1000;
+    #StepTimer(IN := TRUE, PT := DINT_TO_TIME(#timer_pt_dint));
+
+    // คำนวณเวลาที่เหลือ
+    #elapsed_dint := TIME_TO_DINT(#StepTimer.ET) / 1000;
+    #Timer_Remaining := DINT_TO_INT(INT_TO_DINT(#Step_Time_SP) - #elapsed_dint);
+
+    IF #StepTimer.Q THEN
+        #Timer_Done_Latch := TRUE;
+        #Timer_Running    := FALSE;
+    END_IF;
+
+ELSE
+    #StepTimer(IN := FALSE, PT := T#0S);
+    #Timer_Remaining := 0;
+END_IF;
+
+// ── 6. Main Interlock Logic per Step ─────────────────────────────────────────
+#step_done_temp := FALSE;
+#Interlock_OK   := FALSE;
+
+CASE #Current_Step OF
+
+    // ── Step 0: Stand By ────────────────────────────────────────────────────
+    0:
+        #Interlock_OK   := TRUE;
+        #step_done_temp := FALSE;
+
+    // ── Step 2: A1010 Auto Batch ─────────────────────────────────────────────
+    // App รู้ว่า flow meter ครบแล้ว → ส่ง HMI_Command=4
+    2:
+        #Interlock_OK   := TRUE;
+        #step_done_temp := #Confirm_Latch;
+
+    // ── Step 4: A1010 Manual Add ─────────────────────────────────────────────
+    // Operator กด Confirm หลังเติมครบ
+    4:
+        #Interlock_OK   := #Confirm_Latch;
+        #step_done_temp := #Confirm_Latch;
+
+    // ── Step 6: A1020 High Shear ─────────────────────────────────────────────
+    // Production : น้ำหนักถัง >= 97% target
+    // SIM_Mode   : Operator confirm แทน (ไม่มีน้ำหนักจริง)
+    6:
+        IF #SIM_Mode THEN
+            // Simtest: กด HMI_Command=4 แทนรอน้ำหนัก
+            #Interlock_OK   := #Confirm_Latch;
+            #step_done_temp := #Confirm_Latch;
+        ELSE
+            // Production: รอน้ำหนักจริง
+            #Interlock_OK   := #Weight_OK_Latch;
+            #step_done_temp := #Weight_OK_Latch;
+        END_IF;
+
+    // ── Steps 8, 10: D1010 / D1030 (ไม่ใช้ในสายงานปัจจุบัน) ────────────────
+    // Auto-pass ทันที — dissolve tank ไม่มีใน recipe
+    8, 10:
+        #Interlock_OK   := TRUE;
+        #step_done_temp := TRUE;
+
+    // ── Step 12: x1010 Pre-Heat ──────────────────────────────────────────────
+    // รอ Temp_PV >= Temp_SP - 1°C
+    12:
+        #Interlock_OK   := (#Temp_PV >= (#Temp_SP - 1.0));
+        #step_done_temp := #Interlock_OK;
+
+    // ── Step 14: x1010 Fill Minor / Brix Water ───────────────────────────────
+    // Operator confirm หลังเติม Brix water หรือ rinse
+    // (step ที่ระบบเก่ามี interlock จริง)
+    14:
+        #Interlock_OK   := #Confirm_Latch;
+        #step_done_temp := #Confirm_Latch;
+
+    // ── Step 16: x1010 Second Heat ───────────────────────────────────────────
+    // รอ Temp_PV >= Temp_SP - 1°C (เป้า >= 83°C)
+    16:
+        #Interlock_OK   := (#Temp_PV >= (#Temp_SP - 1.0));
+        #step_done_temp := #Interlock_OK;
+
+    // ── Step 18: x1010 Timed Hold ────────────────────────────────────────────
+    // รอ Timer ครบ Step_Time_SP วินาที
+    18:
+        IF NOT #Timer_Running AND NOT #Timer_Done_Latch THEN
+            #Timer_Running := TRUE;   // เริ่ม timer ตอนเข้า step นี้
+        END_IF;
+        #Interlock_OK   := #Timer_Done_Latch;
+        #step_done_temp := #Timer_Done_Latch;
+
+    // ── Step 20: x1020 Pasteurizer ───────────────────────────────────────────
+    // รอ Timer ครบ + QC Confirm จาก Operator
+    20:
+        IF NOT #Timer_Running AND NOT #Timer_Done_Latch THEN
+            #Timer_Running := TRUE;
+        END_IF;
+        #Interlock_OK   := #Timer_Done_Latch AND #Confirm_Latch;
+        #step_done_temp := #Interlock_OK;
+
+    // ── Step 22: x1030 QC Hold ───────────────────────────────────────────────
+    // Operator กด Confirm หลัง QC pass
+    22:
+        #Interlock_OK   := #Confirm_Latch;
+        #step_done_temp := #Confirm_Latch;
+
+    // ── Step 24: x1030 Ready to Transfer ─────────────────────────────────────
+    // รอถังเย็น (Temp_PV <= Temp_SP) + Operator confirm
+    24:
+        #Interlock_OK   := (#Temp_PV <= #Temp_SP) AND #Confirm_Latch;
+        #step_done_temp := #Interlock_OK;
+
+    // ── Step 26: x1040 Transfer ──────────────────────────────────────────────
+    // Operator confirm เมื่อสูบออกเสร็จ
+    26:
+        #Interlock_OK   := #Confirm_Latch;
+        #step_done_temp := #Confirm_Latch;
+
+    // ── Step 28: End ─────────────────────────────────────────────────────────
+    // Auto-pass → App จะ Reset PLC เอง
+    28:
+        #Interlock_OK   := TRUE;
+        #step_done_temp := TRUE;
+
+    // ── Unknown step ─────────────────────────────────────────────────────────
+    ELSE
+        #Interlock_OK   := FALSE;
+        #step_done_temp := FALSE;
+
+END_CASE;
+
+// ── 7. Latch Step_Done (hold ค่าไว้จนกว่า step จะเปลี่ยน) ───────────────────
+IF #step_done_temp THEN
+    #Step_Done := TRUE;
+END_IF;
+
+END_FUNCTION_BLOCK
