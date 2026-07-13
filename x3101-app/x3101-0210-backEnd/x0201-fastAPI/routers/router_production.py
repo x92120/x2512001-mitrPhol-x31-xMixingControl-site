@@ -2598,6 +2598,17 @@ def get_production_step_logs(batch_id_str: str, db: Session = Depends(get_db)):
             "operator2":          log.operator2,
         })
 
+    # ── Filter out empty material rows (actual=0 AND no lot_no) ──────────────
+    # These are interlock-tracking rows with no actual weighing data.
+    result_logs = [
+        log for log in result_logs
+        if not (
+            log["re_code"]                                            # is a material step
+            and not (log["actual_value"] or 0)                       # no actual weight
+            and not log["lot_no"]                                     # no lot number
+        )
+    ]
+
     def check_qc_val_ok(actual_val, target_val, sp_str, default_tol):
         if actual_val is None:
             return None
