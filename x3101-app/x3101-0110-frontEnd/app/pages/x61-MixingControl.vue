@@ -44,15 +44,15 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
   switch (phaseType) {
     case 1: // A1010 — Auto Batching Major (Fill from pipe: IBC/LS/MIS/RO)
       if ([10010, 10020, 10030, 10040].includes(actionCode)) return 2  // Start Program — auto batching
-      if ([30010, 20040].includes(actionCode))               return 4  // Fill Major — manual add
+      if ([30010, 20040].includes(actionCode))               return 14 // Fill Minor — manual add
       return 2  // default: auto batching
     case 2: // A1020 — High Shear / Pre-blend
-      return 6  // Fill Major Done — High Shear running
+      return 14  // Fill Major Done — High Shear running
     case 3: // D1010 — Dissolve Tank 1
       if (actionCode === 20020) return 9   // Waiting First Confirm (กลั้วภาชนะ)
-      return 8  // Preblending — dissolve active
+      return 18  // Preblending — dissolve active
     case 4: // D1030 — Dissolve Tank 2
-      return 10  // First Confirm — secondary dissolve
+      return 18  // First Confirm — secondary dissolve
     case 5: // x1010 — Heating Phase
       if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
       if (actionCode === 30500) {
@@ -65,7 +65,7 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
     case 6: // x1020 — Pasteurization
       return 20  // Pasteurizer
     case 7: // x1030 — Holding / Start Cooling
-      if (actionCode === 30010)  return 21  // Waiting QC Confirm
+      if (actionCode === 30010)  return 22  // QC Confirm
       if (actionCode === 30600 || actionCode === 30020) return 24  // Ready To Transfer
       if (actionCode === 30500) return tempSp >= 83.0 ? 22 : 24
       return 22  // default: QC Confirm

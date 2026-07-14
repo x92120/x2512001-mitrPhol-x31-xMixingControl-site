@@ -296,6 +296,13 @@ def check_and_complete_batch(db: Session, batch_id: str, plant_id: int = 0):
                 # Signal PLC to return to IDLE for this plant
                 if plant_id > 0:
                     clear_plc_step_cmd(plant_id)
+                    try:
+                        from plc_service import clear_actuals_in_plc, write_full_recipe_to_plc
+                        clear_actuals_in_plc(plant_id)
+                        write_full_recipe_to_plc("-", "-", [], plant_id)
+                        logger.info(f"[Auto-Clear] DB15x7 and DB15x1 cleared for Plant {plant_id}")
+                    except Exception as clear_err:
+                        logger.error(f"[Auto-Clear] Failed: {clear_err}")
                 return True
     except Exception as e:
         logger.error(f"Failed to check batch completion for {batch_id}: {e}")

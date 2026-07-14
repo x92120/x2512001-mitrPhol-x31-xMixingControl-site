@@ -98,7 +98,7 @@ IF #Phase_ID = 'A1010' THEN
 
         30010,     // Manual add Ingredient to Mixing Tank
         20040:     // ยกเท (pour)
-            #result := 4;  // Fill Major Ingredient
+            #result := 14; // Fill Minor Ingredient (converged manual add)
 
         ELSE
             #result := 2;  // default → auto batching
@@ -207,7 +207,7 @@ ELSIF #Phase_ID = 'x1030' THEN
     CASE #Action_Code OF
 
         30010:  // Holding (manual confirm = QC wait)
-            #result := 21;  // Waiting QC Confirm
+            #result := 22;  // QC Confirm
 
         30500:  // Heats Up / Holding
             IF #Temp_SP >= 83.0 THEN
