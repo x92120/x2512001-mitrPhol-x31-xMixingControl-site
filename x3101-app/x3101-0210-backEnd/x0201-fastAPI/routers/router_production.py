@@ -790,6 +790,17 @@ def update_production_batch(batch_id: int, batch: schemas.ProductionBatchUpdate,
 def update_production_batch_status(batch_id: int, status: str, db: Session = Depends(get_db)):
     """Quickly update batch status."""
     db_batch = crud.update_production_batch_status(db, batch_id=batch_id, status=status)
+    if status == "Done":
+        try:
+            from plc_service import clear_plc_step_cmd, clear_actuals_in_plc, write_full_recipe_to_plc
+            import crud as _crud
+            plant = getattr(db_batch, "assigned_plant_id", getattr(db_batch, "plant_id", 1)) if db_batch else 1
+            clear_plc_step_cmd(plant)
+            clear_actuals_in_plc(plant)
+            write_full_recipe_to_plc("-", "-", [], plant)
+            print(f"[Auto-Clear API] PLC cleared for plant {plant}")
+        except Exception as e:
+            print(f"[Auto-Clear API] failed to clear PLC: {e}")
     if not db_batch:
         raise HTTPException(status_code=404, detail="Production batch not found")
     return db_batch
