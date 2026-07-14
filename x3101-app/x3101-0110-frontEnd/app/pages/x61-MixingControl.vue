@@ -1199,12 +1199,13 @@ const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
         return
     } else if (cmd === 'NEXT_STEP') {
         batchRunning.value = true
+        try { $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, { method: 'POST', headers: getAuthHeader() }); console.log('Triggered Step_complete for plant', activePlantId.value || 1); } catch (e) { console.error('Failed Step_complete', e); }
         // If we are already ahead (e.g. from P30 override), do not snap back
         if (localStepIndex.value <= currentStepIndex.value) {
             localStepIndex.value = currentStepIndex.value + 1
         }
         if (isPlcConnected.value && localStepIndex.value < skuSteps.value.length) {
-            sendStepToPLC(localStepIndex.value)
+            setTimeout(() => sendStepToPLC(localStepIndex.value), 1000) // หน่วงเวลาให้ PLC รับ Step_complete ก่อน
         }
         return
     }
@@ -1660,6 +1661,9 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         immediateHmiCommand = 1
     }
     
+    if (immediateHmiCommand === 4 || immediateHmiCommand === 5) {
+        try { $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, { method: 'POST', headers: getAuthHeader() }); console.log('Triggered Step_complete from Confirm button'); } catch (e) { console.error('Failed Step_complete', e); }
+    }
     const topic = simCmdTopic(activePlantId.value, 'step_cmd')
     const payload = {
         Watch_Doc: Math.floor(Date.now() / 1000) % 32767,
@@ -3343,7 +3347,7 @@ watch(currentStepIndex, (newIdx) => {
     if (!step) { _roWatchActive = false; return }
     const phaseId    = String(step.phase_id || '')
     const actionCode = Number(step.action_code)
-    if (phaseId.includes('A1020') && actionCode === 10010) {
+    if (actionCode === 10010 || String(step.re_code || '').includes('RO-Water')) {
         _roWeightBaseline = plantsData.value[activePlantId.value]?.Mixing_Tank_Volume ?? 0
         _roStepIdx        = newIdx
         _roAdvancedOnce   = false
@@ -3407,7 +3411,8 @@ onMounted(() => {
                         actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
                     }
                 }).catch(e => console.warn('[AutoRO] log-step failed:', e))
-                setTimeout(() => sendStepToPLC(nextIdx), 400)
+                try { $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, { method: 'POST', headers: getAuthHeader() }); console.log('[AutoRO] Triggered Step_complete'); } catch (e) { console.error('[AutoRO] Failed Step_complete', e); }
+                setTimeout(() => sendStepToPLC(nextIdx), 1000) // หน่วงเวลาให้ PLC รับ Step_complete
             }
         }
         // ─────────────────────────────────────────────────────────────────
