@@ -171,6 +171,15 @@ def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     for s in sku_steps:
         ptc = int(s.get("phase_type_code") or 0)
+        
+        # --- FIX: Auto-fallback if phase_type_code is 0 in DB but phase_id is known ---
+        if not ptc:
+            pid = s.get("phase_id", "")
+            for k, v in PHASE_TYPE_LABELS.items():
+                if v == pid:
+                    ptc = k
+                    break
+        # -----------------------------------------------------------------------------
         ac  = int(s.get("action_code") or 0)
         ts  = float(s.get("temperature") or 0.0)
         st  = int(s.get("step_time") or 0)

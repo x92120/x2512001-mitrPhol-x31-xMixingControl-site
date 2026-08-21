@@ -191,6 +191,29 @@ def _do_auto_advance(plant_id: int, current_step: int, next_step: int):
         logger.error(f"[StepWatcher] ❌ Auto advance failed Plant={plant_id}: {e}")
 
 
+
+def _process_plant_sync(plant_id: int):
+    try:
+        tel = read_telemetry(plant_id)
+        if not tel: return
+        current_step = int(tel.get("current_step", 0))
+        if current_step > 0:
+            _write_step_to_db179(plant_id, current_step)
+        if not check_scan_bit(plant_id): return
+        if current_step not in AUTO_STEPS: return
+        now = time.time()
+        if current_step == _last_auto_step[plant_id] and (now - _last_advance_ts[plant_id] < DEBOUNCE_SEC): return
+        sku_id = _get_active_batch_sku(plant_id)
+        if not sku_id: return
+        next_step = _get_next_step_in_plan(sku_id, current_step)
+        if next_step is None: return
+        logger.info(f"[StepWatcher] Plant={plant_id} Step={current_step} is AUTO → advancing to Step={next_step} (SKU={sku_id})")
+        _do_auto_advance(plant_id, current_step, next_step)
+        _last_auto_step[plant_id]  = current_step
+        _last_advance_ts[plant_id] = now
+    except Exception as e:
+        logger.error(f"[StepWatcher] Error processing plant {plant_id}: {e}")
+
 async def _poll_step_watcher_loop(interval: float = POLL_INTERVAL):
     """
     Main polling loop — runs every `interval` seconds.
@@ -203,55 +226,7 @@ async def _poll_step_watcher_loop(interval: float = POLL_INTERVAL):
     while _running:
         try:
             for plant_id in [1, 2, 3]:
-                # 1. Read telemetry (ทำก่อนเสมอ ไม่ต้องรอ SCAN)
-                tel = read_telemetry(plant_id)
-                if not tel:
-                    continue
-
-                current_step = int(tel.get("current_step", 0))
-
-                # 1b. เขียน current_step ตรงเข้า DB179 ทุก cycle
-                #     (แทน FC_MapPhaseToStep ที่ถูกลบออกจาก OB1 แล้ว)
-                if current_step > 0:
-                    _write_step_to_db179(plant_id, current_step)
-
-                # 2. Check SCAN bit — auto-advance เฉพาะตอน SCAN=ON
-                if not check_scan_bit(plant_id):
-                    continue
-
-                # 3. Is this step in AUTO_STEPS?
-                if current_step not in AUTO_STEPS:
-                    continue
-
-                # 4. Debounce — don't fire if we just advanced
-                now = time.time()
-                if (current_step == _last_auto_step[plant_id] and
-                        now - _last_advance_ts[plant_id] < DEBOUNCE_SEC):
-                    continue
-
-                # 5. Get active SKU execution plan
-                sku_id = _get_active_batch_sku(plant_id)
-                if not sku_id:
-                    logger.debug(f"[StepWatcher] Plant={plant_id} no active batch — skip")
-                    continue
-
-                next_step = _get_next_step_in_plan(sku_id, current_step)
-                if next_step is None:
-                    logger.warning(
-                        f"[StepWatcher] Plant={plant_id} Step={current_step} "
-                        f"SKU={sku_id}: no next step found"
-                    )
-                    continue
-
-                # 6. Auto advance!
-                logger.info(
-                    f"[StepWatcher] Plant={plant_id} Step={current_step} is AUTO "
-                    f"→ advancing to Step={next_step} (SKU={sku_id})"
-                )
-                _do_auto_advance(plant_id, current_step, next_step)
-                _last_auto_step[plant_id]  = current_step
-                _last_advance_ts[plant_id] = now
-
+                await asyncio.to_thread(_process_plant_sync, plant_id)
         except Exception as e:
             logger.error(f"[StepWatcher] Unexpected error in poll loop: {e}")
 

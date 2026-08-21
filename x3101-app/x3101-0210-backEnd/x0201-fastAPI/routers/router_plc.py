@@ -810,3 +810,16 @@ def validate_recipe_steps(sku_id: str, db: Session = Depends(get_db)):
         "all_ok":        len(mismatches) == 0,
         "details":       results,
     }
+
+@router.post("/plant/{plant_id}/step-complete")
+def api_set_step_complete(plant_id: int):
+    """
+    Triggered by the App to set DB15x3 Offset 0.0 (Step_complete) = True.
+    Used for steps where App holds the logic (e.g. Scanning, QC Pass).
+    """
+    from plc_service import set_step_complete_in_plc
+    success = set_step_complete_in_plc(plant_id)
+    if success:
+        return {"status": "success", "message": f"Step_complete set to True for Plant {plant_id}"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to write to PLC Handshake DB")

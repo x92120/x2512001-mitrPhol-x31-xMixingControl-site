@@ -602,3 +602,24 @@ def clear_plc_step_cmd(plant_id: int = 1) -> bool:
     except Exception as e:
         logger.error(f"[ClearCmd] DB{db_number} error: {e}")
         return False
+
+def set_step_complete_in_plc(plant_id: int) -> bool:
+    """
+    Sets DB15x3 Offset 0.0 (Step_complete) to True.
+    Triggered by App for manual steps (Scan/QC).
+    """
+    db_number = get_db_number('handshake', plant_id)
+    try:
+        data = plc.db_read(db_number, 0, 1)
+        if data is None:
+            return False
+        import snap7.util
+        byte_data = bytearray(data)
+        snap7.util.set_bool(byte_data, 0, 0, True)
+        result = plc.db_write(db_number, 0, bytes(byte_data))
+        if result:
+            logger.info(f"✅ [Handshake] Set Step_complete (DB{db_number} +0.0) to TRUE for Plant {plant_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Failed to set Step_complete for Plant {plant_id}: {e}")
+        return False
