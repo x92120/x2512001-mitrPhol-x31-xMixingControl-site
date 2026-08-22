@@ -106,6 +106,9 @@ def get_recipe_for_plc(batch_id: str, db: Session = Depends(get_db)):
             "ph_sp": s.ph_sp,
         })
 
+    from recipe_sequencer import auto_correct_sku_steps
+    step_dicts = auto_correct_sku_steps(step_dicts)
+
     # 5. Extract plant ID from plan_id (format: Pyymmdd-BatchNo-PlantID)
     parts = (plan.plan_id or "").split("-")
     plant_id = parts[2] if len(parts) >= 3 else "1"
@@ -212,6 +215,14 @@ def send_recipe_to_plc(batch_id: str, plant_id: int = 1, db: Session = Depends(g
             "highshear_sp": 0.0 if is_mix else float(s.high_shear_rpm or 0.0),
             "step_time": int(s.step_time or 0)
         })
+
+    # 3b. Auto-correct phase_id for steps that need to be in High Shear (A1020)
+    # e.g. p0010 + 30010 (Manual Add Sugar) should be treated as A1020 → Step 6, not A1010 → Step 14
+    from recipe_sequencer import auto_correct_sku_steps
+    step_dicts = auto_correct_sku_steps(step_dicts)
+    # After auto-correct: re-sync phase_id into step_dicts (auto_correct gives us new phase_id)
+    for sd in step_dicts:
+        sd["phase_id"] = str(sd.get("phase_id") or "")[:10]
 
     # 4. Write to the real hardware PLC using snap7 direct write
     try:
@@ -747,6 +758,7 @@ def _sku_steps_to_dicts(sku_steps_orm):
     """Convert SkuStep ORM objects to plain dicts for recipe_sequencer."""
     return [
         {
+            "sku_id":          getattr(s, "sku_id", ""), 
             "phase_number":    s.phase_number,
             "phase_id":        s.phase_id,
             "sub_step":        s.sub_step,
@@ -784,6 +796,8 @@ def get_recipe_sequence(sku_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"No steps for SKU '{sku_id}'")
 
     steps = _sku_steps_to_dicts(sku_steps)
+    from recipe_sequencer import auto_correct_sku_steps
+    steps = auto_correct_sku_steps(steps)
     return build_execution_sequence(steps)
 
 
@@ -809,6 +823,92 @@ def validate_recipe_steps(sku_id: str, db: Session = Depends(get_db)):
         "mismatches":    len(mismatches),
         "all_ok":        len(mismatches) == 0,
         "details":       results,
+    }
+
+
+
+@router.get("/debug/recipe-z/{sku_id}")
+def api_debug_recipe_z(sku_id: str, db: Session = Depends(get_db)):
+    """
+    Debug endpoint: Show calculated PLC step (recipe.z) for every step in a SKU.
+    Does NOT connect to PLC — pure Python calculation only.
+    Useful for verifying step mapping without physical PLC access.
+
+    Returns each step with:
+      - seq:          step sequence number
+      - phase_number: phase code (e.g. p0010)
+      - phase_id:     PLC phase identifier (A1010, A1020, x1010 ...)
+      - action_code:  action code
+      - re_code:      ingredient / material name
+      - plc_step_z:   calculated PLC step (recipe.z) that will be sent to PLC
+      - plc_step_db:  plc_step_no stored in DB (for comparison)
+      - match:        True if DB value matches calculated value
+    """
+    from recipe_sequencer import auto_correct_sku_steps, build_execution_sequence, map_phase_to_plc_step
+
+    sku_steps = db.query(models.SkuStep).filter(
+        models.SkuStep.sku_id == sku_id
+    ).order_by(models.SkuStep.phase_number, models.SkuStep.sub_step).all()
+
+    if not sku_steps:
+        raise HTTPException(status_code=404, detail=f"No steps found for SKU '{sku_id}'")
+
+    raw = _sku_steps_to_dicts(sku_steps)
+    corrected = auto_correct_sku_steps(raw)
+
+    has_high_shear = any(
+        str(s.get("phase_id") or "").strip().upper() == "A1020"
+        or int(s.get("phase_type_code") or 0) == 2
+        for s in corrected
+    )
+
+    result_steps = []
+    for idx, s in enumerate(corrected, 1):
+        pt  = int(s.get("phase_type_code") or 0)
+        ac  = int(str(s.get("action_code") or "0").strip() or "0")
+        ts  = float(s.get("temperature") or s.get("temp_sp") or 0.0)
+        st  = int(s.get("step_time") or 0)
+        db_step = int(s.get("plc_step_no") or 0)
+
+        calc_step = map_phase_to_plc_step(
+            phase_type_code=pt,
+            action_code=ac,
+            temp_sp=ts,
+            step_time=st,
+        )
+
+        result_steps.append({
+            "seq":          idx,
+            "phase_number": s.get("phase_number"),
+            "phase_id":     s.get("phase_id"),
+            "action_code":  str(s.get("action_code") or ""),
+            "re_code":      s.get("re_code") or "",
+            "plc_step_z":   calc_step,
+            "plc_step_db":  db_step,
+            "match":        calc_step == db_step,
+            "phase_type_code": pt,
+            "phase_type_label": {
+                0: "Unknown/StandBy",
+                1: "A1010 Auto Batching Major",
+                2: "A1020 High Shear / Pre-blend",
+                3: "D1010 Dissolve Tank 1",
+                4: "D1030 Dissolve Tank 2",
+                5: "x1010 Heating Phase",
+                6: "x1020 Pasteurization",
+                7: "x1030 Holding / Cooling",
+                8: "x1040 Final Cooling / Transfer",
+            }.get(pt, f"pt={pt} Unknown"),
+        })
+
+    mismatches = [s for s in result_steps if not s["match"]]
+
+    return {
+        "sku_id":          sku_id,
+        "has_high_shear":  has_high_shear,
+        "total_steps":     len(result_steps),
+        "mismatches":      len(mismatches),
+        "all_match":       len(mismatches) == 0,
+        "steps":           result_steps,
     }
 
 @router.post("/plant/{plant_id}/step-complete")

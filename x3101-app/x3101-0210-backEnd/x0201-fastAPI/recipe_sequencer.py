@@ -59,28 +59,61 @@ def map_phase_to_plc_step(
     action_code: int,
     temp_sp: float = 0.0,
     step_time: int = 0,
+    tt: float = 83.0,
 ) -> int:
     """
-    Mirror of FC_MapPhaseToStep v2 SCL logic.
+    Mirror of FB0078_MAPPING_ST SCL logic (exact).
     Returns PLC step number (0–28) from phase attributes.
-
-    Used by the pre-processor so App never depends on DB plc_step_no.
+    #pt = Phase_Type (Byte→Int), dispatched via CASE.
     """
-    ac = int(action_code or 0)
-    ts = float(temp_sp or 0.0)
-    st = int(step_time or 0)
+    ac  = int(action_code or 0)
+    ts  = float(temp_sp or 0.0)
+    st  = int(step_time or 0)
+    TT  = float(tt or 83.0)
 
     if phase_type_code == 1:   # A1010 — Auto Batching Major
         if ac in (10010, 10020, 10030, 10040):
-            return 2   # Auto pipe batching (MIS, Water, etc.)
+            return 2   # Start Program — auto pipe batching
         elif ac in (30010, 20040):
-            # ยกเท (manual pour) happens AFTER pre-heat at step 14
-            # Step 4 = Batch OK gate only (no material addition)
-            return 14
-        return 2
+            return 4   # Fill Major Ingredient — manual add
+        return 2       # default
 
-    elif phase_type_code == 2:  # A1020 — High Shear
-        return 6
+    elif phase_type_code == 2:  # A1020 — High Shear / Pre-blend
+        return 6       # Fill Major Done — High Shear running
+
+    elif phase_type_code == 3:  # D1010 — Dissolve Tank 1
+        if ac == 20020:
+            return 9   # Waiting First Confirm (rinse vessel)
+        return 8       # Preblending — dissolve active
+
+    elif phase_type_code == 4:  # D1030 — Dissolve Tank 2
+        return 10      # First Confirm — secondary dissolve
+
+    elif phase_type_code == 5:  # x1010 — Heating Phase
+        if ac in (20050, 20020):
+            return 14  # Fill Minor Ingredient
+        elif ac == 30010:
+            return 16 if ts >= TT else 12
+        elif ac == 30500:
+            if st > 0:
+                return 18  # Timed Hold
+            return 16 if ts >= TT else 12
+        return 12      # default Pre Heats
+
+    elif phase_type_code == 6:  # x1020 — Pasteurization
+        return 20      # Pasteurizer
+
+    elif phase_type_code == 7:  # x1030 — Holding / Start Cooling
+        if ac == 30010:
+            return 21  # Waiting QC Confirm
+        elif ac in (30600, 30020):
+            return 24  # Ready To Transfer
+        elif ac == 30500:
+            return 22 if ts >= TT else 24
+        return 22      # default QC Confirm zone
+
+    elif phase_type_code == 8:  # x1040 — Final Cooling / Transfer
+        return 26      # Transferring — Final Cooling
 
     elif phase_type_code == 3:  # D1010 — Dissolve Tank 1
         # All D1010 operations map to PLC step 8 (sequence placeholder).
@@ -113,6 +146,7 @@ def map_phase_to_plc_step(
         return 22
 
     elif phase_type_code == 8:  # x1040 — Transfer
+        if ac in (30600, 30020): return 24
         return 26
 
     return 0  # Stand By / Unknown
@@ -149,6 +183,59 @@ def validate_step(step: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ─── Main: Build Execution Sequence ──────────────────────────────────────────
+
+def auto_correct_sku_steps(steps):
+    """
+    Correct phase_id / phase_type_code / plc_step_no for each step
+    based on FB0078_MAPPING_ST(2).pdf SCL rules.
+
+    Key rule for A1010 + action_code 30010 (Manual Add Ingredient):
+      - If SKU has A1020 phase (High Shear) -> force to A1020 = Step 6
+      - If SKU does NOT have A1020 phase    -> keep A1010 = Step 4 (Cafe Amazon)
+    """
+    if not steps:
+        return steps
+
+    # Detect whether this SKU contains any A1020 (High Shear) phase
+    has_high_shear = any(
+        str(s.get("phase_id") or "").strip().upper() == "A1020"
+        or int(s.get("phase_type_code") or 0) == 2
+        for s in steps
+    )
+
+    corrected = []
+    for s in steps:
+        step = dict(s)
+        ac  = str(step.get("action_code") or step.get("action") or "").strip()
+        pn  = str(step.get("phase_number") or "").strip().lower()
+        pno = int(step.get("phase_no") or 0)
+        pid = str(step.get("phase_id") or "").strip().upper()
+        pt  = int(step.get("phase_type_code") or 0)
+
+        # A1010 + action_code 30010 = Manual Major Ingredient addition
+        is_a1010_manual = (
+            ac == "30010"
+            and (pid == "A1010" or pt == 1
+                 or pn in ("p0010", "p010", "p10", "10")
+                 or pno == 10)
+        )
+
+        if is_a1010_manual:
+            if has_high_shear:
+                # SKU has High Shear -> manual add routes into A1020 zone = Step 6
+                step["phase_number"] = "p0015"
+                step["phase_id"]     = "A1020"
+                step["phase_type_code"] = 2
+                step["plc_step_no"]  = 6
+            else:
+                # SKU has NO High Shear -> keep A1010, Step 4 per SCL
+                step["phase_id"]     = "A1010"
+                step["phase_type_code"] = 1
+                step["plc_step_no"]  = 4
+
+        corrected.append(step)
+    return corrected
+
 def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Takes raw sku_steps from DB.
@@ -186,6 +273,15 @@ def build_execution_sequence(sku_steps: List[Dict[str, Any]]) -> Dict[str, Any]:
 
         calc_step = map_phase_to_plc_step(ptc, ac, ts, st)
         db_step   = int(s.get("plc_step_no") or 0)
+
+        phase_num = str(s.get("phase_number") or "").strip()
+        sku_id = str(s.get("sku_id") or "").strip()
+        re_code = str(s.get("re_code") or "").strip()
+        
+        
+
+
+
 
         if db_step != calc_step and db_step != 0:
             warnings.append({

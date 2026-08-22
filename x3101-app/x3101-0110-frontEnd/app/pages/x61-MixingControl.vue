@@ -1060,6 +1060,7 @@ const sendStepToPLC = (index: number) => {
         // Phase type + action code (for PLC interlock)
         Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? Number((s as any).phase_type_code || 0),
         Action_Code: Number((s as any).action_code || 0),
+        Recipe_Z: Number((s as any).plc_step_no || 0),
         Step_OF_PLC: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
           Number((s as any).action_code || 0),
@@ -1687,6 +1688,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Brix_Target: Number(step.brix_sp || 0),
         Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? Number((step as any).phase_type_code || 0),
         Action_Code: Number((step as any).action_code || 0),
+        Recipe_Z: Number((step as any).plc_step_no || 0),
         Step_OF_PLC: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
           Number((step as any).action_code || 0),
@@ -4160,7 +4162,7 @@ onUnmounted(() => {
                 <span class="text-caption text-cyan-4 text-weight-bolder" style="letter-spacing: 1px; text-transform: uppercase;">DB100 — Identifiers</span>
               </div>
               <table style="width: 100%; border-collapse: collapse; font-family: 'Fira Code', 'Courier New', monospace; font-size: 13px;">
-                <tr v-for="key in ['Watch_Doc','Plan_ID','Batch_ID','SKU_Name','Phase_ID','Step_ID']" :key="key"
+                <tr v-for="key in ['Watch_Doc','Plan_ID','Batch_ID','SKU_Name','Phase_ID','Step_ID','Phase_Type','Action_Code','Recipe_Z']" :key="key"
                   style="border-bottom: 1px solid #21262d;">
                   <td style="color: #7ee787; padding: 4px 8px; width: 160px; white-space: nowrap;">{{ key }}</td>
                   <td style="color: #e6edf3; padding: 4px 8px;">{{ lastPlcPayload[key] ?? '—' }}</td>

@@ -56,7 +56,7 @@ def _get_next_step_in_plan(sku_id: str, current_step: int) -> Optional[int]:
         db = SessionLocal()
         try:
             rows = db.execute(text("""
-                SELECT phase_number, phase_id, sub_step, master_step,
+                SELECT sku_id, phase_number, phase_id, sub_step, master_step,
                        plc_step_no, phase_type_code, action_code, re_code,
                        step_time, temperature, temp_low, temp_high,
                        agitator_rpm, high_shear_rpm
@@ -68,6 +68,8 @@ def _get_next_step_in_plan(sku_id: str, current_step: int) -> Optional[int]:
                 return None
 
             steps = [dict(r._mapping) for r in rows]
+            from recipe_sequencer import auto_correct_sku_steps
+            steps = auto_correct_sku_steps(steps)
             result = build_execution_sequence(steps)
             plan = result.get("execution_plan", [])
 
