@@ -4,6 +4,10 @@ import { appConfig } from '~/appConfig/config'
 import { useRoute, useRouter } from 'vue-router'
 import { useMQTT } from '~/composables/useMQTT'
 
+// ── Global API & State Base ──
+const remoteApiBaseUrl = computed(() => appConfig.apiBaseUrl)
+let _lastUserStepAction = 0  // Timestamp of last manual step change to prevent multi-client sync race
+
 // ── PLC Step Descriptions ──
 const plcStepDescriptions: Record<number, string> = {
   0: "Stand By",
@@ -1030,6 +1034,7 @@ const confirmQcCheck = async () => {
 }
 
 const sendStepToPLC = (index: number) => {
+    _lastUserStepAction = Date.now()
     const s = skuSteps.value[index]
     if (!s) return;
     
@@ -1573,6 +1578,7 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
 }
 
 const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
+    _lastUserStepAction = Date.now()
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
         return
@@ -3366,12 +3372,16 @@ onMounted(() => {
     // Register visibilitychange only on client side (not SSR)
     document.addEventListener('visibilitychange', _onVisibilityChange)
 
-    // Poll DB15x2 live telemetry every 500ms (S7 PUT-GET — no MQTT latency)
+    // Poll DB15x2 live telemetry (concurrency-guarded, S7 PUT-GET — no MQTT latency)
+    let _isPollingTelemetry = false
     const _pollTelemetry = async () => {
         const pid = activePlantId.value
-        if (!pid) return
+        if (!pid || _isPollingTelemetry) return
+        if (typeof document !== 'undefined' && document.hidden) return
+        _isPollingTelemetry = true
         try {
-            const t = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/telemetry-live`)
+            const baseUrl = appConfig.apiBaseUrl
+            const t = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/telemetry-live`)
             if (!t || t.error) return
             const prev = plantsData.value[pid] || {}
             plantsData.value = {
@@ -3388,6 +3398,9 @@ onMounted(() => {
                 }
             }
         } catch { /* PLC offline — keep last value */ }
+        finally {
+            _isPollingTelemetry = false
+        }
 
         // ── A1020/10010 RO-Water auto-advance check ──────────────────────
         if (_roWatchActive && !_roAdvancedOnce) {
@@ -3401,19 +3414,23 @@ onMounted(() => {
                 const nextIdx   = _roStepIdx + 1
                 console.log(`[AutoRO] weight gained=${gained.toFixed(1)}/${req} → sendStepToPLC(${nextIdx})`)
                 localStepIndex.value = nextIdx
+                _lastUserStepAction = Date.now()
                 // Log this auto-advanced step to backend (A1020/RO-Water = no PLC step_complete signal)
-                $fetch(`${remoteApiBaseUrl}/production-batches/${activeBatchId.value}/log-step`, {
-                    method: 'POST',
-                    body: {
-                        phase_id:     String(roStep?.phase_number ?? roStep?.phase_id ?? ''),
-                        step_id:      Number(roStep?.sub_step ?? 10),
-                        action_code:  String(roStep?.action_code ?? '10010'),
-                        re_code:      String(roStep?.re_code ?? 'RO-Water'),
-                        target_value: req,
-                        actual_value: parseFloat(gained.toFixed(2)),
-                        actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
-                    }
-                }).catch(e => console.warn('[AutoRO] log-step failed:', e))
+                const currentBatchId = activeBatchId.value || selectedBatchId.value
+                if (currentBatchId) {
+                    $fetch(`${appConfig.apiBaseUrl}/production-batches/${currentBatchId}/log-step`, {
+                        method: 'POST',
+                        body: {
+                            phase_id:     String(roStep?.phase_number ?? roStep?.phase_id ?? ''),
+                            step_id:      Number(roStep?.sub_step ?? 10),
+                            action_code:  String(roStep?.action_code ?? '10010'),
+                            re_code:      String(roStep?.re_code ?? 'RO-Water'),
+                            target_value: req,
+                            actual_value: parseFloat(gained.toFixed(2)),
+                            actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
+                        }
+                    }).catch(e => console.warn('[AutoRO] log-step failed:', e))
+                }
                 try { $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, { method: 'POST', headers: getAuthHeader() }); console.log('[AutoRO] Triggered Step_complete'); } catch (e) { console.error('[AutoRO] Failed Step_complete', e); }
                 setTimeout(() => sendStepToPLC(nextIdx), 1000) // หน่วงเวลาให้ PLC รับ Step_complete
             }
@@ -3422,15 +3439,20 @@ onMounted(() => {
     }
     if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
     if (_stepSyncInterval) clearInterval(_stepSyncInterval)
-    _telemetryPollInterval = setInterval(_pollTelemetry, 200)
+    _telemetryPollInterval = setInterval(_pollTelemetry, 350)
     _pollTelemetry()
 
-    // ── Multi-Client Auto-Sync Step Timer (every 3 seconds) ──────────────
+    // ── Multi-Client Auto-Sync Step Timer (every 3 seconds with user action cooldown) ──
+    let _isSyncingStep = false
     const _syncStepWithServer = async () => {
         const pid = activePlantId.value
-        if (!pid || !batchRunning.value || !selectedBatchId.value) return
+        if (!pid || !batchRunning.value || !selectedBatchId.value || _isSyncingStep) return
+        if (typeof document !== 'undefined' && document.hidden) return
+        // Do not override if user clicked/confirmed step within last 4 seconds
+        if (Date.now() - _lastUserStepAction < 4000) return
+        _isSyncingStep = true
         try {
-            const statusData = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/recipe-status`, {
+            const statusData = await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${pid}/recipe-status`, {
                 headers: getAuthHeader() as Record<string, string>
             })
             const activeSeq = Number(statusData?.target?.active_step ?? 0)
@@ -3442,6 +3464,9 @@ onMounted(() => {
                 }
             }
         } catch { /* API offline — keep current UI step */ }
+        finally {
+            _isSyncingStep = false
+        }
     }
     if (_stepSyncInterval) clearInterval(_stepSyncInterval)
     _stepSyncInterval = setInterval(_syncStepWithServer, 3000)
@@ -3450,8 +3475,9 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
     document.removeEventListener('visibilitychange', _onVisibilityChange)
-    if (heartbeatInterval) clearInterval(heartbeatInterval)
-    if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
+    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
+    if (_telemetryPollInterval) { clearInterval(_telemetryPollInterval); _telemetryPollInterval = null }
+    if (_stepSyncInterval) { clearInterval(_stepSyncInterval); _stepSyncInterval = null }
     offMessage(handlePlcMessage)
     stopStampRefresh()
     disconnect()
