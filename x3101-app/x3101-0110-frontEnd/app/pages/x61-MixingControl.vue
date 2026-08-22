@@ -1992,70 +1992,41 @@ const formatDuration = (sec: number) => {
 const stepTableScroll = ref<HTMLElement | null>(null)
 
 const scrollToActiveStep = async () => {
-    // 1. Always expand the phase of the target active step first so it is visible in the DOM
     const targetIdx = currentStepIndex.value ?? localStepIndex.value ?? 0
     const step = skuSteps.value[targetIdx]
     if (step && step.phase_number) {
         expandedPhases.value[step.phase_number] = true
     }
 
-    // Wait 2 ticks for Vue reactivity + DOM to render/unhide
-    await nextTick()
     await nextTick()
 
     const scrollContainer = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
-    const el = (document.querySelector('.active-step') || document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
+    const el = (scrollContainer ? (scrollContainer.querySelector(`[data-step-idx="${targetIdx}"]`) || scrollContainer.querySelector('.active-step')) : document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
 
-    if (!el || !scrollContainer) {
-        // Retry once more after short delay in case data or table rows are still rendering
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    } else {
         setTimeout(async () => {
             await nextTick()
-            const el2 = (document.querySelector('.active-step') || document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
             const container2 = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
-            if (el2 && container2) doScroll(el2, container2)
-        }, 300)
-        return
-    }
-    doScroll(el, scrollContainer)
-}
-
-const doScroll = (el: HTMLElement, container: HTMLElement) => {
-    try {
-        const containerRect = container.getBoundingClientRect()
-        const elRect = el.getBoundingClientRect()
-
-        // Calculate offset of target element relative to scroll container
-        const relativeTop = elRect.top - containerRect.top + container.scrollTop
-        // Subtract a portion of container height so row is comfortably centered/visible below sticky header
-        const targetScrollTop = Math.max(0, relativeTop - Math.floor(container.clientHeight / 3))
-
-        container.scrollTo({
-            top: targetScrollTop,
-            behavior: 'smooth'
-        })
-        console.log(`[Scroll] ✅ Scrolled container to scrollTop=${targetScrollTop.toFixed(0)} for active step`)
-    } catch (e) {
-        console.warn('[Scroll] Direct container scroll failed, fallback to scrollIntoView:', e)
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            const el2 = (container2 ? (container2.querySelector(`[data-step-idx="${targetIdx}"]`) || container2.querySelector('.active-step')) : document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
+            if (el2) el2.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 200)
     }
 }
 
 // Ensure active step expands and scrolls into view when currentStepIndex changes
 watch(currentStepIndex, (newIdx, oldIdx) => {
-    // Skip if no data loaded yet (fires immediately on mount when skuSteps is empty)
     if (skuSteps.value.length === 0) return
     if (newIdx < skuSteps.value.length) {
-        // Sync localStepIndex with the active step index driven by PLC telemetry
         localStepIndex.value = newIdx
         const step = skuSteps.value[newIdx]
         if (step) expandedPhases.value[step.phase_number || '0'] = true
-        // Persist latest step -> instant restore on refresh (no MQTT wait)
         if (selectedBatchId.value && newIdx > 0) {
             try { localStorage.setItem("stepIdx_" + selectedBatchId.value, String(newIdx)) } catch (e) {}
         }
         if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
-        
-        // Reset confirm/bypass flags and pulse run command (1) for 3 seconds when step index advances
+
         if (oldIdx !== undefined && newIdx > oldIdx) {
             plcHmiCommand.value = 1
             setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
@@ -2065,17 +2036,16 @@ watch(currentStepIndex, (newIdx, oldIdx) => {
     }
 }, { immediate: true })
 
-// Trigger scroll when skuSteps first loads (restore case where currentStepIndex
-// stays at the same value so watch above doesn't fire again)
-watch(() => skuSteps.value.length, (newLen, oldLen) => {
+// Trigger scroll when skuSteps first loads
+watch(() => skuSteps.value.length, async (newLen, oldLen) => {
     if (newLen > 0 && oldLen === 0) {
         const idx = currentStepIndex.value
         if (idx < newLen) {
             const step = skuSteps.value[idx]
             if (step) expandedPhases.value[step.phase_number || '0'] = true
         }
-        // Wait for DOM render before scrolling (after refresh DOM not ready yet)
-        nextTick(() => setTimeout(() => scrollToActiveStep(), 1500))
+        await nextTick()
+        scrollToActiveStep()
     }
 })
 
