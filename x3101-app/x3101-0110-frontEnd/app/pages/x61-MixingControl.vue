@@ -1939,28 +1939,52 @@ const formatDuration = (sec: number) => {
 const stepTableScroll = ref<HTMLElement | null>(null)
 
 const scrollToActiveStep = async () => {
-    // Wait 2 ticks for Vue reactive + DOM render to complete
+    // 1. Always expand the phase of the target active step first so it is visible in the DOM
+    const targetIdx = currentStepIndex.value ?? localStepIndex.value ?? 0
+    const step = skuSteps.value[targetIdx]
+    if (step && step.phase_number) {
+        expandedPhases.value[step.phase_number] = true
+    }
+
+    // Wait 2 ticks for Vue reactivity + DOM to render/unhide
     await nextTick()
     await nextTick()
-    const el = document.querySelector('.active-step') as HTMLElement | null
-    if (!el) {
-        // Retry once more after short delay in case data is still rendering
+
+    const scrollContainer = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
+    const el = (document.querySelector('.active-step') || document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
+
+    if (!el || !scrollContainer) {
+        // Retry once more after short delay in case data or table rows are still rendering
         setTimeout(async () => {
             await nextTick()
-            const el2 = document.querySelector('.active-step') as HTMLElement | null
-            if (el2) doScroll(el2)
-        }, 500)
+            const el2 = (document.querySelector('.active-step') || document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
+            const container2 = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
+            if (el2 && container2) doScroll(el2, container2)
+        }, 300)
         return
     }
-    doScroll(el)
+    doScroll(el, scrollContainer)
 }
 
-const doScroll = (el: HTMLElement) => {
-    // Use scrollIntoView — works correctly at all positions (near top, middle, bottom)
-    const rect = el.getBoundingClientRect()
-    const inView = rect.top >= 80 && rect.bottom <= (window.innerHeight - 80)
-    el.scrollIntoView({ behavior: 'smooth', block: inView ? 'nearest' : 'center' })
-    console.log('[Scroll] scrollIntoView block:', inView ? 'nearest' : 'center')
+const doScroll = (el: HTMLElement, container: HTMLElement) => {
+    try {
+        const containerRect = container.getBoundingClientRect()
+        const elRect = el.getBoundingClientRect()
+
+        // Calculate offset of target element relative to scroll container
+        const relativeTop = elRect.top - containerRect.top + container.scrollTop
+        // Subtract a portion of container height so row is comfortably centered/visible below sticky header
+        const targetScrollTop = Math.max(0, relativeTop - Math.floor(container.clientHeight / 3))
+
+        container.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth'
+        })
+        console.log(`[Scroll] ✅ Scrolled container to scrollTop=${targetScrollTop.toFixed(0)} for active step`)
+    } catch (e) {
+        console.warn('[Scroll] Direct container scroll failed, fallback to scrollIntoView:', e)
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
 }
 
 // Ensure active step expands and scrolls into view when currentStepIndex changes
@@ -3801,7 +3825,8 @@ onUnmounted(() => {
                   </tr>
                   <template v-for="step in phaseGroup.steps" :key="step.id">
                     <tr v-show="isPhaseExpanded(phaseGroup.phase)"
-                      :class="['step-row', { 'active-step': currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) }]">
+                      :class="['step-row', { 'active-step': currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) }]"
+                      :data-step-idx="skuSteps.findIndex(s => s.id === step.id)">
                       <td class="text-center" :class="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) ? 'text-weight-bolder' : 'text-grey-6'">{{ phaseGroup.phase }}</td>
                       <td class="text-center text-weight-bold" style="color: #424242;">{{ step.sub_step }}</td>
                       <td class="text-weight-bold">
