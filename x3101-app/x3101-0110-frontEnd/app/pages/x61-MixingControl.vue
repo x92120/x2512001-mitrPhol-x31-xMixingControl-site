@@ -3465,34 +3465,6 @@ onMounted(() => {
     _telemetryPollInterval = setInterval(_pollTelemetry, 350)
     _pollTelemetry()
 
-    // ── Multi-Client Auto-Sync Step Timer (every 3 seconds with user action cooldown) ──
-    let _isSyncingStep = false
-    const _syncStepWithServer = async () => {
-        const pid = activePlantId.value
-        if (!pid || !batchRunning.value || !selectedBatchId.value || _isSyncingStep) return
-        if (typeof document !== 'undefined' && document.hidden) return
-        // Do not override if user clicked/confirmed step within last 4 seconds
-        if (Date.now() - _lastUserStepAction < 4000) return
-        _isSyncingStep = true
-        try {
-            const statusData = await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${pid}/recipe-status`, {
-                headers: getAuthHeader() as Record<string, string>
-            })
-            const activeSeq = Number(statusData?.target?.active_step ?? 0)
-            if (activeSeq > 0 && skuSteps.value.length > 0) {
-                const idx = skuSteps.value.findIndex(s => Number(s.id) === activeSeq)
-                if (idx !== -1 && idx !== localStepIndex.value) {
-                    console.log(`[StepSync] 🔄 Multi-client sync: step updated from server (${localStepIndex.value} -> ${idx})`)
-                    localStepIndex.value = idx
-                }
-            }
-        } catch { /* API offline — keep current UI step */ }
-        finally {
-            _isSyncingStep = false
-        }
-    }
-    if (_stepSyncInterval) clearInterval(_stepSyncInterval)
-    _stepSyncInterval = setInterval(_syncStepWithServer, 3000)
 })
 
 onUnmounted(() => {
