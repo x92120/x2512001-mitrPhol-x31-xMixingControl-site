@@ -4,10 +4,6 @@ import { appConfig } from '~/appConfig/config'
 import { useRoute, useRouter } from 'vue-router'
 import { useMQTT } from '~/composables/useMQTT'
 
-// ── Global API & State Base ──
-const remoteApiBaseUrl = computed(() => appConfig.apiBaseUrl)
-let _lastUserStepAction = 0  // Timestamp of last manual step change to prevent multi-client sync race
-
 // ── PLC Step Descriptions ──
 const plcStepDescriptions: Record<number, string> = {
   0: "Stand By",
@@ -48,15 +44,15 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
   switch (phaseType) {
     case 1: // A1010 — Auto Batching Major (Fill from pipe: IBC/LS/MIS/RO)
       if ([10010, 10020, 10030, 10040].includes(actionCode)) return 2  // Start Program — auto batching
-      if ([30010, 20040].includes(actionCode))               return 4  // Fill Major Ingredient — manual add (Sugar)
+      if ([30010, 20040].includes(actionCode))               return 14 // Fill Minor — manual add
       return 2  // default: auto batching
     case 2: // A1020 — High Shear / Pre-blend
-      return 6   // Fill Major Done — High Shear running
+      return 14  // Fill Major Done — High Shear running
     case 3: // D1010 — Dissolve Tank 1
       if (actionCode === 20020) return 9   // Waiting First Confirm (กลั้วภาชนะ)
-      return 8   // Preblending — dissolve active
+      return 18  // Preblending — dissolve active
     case 4: // D1030 — Dissolve Tank 2
-      return 10  // First Confirm — secondary dissolve
+      return 18  // First Confirm — secondary dissolve
     case 5: // x1010 — Heating Phase
       if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
       if (actionCode === 30500) {
@@ -511,7 +507,6 @@ const fetchStampTimes = async (batchId: string) => {
         // cross-phase contamination (many phases share the same sub_step number)
         const stampByKey: Record<string, string> = {}    // `${phase_id}__${step_id}` → latest ts
         const actualByKey: Record<string, number | null> = {}  // same key → actual_value (weight)
-        const tempByKey: Record<string, number | null> = {}    // same key → actual_temp
         const normPnum = (s: string) => s ? s.replace(/^(p)(0+)/, (_: any, p: string) => p) : s
 
         for (const log of logs) {
@@ -533,7 +528,6 @@ const fetchStampTimes = async (batchId: string) => {
                     stampByKey[k] = ts
                     // actual_value = weight recorded by worker_handshake at step completion
                     actualByKey[k] = log.actual_value != null ? Number(log.actual_value) : null
-                    tempByKey[k] = log.actual_temp != null ? Number(log.actual_temp) : null
                 }
             }
         }
@@ -575,7 +569,6 @@ const fetchStampTimes = async (batchId: string) => {
                     // Merge actual_value from DB logs — this is the persistent source of truth.
                     // PLC DB15x7 is cleared on reset; DB logs survive reset.
                     actual_volume: logActual != null ? logActual : step.actual_volume,
-                    actual_temp: tempByKey[matchKey] != null ? tempByKey[matchKey] : step.actual_temp,
                     actual_brix: qc.brix !== undefined ? qc.brix : step.actual_brix,
                     actual_ph: qc.ph !== undefined ? qc.ph : step.actual_ph,
                 }
@@ -1037,7 +1030,6 @@ const confirmQcCheck = async () => {
 }
 
 const sendStepToPLC = (index: number) => {
-    _lastUserStepAction = Date.now()
     const s = skuSteps.value[index]
     if (!s) return;
     
@@ -1068,12 +1060,7 @@ const sendStepToPLC = (index: number) => {
         // Phase type + action code (for PLC interlock)
         Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? Number((s as any).phase_type_code || 0),
         Action_Code: Number((s as any).action_code || 0),
-        Recipe_Z: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
-          Number((s as any).action_code || 0),
-          Number((s as any).temperature || 0),
-          Number((s as any).step_time || 0)
-        ),
+        Recipe_Z: Number((s as any).plc_step_no || 0),
         Step_OF_PLC: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
           Number((s as any).action_code || 0),
@@ -1246,7 +1233,7 @@ const clearQcRecords = async (batchId: string) => {
 const killBatch = () => {
     $q.dialog({
         title: 'Confirm Kill Batch',
-        message: `Are you sure you want to completely clear the PLC memory and reset all batch records for Plant ${activePlantId.value}? This cannot be undone.`,
+        message: `Are you sure you want to completely clear the PLC memory for Plant ${activePlantId.value} and force all data to 0? This cannot be undone.`,
         cancel: true,
         persistent: true,
         color: 'negative'
@@ -1254,63 +1241,29 @@ const killBatch = () => {
         const batchId = selectedBatchId.value
         try {
             $q.loading.show()
-            const remoteApiBaseUrl = appConfig.apiBaseUrl
-
-            // 1. Clear QC records and LocalStorage cache
-            if (batchId) {
-                await clearQcRecords(batchId)
-                try { localStorage.removeItem('stepIdx_' + batchId) } catch {}
-                try { localStorage.removeItem('stepIdx_' + batchId.trim()) } catch {}
-                // Wipe step logs, batch status, and batch cache in DB
-                try {
-                    await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${batchId}`, {
-                        method: 'POST',
-                        headers: getAuthHeader() as Record<string, string>
-                    })
-                } catch (rErr) {
-                    console.warn('[killBatch] reset-batch warning:', rErr)
-                }
-            }
-
-            // 2. Clear PLC memory to 0
-            await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
+            // Clear QC records first (non-fatal)
+            if (batchId) await clearQcRecords(batchId)
+            await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
                 method: 'POST',
                 headers: getAuthHeader() as Record<string, string>
             })
-
-            // 3. Send ABORT to PLC
+            
+            // Send ABORT just to be safe
             publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
             batchRunning.value = false
-
-            // 4. Reset ALL frontend reactive states
-            localStepIndex.value = 0
+            
+            // Reset the frontend state
             batchInfo.value = null
             selectedBatchId.value = null
             selectedSkuId.value = null
             skuSteps.value = []
             startConfirmed.value = false
-            scannedVolumeMap.value = {}
-            prebatchWeightMap.value = {}
-            prebatchIdMap.value = {}
-            prebatchWhMap.value = {}
-
-            // 5. Clear stale telemetry cache
-            const pid = activePlantId.value
-            if (plantsData.value[pid]) {
-                plantsData.value[pid] = {
-                    ...plantsData.value[pid],
-                    Phase_ID: '', Phase_id: '', phase_id: '',
-                    Step_ID: 0,  Step_id: 0,  step_id: 0,
-                    Batch_ID: '-', batch_id: '-',
-                    Current_Step: 0, current_step: 0,
-                }
-            }
-
-            // 6. Remove query params and navigate back
+            
+            // Remove query parameters
             const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
             router.replace({ query: newQuery })
-            $q.notify({ type: 'positive', message: `Batch Killed. PLC memory and data cleared for Plant ${activePlantId.value}.` })
-            router.push('/x60-CheckForProduction')
+            
+            $q.notify({ type: 'positive', message: `Batch Killed. PLC memory cleared for Plant ${activePlantId.value}.` })
         } catch (e: any) {
             console.error('Failed to kill batch:', e)
             $q.notify({ type: 'negative', message: 'Failed to clear PLC recipe data.' })
@@ -1335,22 +1288,18 @@ const softResetBatch = () => {
         const batchId = selectedBatchId.value
         try {
             $q.loading.show()
-            // 1. Clear LocalStorage step tracker
-            if (batchId) {
-                try { localStorage.removeItem('stepIdx_' + batchId) } catch {}
-                try { localStorage.removeItem('stepIdx_' + batchId.trim()) } catch {}
-                await clearQcRecords(batchId)
-            }
+            // Clear QC records first (non-fatal)
+            if (batchId) await clearQcRecords(batchId)
             const remoteApiBaseUrl = appConfig.apiBaseUrl
             const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${selectedBatchId.value}`, {
                 method: 'POST',
                 headers: getAuthHeader() as Record<string, string>
             })
-
+            
             if (res && (res.status === 'success' || res.status === 'partial')) {
                 $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory, step logs, and QC records cleared.' })
-
-                // 2. Reset ALL frontend reactive states
+                
+                // Reset ALL step-tracking state before navigating away
                 localStepIndex.value = 0
                 batchRunning.value = false
                 batchInfo.value = null
@@ -1358,12 +1307,8 @@ const softResetBatch = () => {
                 selectedSkuId.value = null
                 skuSteps.value = []
                 startConfirmed.value = false
-                scannedVolumeMap.value = {}
-                prebatchWeightMap.value = {}
-                prebatchIdMap.value = {}
-                prebatchWhMap.value = {}
 
-                // 3. Clear stale telemetry cache
+                // ── Clear stale MQTT telemetry immediately ──────────────────────────────
                 const pid = activePlantId.value
                 if (plantsData.value[pid]) {
                     plantsData.value[pid] = {
@@ -1374,8 +1319,7 @@ const softResetBatch = () => {
                         Current_Step: 0, current_step: 0,
                     }
                 }
-
-                // 4. Remove query params & return to Check-for-Production
+                
                 const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
                 router.replace({ query: newQuery })
                 router.push('/x60-CheckForProduction')
@@ -1629,7 +1573,6 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
 }
 
 const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
-    _lastUserStepAction = Date.now()
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
         return
@@ -1738,17 +1681,6 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Material_ID: step.mat_sap_code || '',
         Re_Code_ID: step.re_code || '',
         Req_Qty: productionRequire(step),
-        Actual_Qty: (() => {
-            const live = getStepLiveWeight(step)
-            if (live != null && live > 0) return Number(Number(live).toFixed(2))
-            const rc = String(step.re_code || '').trim()
-            if (scannedVolumeMap.value[rc] != null) return Number(Number(scannedVolumeMap.value[rc]).toFixed(2))
-            if (prebatchWeightMap.value[rc] != null) return Number(Number(prebatchWeightMap.value[rc]).toFixed(2))
-            return undefined
-        })(),
-        Actual_Temp: actualTankTemp.value > 0 ? Number(Number(actualTankTemp.value).toFixed(2)) : undefined,
-        Actual_Agitator: actualAgitatorRpm.value > 0 ? Number(Number(actualAgitatorRpm.value).toFixed(2)) : undefined,
-        Actual_HighShear: actualHighShearRpm.value > 0 ? Number(Number(actualHighShearRpm.value).toFixed(2)) : undefined,
         TT_SP: [Number(step.temperature || 0)],
         Agitator_Speed: Number(step.agitator_rpm || 0),
         High_Shear_SP: Number(step.high_shear_rpm || 0),
@@ -1756,12 +1688,7 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         Brix_Target: Number(step.brix_sp || 0),
         Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? Number((step as any).phase_type_code || 0),
         Action_Code: Number((step as any).action_code || 0),
-        Recipe_Z: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
-          Number((step as any).action_code || 0),
-          Number((step as any).temperature || 0),
-          Number((step as any).step_time || 0)
-        ),
+        Recipe_Z: Number((step as any).plc_step_no || 0),
         Step_OF_PLC: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
           Number((step as any).action_code || 0),
@@ -2006,41 +1933,46 @@ const formatDuration = (sec: number) => {
 const stepTableScroll = ref<HTMLElement | null>(null)
 
 const scrollToActiveStep = async () => {
-    const targetIdx = currentStepIndex.value ?? localStepIndex.value ?? 0
-    const step = skuSteps.value[targetIdx]
-    if (step && step.phase_number) {
-        expandedPhases.value[step.phase_number] = true
-    }
-
+    // Wait 2 ticks for Vue reactive + DOM render to complete
     await nextTick()
-
-    const scrollContainer = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
-    const el = (scrollContainer ? (scrollContainer.querySelector(`[data-step-idx="${targetIdx}"]`) || scrollContainer.querySelector('.active-step')) : document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
-
-    if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    } else {
+    await nextTick()
+    const el = document.querySelector('.active-step') as HTMLElement | null
+    if (!el) {
+        // Retry once more after short delay in case data is still rendering
         setTimeout(async () => {
             await nextTick()
-            const container2 = stepTableScroll.value || (document.querySelector('.scroll') as HTMLElement | null)
-            const el2 = (container2 ? (container2.querySelector(`[data-step-idx="${targetIdx}"]`) || container2.querySelector('.active-step')) : document.querySelector(`[data-step-idx="${targetIdx}"]`)) as HTMLElement | null
-            if (el2) el2.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        }, 200)
+            const el2 = document.querySelector('.active-step') as HTMLElement | null
+            if (el2) doScroll(el2)
+        }, 500)
+        return
     }
+    doScroll(el)
+}
+
+const doScroll = (el: HTMLElement) => {
+    // Use scrollIntoView — works correctly at all positions (near top, middle, bottom)
+    const rect = el.getBoundingClientRect()
+    const inView = rect.top >= 80 && rect.bottom <= (window.innerHeight - 80)
+    el.scrollIntoView({ behavior: 'smooth', block: inView ? 'nearest' : 'center' })
+    console.log('[Scroll] scrollIntoView block:', inView ? 'nearest' : 'center')
 }
 
 // Ensure active step expands and scrolls into view when currentStepIndex changes
 watch(currentStepIndex, (newIdx, oldIdx) => {
+    // Skip if no data loaded yet (fires immediately on mount when skuSteps is empty)
     if (skuSteps.value.length === 0) return
     if (newIdx < skuSteps.value.length) {
+        // Sync localStepIndex with the active step index driven by PLC telemetry
         localStepIndex.value = newIdx
         const step = skuSteps.value[newIdx]
         if (step) expandedPhases.value[step.phase_number || '0'] = true
+        // Persist latest step -> instant restore on refresh (no MQTT wait)
         if (selectedBatchId.value && newIdx > 0) {
             try { localStorage.setItem("stepIdx_" + selectedBatchId.value, String(newIdx)) } catch (e) {}
         }
         if (newIdx !== oldIdx || oldIdx === undefined) scrollToActiveStep()
-
+        
+        // Reset confirm/bypass flags and pulse run command (1) for 3 seconds when step index advances
         if (oldIdx !== undefined && newIdx > oldIdx) {
             plcHmiCommand.value = 1
             setTimeout(() => { plcHmiCommand.value = 2 }, 3000)
@@ -2050,16 +1982,17 @@ watch(currentStepIndex, (newIdx, oldIdx) => {
     }
 }, { immediate: true })
 
-// Trigger scroll when skuSteps first loads
-watch(() => skuSteps.value.length, async (newLen, oldLen) => {
+// Trigger scroll when skuSteps first loads (restore case where currentStepIndex
+// stays at the same value so watch above doesn't fire again)
+watch(() => skuSteps.value.length, (newLen, oldLen) => {
     if (newLen > 0 && oldLen === 0) {
         const idx = currentStepIndex.value
         if (idx < newLen) {
             const step = skuSteps.value[idx]
             if (step) expandedPhases.value[step.phase_number || '0'] = true
         }
-        await nextTick()
-        scrollToActiveStep()
+        // Wait for DOM render before scrolling (after refresh DOM not ready yet)
+        nextTick(() => setTimeout(() => scrollToActiveStep(), 1500))
     }
 })
 
@@ -2442,27 +2375,51 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
-// Watch PLC active batch changes — only triggers when telemetry is live and a real external change occurs
-let _mountGracePeriod = true
-setTimeout(() => { _mountGracePeriod = false }, 4000)
-
 watch([plcActiveBatchId, () => loading.value], async ([plcBatchId, newLoading]) => {
-    if (newLoading || _mountGracePeriod) return
-
+    if (newLoading) return
+    
     if (!selectedBatchId.value) {
-        // If no batch selected in UI, but PLC has an active batch, auto-restore
         if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
             console.log('Detected active batch on PLC, restoring:', plcBatchId)
             restoreBatchFromPlc(plcBatchId)
         }
     } else {
-        // If batch is selected, only act if telemetry is confirmed active AND PLC batch genuinely changed to a DIFFERENT valid batch
-        if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0' && plcBatchId !== selectedBatchId.value) {
-            console.log(`PLC active batch switched from ${selectedBatchId.value} to ${plcBatchId}`)
-            restoreBatchFromPlc(plcBatchId)
+        // If a batch is currently selected, but PLC active batch ID has changed or been cleared
+        if (plcBatchId !== selectedBatchId.value) {
+            console.log(`PLC active batch ID (${plcBatchId}) differs from selected (${selectedBatchId.value})`)
+            // Fetch status of the selected batch from DB to see if it was reset
+            try {
+                const remoteApiBaseUrl = appConfig.apiBaseUrl
+                const batch = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/${selectedBatchId.value}`, {
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                if (batch && (batch.status === 'Pending' || plcBatchId === '-' || plcBatchId === '')) {
+                    $q.notify({
+                        type: 'warning',
+                        message: 'PLC batch was cleared or reset. Returning to production check screen.',
+                        position: 'top'
+                    })
+                    // Clear local states
+                    localStepIndex.value = 0
+                    batchRunning.value = false
+                    batchInfo.value = null
+                    selectedBatchId.value = null
+                    selectedSkuId.value = null
+                    skuSteps.value = []
+                    startConfirmed.value = false
+                 scannedVolumeMap.value = {}
+                    
+                    // Remove query parameters and redirect
+                    const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query
+                    router.replace({ query: newQuery })
+                    router.push('/x60-CheckForProduction')
+                }
+            } catch (err) {
+                console.warn('Failed to fetch batch status in watch:', err)
+            }
         }
     }
-})
+}, { immediate: true })
 
 // ── Standard Recipe Weights ──
 const standardRecipeTotal = computed(() => {
@@ -3409,16 +3366,12 @@ onMounted(() => {
     // Register visibilitychange only on client side (not SSR)
     document.addEventListener('visibilitychange', _onVisibilityChange)
 
-    // Poll DB15x2 live telemetry (concurrency-guarded, S7 PUT-GET — no MQTT latency)
-    let _isPollingTelemetry = false
+    // Poll DB15x2 live telemetry every 500ms (S7 PUT-GET — no MQTT latency)
     const _pollTelemetry = async () => {
         const pid = activePlantId.value
-        if (!pid || _isPollingTelemetry) return
-        if (typeof document !== 'undefined' && document.hidden) return
-        _isPollingTelemetry = true
+        if (!pid) return
         try {
-            const baseUrl = appConfig.apiBaseUrl
-            const t = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/telemetry-live`)
+            const t = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/telemetry-live`)
             if (!t || t.error) return
             const prev = plantsData.value[pid] || {}
             plantsData.value = {
@@ -3435,9 +3388,6 @@ onMounted(() => {
                 }
             }
         } catch { /* PLC offline — keep last value */ }
-        finally {
-            _isPollingTelemetry = false
-        }
 
         // ── A1020/10010 RO-Water auto-advance check ──────────────────────
         if (_roWatchActive && !_roAdvancedOnce) {
@@ -3451,23 +3401,19 @@ onMounted(() => {
                 const nextIdx   = _roStepIdx + 1
                 console.log(`[AutoRO] weight gained=${gained.toFixed(1)}/${req} → sendStepToPLC(${nextIdx})`)
                 localStepIndex.value = nextIdx
-                _lastUserStepAction = Date.now()
                 // Log this auto-advanced step to backend (A1020/RO-Water = no PLC step_complete signal)
-                const currentBatchId = activeBatchId.value || selectedBatchId.value
-                if (currentBatchId) {
-                    $fetch(`${appConfig.apiBaseUrl}/production-batches/${currentBatchId}/log-step`, {
-                        method: 'POST',
-                        body: {
-                            phase_id:     String(roStep?.phase_number ?? roStep?.phase_id ?? ''),
-                            step_id:      Number(roStep?.sub_step ?? 10),
-                            action_code:  String(roStep?.action_code ?? '10010'),
-                            re_code:      String(roStep?.re_code ?? 'RO-Water'),
-                            target_value: req,
-                            actual_value: parseFloat(gained.toFixed(2)),
-                            actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
-                        }
-                    }).catch(e => console.warn('[AutoRO] log-step failed:', e))
-                }
+                $fetch(`${remoteApiBaseUrl}/production-batches/${activeBatchId.value}/log-step`, {
+                    method: 'POST',
+                    body: {
+                        phase_id:     String(roStep?.phase_number ?? roStep?.phase_id ?? ''),
+                        step_id:      Number(roStep?.sub_step ?? 10),
+                        action_code:  String(roStep?.action_code ?? '10010'),
+                        re_code:      String(roStep?.re_code ?? 'RO-Water'),
+                        target_value: req,
+                        actual_value: parseFloat(gained.toFixed(2)),
+                        actual_temp:  parseFloat((plantsData.value[activePlantId.value]?.Mixing_Tank_Temperature ?? 0).toFixed(2))
+                    }
+                }).catch(e => console.warn('[AutoRO] log-step failed:', e))
                 try { $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, { method: 'POST', headers: getAuthHeader() }); console.log('[AutoRO] Triggered Step_complete'); } catch (e) { console.error('[AutoRO] Failed Step_complete', e); }
                 setTimeout(() => sendStepToPLC(nextIdx), 1000) // หน่วงเวลาให้ PLC รับ Step_complete
             }
@@ -3476,17 +3422,36 @@ onMounted(() => {
     }
     if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
     if (_stepSyncInterval) clearInterval(_stepSyncInterval)
-    _telemetryPollInterval = setInterval(_pollTelemetry, 350)
+    _telemetryPollInterval = setInterval(_pollTelemetry, 200)
     _pollTelemetry()
 
+    // ── Multi-Client Auto-Sync Step Timer (every 3 seconds) ──────────────
+    const _syncStepWithServer = async () => {
+        const pid = activePlantId.value
+        if (!pid || !batchRunning.value || !selectedBatchId.value) return
+        try {
+            const statusData = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/recipe-status`, {
+                headers: getAuthHeader() as Record<string, string>
+            })
+            const activeSeq = Number(statusData?.target?.active_step ?? 0)
+            if (activeSeq > 0 && skuSteps.value.length > 0) {
+                const idx = skuSteps.value.findIndex(s => Number(s.id) === activeSeq)
+                if (idx !== -1 && idx !== localStepIndex.value) {
+                    console.log(`[StepSync] 🔄 Multi-client sync: step updated from server (${localStepIndex.value} -> ${idx})`)
+                    localStepIndex.value = idx
+                }
+            }
+        } catch { /* API offline — keep current UI step */ }
+    }
+    if (_stepSyncInterval) clearInterval(_stepSyncInterval)
+    _stepSyncInterval = setInterval(_syncStepWithServer, 3000)
 })
 
 onUnmounted(() => {
     window.removeEventListener('keydown', handleGlobalKeydown)
     document.removeEventListener('visibilitychange', _onVisibilityChange)
-    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
-    if (_telemetryPollInterval) { clearInterval(_telemetryPollInterval); _telemetryPollInterval = null }
-    if (_stepSyncInterval) { clearInterval(_stepSyncInterval); _stepSyncInterval = null }
+    if (heartbeatInterval) clearInterval(heartbeatInterval)
+    if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
     offMessage(handlePlcMessage)
     stopStampRefresh()
     disconnect()
@@ -3810,8 +3775,7 @@ onUnmounted(() => {
                   </tr>
                   <template v-for="step in phaseGroup.steps" :key="step.id">
                     <tr v-show="isPhaseExpanded(phaseGroup.phase)"
-                      :class="['step-row', { 'active-step': currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) }]"
-                      :data-step-idx="skuSteps.findIndex(s => s.id === step.id)">
+                      :class="['step-row', { 'active-step': currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) }]">
                       <td class="text-center" :class="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step)) ? 'text-weight-bolder' : 'text-grey-6'">{{ phaseGroup.phase }}</td>
                       <td class="text-center text-weight-bold" style="color: #424242;">{{ step.sub_step }}</td>
                       <td class="text-weight-bold">

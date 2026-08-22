@@ -667,13 +667,20 @@ def _on_step_cmd_message(client, userdata, message):
             f"| Phase={phase_id} | Step={step_id} | re_code={re_code} | qty={target_val}"
         )
 
-        # Extract Actual_Qty from payload if provided
+        # Extract Actual_Qty and Actual_Temp from payload if provided
         actual_qty_val = payload.get("Actual_Qty")
         if actual_qty_val is not None:
             try:
                 actual_qty_val = float(actual_qty_val)
             except Exception:
                 actual_qty_val = None
+
+        actual_temp_val = payload.get("Actual_Temp")
+        if actual_temp_val is not None:
+            try:
+                actual_temp_val = float(actual_temp_val)
+            except Exception:
+                actual_temp_val = None
 
         # Log to database synchronously (this runs in a thread, so sync DB is fine)
         _sync_log_step_cmd(
@@ -685,6 +692,7 @@ def _on_step_cmd_message(client, userdata, message):
             re_code=re_code,
             target_value=target_val,
             actual_value=actual_qty_val,
+            actual_temp=actual_temp_val,
         )
 
     except Exception as e:
@@ -700,6 +708,7 @@ def _sync_log_step_cmd(
     re_code: str,
     target_value: float,
     actual_value: float = None,
+    actual_temp: float = None,
 ):
     """Write operator step command to production_step_logs."""
     db: Session = SessionLocal()
@@ -782,15 +791,27 @@ def _sync_log_step_cmd(
             else:
                 actual_val = target_value
 
+        # If actual_temp not provided, read live telemetry
+        final_temp = actual_temp
+        if final_temp is None:
+            try:
+                from plc_service import read_telemetry
+                t_live = read_telemetry(plant_id)
+                if t_live and t_live.get('mix_tank_temp') is not None:
+                    final_temp = float(t_live['mix_tank_temp'])
+            except Exception:
+                pass
+
         db.execute(text("""
             INSERT INTO production_step_logs
                 (batch_id, phase_id, step_id, action_code, re_code,
-                 target_value, actual_value, completed_at, operator, operator2)
+                 target_value, actual_value, actual_temp, completed_at, operator, operator2)
             VALUES
                 (:batch_id, :phase_id, :step_id, :action_code, :re_code,
-                 :target_value, :actual_value, :completed_at, :operator, :operator2)
+                 :target_value, :actual_value, :actual_temp, :completed_at, :operator, :operator2)
             ON DUPLICATE KEY UPDATE
                 actual_value = VALUES(actual_value),
+                actual_temp  = VALUES(actual_temp),
                 completed_at = VALUES(completed_at),
                 operator     = VALUES(operator),
                 operator2    = VALUES(operator2)
@@ -802,6 +823,7 @@ def _sync_log_step_cmd(
             "re_code":     re_code,
             "target_value": target_value,
             "actual_value": actual_val,
+            "actual_temp":  final_temp,
             "completed_at": datetime.now(),
             "operator":    scan_user,
             "operator2":   active_user,
