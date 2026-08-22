@@ -51,12 +51,12 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
       if ([30010, 20040].includes(actionCode))               return 4  // Fill Major Ingredient — manual add (Sugar)
       return 2  // default: auto batching
     case 2: // A1020 — High Shear / Pre-blend
-      return 14  // Fill Major Done — High Shear running
+      return 6   // Fill Major Done — High Shear running
     case 3: // D1010 — Dissolve Tank 1
       if (actionCode === 20020) return 9   // Waiting First Confirm (กลั้วภาชนะ)
-      return 18  // Preblending — dissolve active
+      return 8   // Preblending — dissolve active
     case 4: // D1030 — Dissolve Tank 2
-      return 18  // First Confirm — secondary dissolve
+      return 10  // First Confirm — secondary dissolve
     case 5: // x1010 — Heating Phase
       if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
       if (actionCode === 30500) {
