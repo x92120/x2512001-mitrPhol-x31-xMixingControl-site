@@ -1243,7 +1243,7 @@ const clearQcRecords = async (batchId: string) => {
 const killBatch = () => {
     $q.dialog({
         title: 'Confirm Kill Batch',
-        message: `Are you sure you want to completely clear the PLC memory for Plant ${activePlantId.value} and force all data to 0? This cannot be undone.`,
+        message: `Are you sure you want to completely clear the PLC memory and reset all batch records for Plant ${activePlantId.value}? This cannot be undone.`,
         cancel: true,
         persistent: true,
         color: 'negative'
@@ -1251,29 +1251,63 @@ const killBatch = () => {
         const batchId = selectedBatchId.value
         try {
             $q.loading.show()
-            // Clear QC records first (non-fatal)
-            if (batchId) await clearQcRecords(batchId)
-            await $fetch<any>(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
+            const remoteApiBaseUrl = appConfig.apiBaseUrl
+
+            // 1. Clear QC records and LocalStorage cache
+            if (batchId) {
+                await clearQcRecords(batchId)
+                try { localStorage.removeItem('stepIdx_' + batchId) } catch {}
+                try { localStorage.removeItem('stepIdx_' + batchId.trim()) } catch {}
+                // Wipe step logs, batch status, and batch cache in DB
+                try {
+                    await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${batchId}`, {
+                        method: 'POST',
+                        headers: getAuthHeader() as Record<string, string>
+                    })
+                } catch (rErr) {
+                    console.warn('[killBatch] reset-batch warning:', rErr)
+                }
+            }
+
+            // 2. Clear PLC memory to 0
+            await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
                 method: 'POST',
                 headers: getAuthHeader() as Record<string, string>
             })
-            
-            // Send ABORT just to be safe
+
+            // 3. Send ABORT to PLC
             publishMessage(simCmdTopic(activePlantId.value, 'cmd'), { command: 'ABORT' })
             batchRunning.value = false
-            
-            // Reset the frontend state
+
+            // 4. Reset ALL frontend reactive states
+            localStepIndex.value = 0
             batchInfo.value = null
             selectedBatchId.value = null
             selectedSkuId.value = null
             skuSteps.value = []
             startConfirmed.value = false
-            
-            // Remove query parameters
+            scannedVolumeMap.value = {}
+            prebatchWeightMap.value = {}
+            prebatchIdMap.value = {}
+            prebatchWhMap.value = {}
+
+            // 5. Clear stale telemetry cache
+            const pid = activePlantId.value
+            if (plantsData.value[pid]) {
+                plantsData.value[pid] = {
+                    ...plantsData.value[pid],
+                    Phase_ID: '', Phase_id: '', phase_id: '',
+                    Step_ID: 0,  Step_id: 0,  step_id: 0,
+                    Batch_ID: '-', batch_id: '-',
+                    Current_Step: 0, current_step: 0,
+                }
+            }
+
+            // 6. Remove query params and navigate back
             const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
             router.replace({ query: newQuery })
-            
-            $q.notify({ type: 'positive', message: `Batch Killed. PLC memory cleared for Plant ${activePlantId.value}.` })
+            $q.notify({ type: 'positive', message: `Batch Killed. PLC memory and data cleared for Plant ${activePlantId.value}.` })
+            router.push('/x60-CheckForProduction')
         } catch (e: any) {
             console.error('Failed to kill batch:', e)
             $q.notify({ type: 'negative', message: 'Failed to clear PLC recipe data.' })
@@ -1298,18 +1332,22 @@ const softResetBatch = () => {
         const batchId = selectedBatchId.value
         try {
             $q.loading.show()
-            // Clear QC records first (non-fatal)
-            if (batchId) await clearQcRecords(batchId)
+            // 1. Clear LocalStorage step tracker
+            if (batchId) {
+                try { localStorage.removeItem('stepIdx_' + batchId) } catch {}
+                try { localStorage.removeItem('stepIdx_' + batchId.trim()) } catch {}
+                await clearQcRecords(batchId)
+            }
             const remoteApiBaseUrl = appConfig.apiBaseUrl
             const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/reset-batch/${selectedBatchId.value}`, {
                 method: 'POST',
                 headers: getAuthHeader() as Record<string, string>
             })
-            
+
             if (res && (res.status === 'success' || res.status === 'partial')) {
                 $q.notify({ type: 'positive', message: 'Batch soft reset completed. PLC memory, step logs, and QC records cleared.' })
-                
-                // Reset ALL step-tracking state before navigating away
+
+                // 2. Reset ALL frontend reactive states
                 localStepIndex.value = 0
                 batchRunning.value = false
                 batchInfo.value = null
@@ -1317,8 +1355,12 @@ const softResetBatch = () => {
                 selectedSkuId.value = null
                 skuSteps.value = []
                 startConfirmed.value = false
+                scannedVolumeMap.value = {}
+                prebatchWeightMap.value = {}
+                prebatchIdMap.value = {}
+                prebatchWhMap.value = {}
 
-                // ── Clear stale MQTT telemetry immediately ──────────────────────────────
+                // 3. Clear stale telemetry cache
                 const pid = activePlantId.value
                 if (plantsData.value[pid]) {
                     plantsData.value[pid] = {
@@ -1329,7 +1371,8 @@ const softResetBatch = () => {
                         Current_Step: 0, current_step: 0,
                     }
                 }
-                
+
+                // 4. Remove query params & return to Check-for-Production
                 const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
                 router.replace({ query: newQuery })
                 router.push('/x60-CheckForProduction')
