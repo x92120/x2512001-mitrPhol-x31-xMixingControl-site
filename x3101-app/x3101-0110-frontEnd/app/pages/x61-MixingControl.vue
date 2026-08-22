@@ -48,7 +48,7 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
   switch (phaseType) {
     case 1: // A1010 — Auto Batching Major (Fill from pipe: IBC/LS/MIS/RO)
       if ([10010, 10020, 10030, 10040].includes(actionCode)) return 2  // Start Program — auto batching
-      if ([30010, 20040].includes(actionCode))               return 14 // Fill Minor — manual add
+      if ([30010, 20040].includes(actionCode))               return 4  // Fill Major Ingredient — manual add (Sugar)
       return 2  // default: auto batching
     case 2: // A1020 — High Shear / Pre-blend
       return 14  // Fill Major Done — High Shear running
