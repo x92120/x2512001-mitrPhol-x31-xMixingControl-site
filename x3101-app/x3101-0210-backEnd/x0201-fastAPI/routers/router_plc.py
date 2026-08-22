@@ -533,9 +533,19 @@ def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
 @router.post("/plant/{plant_id}/clear-recipe")
 def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")):
     """
-    Clear the recipe in the PLC by writing an empty array (zeros), and reset Batch ID.
+    Clear the recipe in the PLC by writing an empty array (zeros), clear Step Cmd (DB15x0), Actuals (DB15x7), and reset Batch ID.
     """
-    from plc_service import write_full_recipe_to_plc
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    
+    # Clear DB15x0 (Step CMD)
+    try:
+        db_cmd_number = get_db_number('step_cmd', plant_id)
+        zeros_cmd = b'\x00' * 88
+        plc.db_write(db_cmd_number, 0, zeros_cmd)
+    except Exception as ce:
+        logger.warning(f"[ClearRecipe] Failed to zero DB15{plant_id}0: {ce}")
+
+    # Clear DB15x1 (Recipe)
     success = write_full_recipe_to_plc(
         batch_id="-",
         sku_id="-",
@@ -543,10 +553,17 @@ def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")
         plant_id=plant_id
     )
 
+    # Clear DB15x7 (Actuals)
+    clear_actuals_in_plc(plant_id)
+
+    # Clear telemetry cache
+    if plant_id in _telem_cache:
+        _telem_cache.pop(plant_id, None)
+
     if not success:
         raise HTTPException(status_code=500, detail=f"Failed to clear recipe in PLC DB15{plant_id}1")
 
-    return {"status": "success", "message": f"Recipe memory cleared for Plant {plant_id}"}
+    return {"status": "success", "message": f"Recipe, Cmd, and Actuals memory cleared for Plant {plant_id}"}
 
 
 @router.post("/plant/{plant_id}/reset-batch/{batch_id}")
@@ -631,6 +648,37 @@ def reset_batch_soft(
     except Exception as e:
         results["reset_worker_state"] = f"warning: {e}"
         logger.warning(f"[Reset] Could not reset worker state: {e}")
+
+    # ── 6. Clear local batch cache JSON file ───────────────────────────────────
+    try:
+        import os
+        from batch_cache_service import CACHE_DIR
+        cache_file = os.path.join(CACHE_DIR, f"{batch_id}.json")
+        if os.path.exists(cache_file):
+            os.remove(cache_file)
+            results["clear_batch_cache"] = "ok"
+            logger.info(f"[Reset] Deleted local batch cache file: {cache_file}")
+        else:
+            results["clear_batch_cache"] = "ok (no file)"
+    except Exception as ce:
+        results["clear_batch_cache"] = f"warning: {ce}"
+        logger.warning(f"[Reset] Failed to remove batch cache file: {ce}")
+
+    # ── 7. Clear QC records in DB ─────────────────────────────────────────────
+    try:
+        db.execute(
+            _text("DELETE FROM production_qc_records WHERE batch_id = :bid"),
+            {"bid": batch_id}
+        )
+        db.commit()
+        results["clear_qc_records"] = "ok"
+    except Exception as qce:
+        db.rollback()
+        results["clear_qc_records"] = f"warning: {qce}"
+
+    # Clear in-memory telemetry cache for plant
+    if plant_id in _telem_cache:
+        _telem_cache.pop(plant_id, None)
 
     all_ok = all(v.startswith("ok") for v in results.values())
     return {
