@@ -2458,51 +2458,27 @@ const restoreBatchFromPlc = async (batchId: string) => {
     }
 }
 
+// Watch PLC active batch changes — only triggers when telemetry is live and a real external change occurs
+let _mountGracePeriod = true
+setTimeout(() => { _mountGracePeriod = false }, 4000)
+
 watch([plcActiveBatchId, () => loading.value], async ([plcBatchId, newLoading]) => {
-    if (newLoading) return
-    
+    if (newLoading || _mountGracePeriod) return
+
     if (!selectedBatchId.value) {
+        // If no batch selected in UI, but PLC has an active batch, auto-restore
         if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
             console.log('Detected active batch on PLC, restoring:', plcBatchId)
             restoreBatchFromPlc(plcBatchId)
         }
     } else {
-        // If a batch is currently selected, but PLC active batch ID has changed or been cleared
-        if (plcBatchId !== selectedBatchId.value) {
-            console.log(`PLC active batch ID (${plcBatchId}) differs from selected (${selectedBatchId.value})`)
-            // Fetch status of the selected batch from DB to see if it was reset
-            try {
-                const remoteApiBaseUrl = appConfig.apiBaseUrl
-                const batch = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/${selectedBatchId.value}`, {
-                    headers: getAuthHeader() as Record<string, string>
-                })
-                if (batch && (batch.status === 'Pending' || plcBatchId === '-' || plcBatchId === '')) {
-                    $q.notify({
-                        type: 'warning',
-                        message: 'PLC batch was cleared or reset. Returning to production check screen.',
-                        position: 'top'
-                    })
-                    // Clear local states
-                    localStepIndex.value = 0
-                    batchRunning.value = false
-                    batchInfo.value = null
-                    selectedBatchId.value = null
-                    selectedSkuId.value = null
-                    skuSteps.value = []
-                    startConfirmed.value = false
-                 scannedVolumeMap.value = {}
-                    
-                    // Remove query parameters and redirect
-                    const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query
-                    router.replace({ query: newQuery })
-                    router.push('/x60-CheckForProduction')
-                }
-            } catch (err) {
-                console.warn('Failed to fetch batch status in watch:', err)
-            }
+        // If batch is selected, only act if telemetry is confirmed active AND PLC batch genuinely changed to a DIFFERENT valid batch
+        if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0' && plcBatchId !== selectedBatchId.value) {
+            console.log(`PLC active batch switched from ${selectedBatchId.value} to ${plcBatchId}`)
+            restoreBatchFromPlc(plcBatchId)
         }
     }
-}, { immediate: true })
+})
 
 // ── Standard Recipe Weights ──
 const standardRecipeTotal = computed(() => {
