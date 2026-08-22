@@ -2487,6 +2487,7 @@ const weightProgress = computed(() => {
 
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 let _telemetryPollInterval: ReturnType<typeof setInterval> | null = null
+let _stepSyncInterval: ReturnType<typeof setInterval> | null = null
 
 // ── A1020 RO-Water auto-advance state ─────────────────────────────────
 let _roWatchActive    = false   // true while monitoring weight
@@ -3420,8 +3421,30 @@ onMounted(() => {
         // ─────────────────────────────────────────────────────────────────
     }
     if (_telemetryPollInterval) clearInterval(_telemetryPollInterval)
+    if (_stepSyncInterval) clearInterval(_stepSyncInterval)
     _telemetryPollInterval = setInterval(_pollTelemetry, 200)
     _pollTelemetry()
+
+    // ── Multi-Client Auto-Sync Step Timer (every 3 seconds) ──────────────
+    const _syncStepWithServer = async () => {
+        const pid = activePlantId.value
+        if (!pid || !batchRunning.value || !selectedBatchId.value) return
+        try {
+            const statusData = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${pid}/recipe-status`, {
+                headers: getAuthHeader() as Record<string, string>
+            })
+            const activeSeq = Number(statusData?.target?.active_step ?? 0)
+            if (activeSeq > 0 && skuSteps.value.length > 0) {
+                const idx = skuSteps.value.findIndex(s => Number(s.id) === activeSeq)
+                if (idx !== -1 && idx !== localStepIndex.value) {
+                    console.log(`[StepSync] 🔄 Multi-client sync: step updated from server (${localStepIndex.value} -> ${idx})`)
+                    localStepIndex.value = idx
+                }
+            }
+        } catch { /* API offline — keep current UI step */ }
+    }
+    if (_stepSyncInterval) clearInterval(_stepSyncInterval)
+    _stepSyncInterval = setInterval(_syncStepWithServer, 3000)
 })
 
 onUnmounted(() => {
