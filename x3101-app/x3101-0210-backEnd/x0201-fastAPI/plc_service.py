@@ -204,6 +204,32 @@ def get_process_db(plant_id: int) -> int:
     else:
         return 503
 
+
+# ─── Process-PLC Circulation Temperature Offsets (DB2003/DB2004/DB2006) ──────
+CIR_TEMP_DB_MAP = {
+    1: 2003,  # Line 1: DB2003.DBD0
+    2: 2004,  # Line 2: DB2004.DBD0
+    3: 2006,  # Line 3: DB2006.DBD0
+    4: 2006   # Line 4: DB2006.DBD0
+}
+
+def read_circulation_temp(plant_id: int = 1) -> float:
+    """
+    Read real-time Circulation Temperature (TT CIR) from Process-PLC DB2003/2004/2006.
+    Used for Cooling step and transfer temperature tracking.
+    """
+    db = CIR_TEMP_DB_MAP.get(int(plant_id), 2003)
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+        raw = proc_plc.db_read(db, 0, 4)
+        if raw:
+            return round(struct.unpack('>f', raw)[0], 2)
+    except Exception as e:
+        logger.error(f"[TT CIR] Error reading DB{db}: {e}")
+    return 0.0
+
+
 def read_a1010_material_actuals(plant_id: int = 1) -> Dict[str, float]:
     """
     Read real-time liquid flowmeter actuals from Process-PLC DB500/DB501/DB503.
@@ -486,6 +512,8 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
         "liquid_ls_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3122, 4))[0], 3) if proc_plc.is_connected else 0.0,
         "liquid_mis_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3284, 4))[0], 3) if proc_plc.is_connected else 0.0,
         "liquid_ro_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3446, 4))[0], 3) if proc_plc.is_connected else 0.0,
+        "circulation_temp": read_circulation_temp(plant_id),
+        "Circulation_Temperature": read_circulation_temp(plant_id),
     }
 
 # ─── Recipe Deserialization ─────────────────────────────────────────────────

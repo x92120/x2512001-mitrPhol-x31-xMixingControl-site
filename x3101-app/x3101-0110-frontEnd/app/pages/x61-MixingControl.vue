@@ -1834,7 +1834,14 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
             if (prebatchWeightMap.value[rc] != null) return Number(Number(prebatchWeightMap.value[rc]).toFixed(2))
             return undefined
         })(),
-        Actual_Temp: actualTankTemp.value > 0 ? Number(Number(actualTankTemp.value).toFixed(2)) : undefined,
+        Actual_Temp: (() => {
+            const pStr = String(step.phase_number || step.phase_id || '').toLowerCase()
+            const isCooling = pStr.includes('070') || pStr.includes('1040') || pStr.includes('cool')
+            if (isCooling && actualCirculationTemp.value > 0) {
+                return Number(Number(actualCirculationTemp.value).toFixed(2))
+            }
+            return actualTankTemp.value > 0 ? Number(Number(actualTankTemp.value).toFixed(2)) : undefined
+        })(),
         Actual_Agitator: actualAgitatorRpm.value > 0 ? Number(Number(actualAgitatorRpm.value).toFixed(2)) : undefined,
         Actual_HighShear: actualHighShearRpm.value > 0 ? Number(Number(actualHighShearRpm.value).toFixed(2)) : undefined,
         TT_SP: [Number(step.temperature || 0)],
@@ -3634,6 +3641,7 @@ onMounted(() => {
                 [pid]: {
                     ...prev,
                     Mixing_Tank_Temperature:   t.mix_tank_temp   ?? prev.Mixing_Tank_Temperature,
+                    Circulation_Temperature:   t.circulation_temp ?? prev.Circulation_Temperature,
                     Mixing_Tank_Volume:        t.mix_tank_weight ?? prev.Mixing_Tank_Volume,
                     MixingTank_Agitator_Speed: t.agitator_act    ?? prev.MixingTank_Agitator_Speed,
                     HighShare_Speed:           t.highshear_act   ?? prev.HighShare_Speed,
