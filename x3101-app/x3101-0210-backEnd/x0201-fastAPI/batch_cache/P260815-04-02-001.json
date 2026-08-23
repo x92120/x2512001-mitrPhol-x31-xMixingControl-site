@@ -1,6 +1,6 @@
 {
   "batch_id": "P260815-04-02-001",
-  "cached_at": "2026-08-21T18:19:38.275227",
+  "cached_at": "2026-08-23T14:08:58.239169",
   "sku_id": "S7HFRU4200",
   "plant_id": 2,
   "total_steps": 31,
@@ -40,7 +40,7 @@
       "phase_no": 16,
       "sub_step": 10,
       "action_code": "30010",
-      "phase_id": "A1010",
+      "phase_id": "A1020",
       "re_code": "W100 CG 50 kg",
       "target_weight": 100.0,
       "temp_sp": 60.0,
@@ -48,7 +48,10 @@
       "temp_high": 0.0,
       "agitator_sp": 80.0,
       "highshear_sp": 0.0,
-      "step_time": 0
+      "step_time": 0,
+      "phase_number": "p0015",
+      "phase_type_code": 2,
+      "plc_step_no": 6
     },
     {
       "seq": 4,

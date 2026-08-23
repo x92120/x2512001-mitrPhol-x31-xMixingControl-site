@@ -58,21 +58,7 @@ async def _poll_handshake_loop(interval: float = 1.0):
                     current_plc_step = tel.get("current_step", 0)
                     if current_plc_step < _last_finished_step[plant_id]:
                         _last_finished_step[plant_id] = -1
-                    # Publish DB1512 directly to UI bypassing Kepware
-                    try:
-                        import os as _os
-                        _prefix = _os.getenv("MQTT_TOPIC_PREFIX", "")
-                        publish.single(
-                            topic=f"{_prefix}mixing/plant/{plant_id}/telemetry",
-                            payload=json.dumps(tel),
-                            hostname="127.0.0.1",
-                            port=1883,
-                            qos=0,
-                            retain=False,
-                            auth={'username': 'xMixingNode-1', 'password': 'x123456'}
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to publish telemetry for Plant {plant_id}: {e}")
+                    pass  # Telemetry is served via ultra-fast 0ms cached HTTP /telemetry-live
 
                 # 2. Handshake Loop
                 hs = read_handshake(plant_id)
