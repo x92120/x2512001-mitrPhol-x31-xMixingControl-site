@@ -44,6 +44,22 @@ const plcStepDescriptions: Record<number, string> = {
 // ── Phase_Type + Action_Code → PLC Step Number ──────────────────────────────
 // Matches FC_MapPhaseToStep.scl v1.0 (2026-07-06) exactly
 // phaseType: 1=A1010, 2=A1020, 3=D1010, 4=D1030, 5=x1010, 6=x1020, 7=x1030, 8=x1040
+
+// ── Robust Phase Type Resolver (maps both p010-p070 and x1010-x1040 codes) ───
+const resolvePhaseType = (step: any): number => {
+    if (!step) return 0
+    const raw = (String(step.phase_id || '') + ' ' + String(step.phase_number || '') + ' ' + String(step.description || '')).toUpperCase()
+    if (raw.includes('A1010') || raw.includes('P010') || raw.includes('P10')) return 1
+    if (raw.includes('A1020') || raw.includes('P020') || raw.includes('P20')) return 2
+    if (raw.includes('D1010') || raw.includes('P030') || raw.includes('P30')) return 3
+    if (raw.includes('D1030') || raw.includes('P035') || raw.includes('P036') || raw.includes('P35')) return 4
+    if (raw.includes('X1010') || raw.includes('P040') || raw.includes('P40')) return 5
+    if (raw.includes('X1020') || raw.includes('P050') || raw.includes('P50') || raw.includes('PAST')) return 6  // -> Pasteurize (Z=20)
+    if (raw.includes('X1030') || raw.includes('P060') || raw.includes('P60') || raw.includes('HOLD')) return 7  // -> Holding (Z=22/24)
+    if (raw.includes('X1040') || raw.includes('P070') || raw.includes('P70') || raw.includes('COOL') || raw.includes('TRANS')) return 8 // -> Transfer (Z=26)
+    return Number(step.phase_type_code || 0)
+}
+
 const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number = 0, stepTime: number = 0): number => {
   switch (phaseType) {
     case 1: // A1010 — Auto Batching Major (Fill from pipe: IBC/LS/MIS/RO)
@@ -1128,7 +1144,7 @@ const sendStepToPLC = (index: number) => {
         Brix_Target: Number(s.brix_sp || 0),
         
         // Phase type + action code (for PLC interlock)
-        Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? Number((s as any).phase_type_code || 0),
+        Phase_Type: resolvePhaseType(s),
         Action_Code: Number((s as any).action_code || 0),
         Recipe_Z: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
@@ -1848,7 +1864,7 @@ const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false
         High_Shear_SP: Number(step.high_shear_rpm || 0),
         PH_Target: Number(step.ph_sp || 0),
         Brix_Target: Number(step.brix_sp || 0),
-        Phase_Type: ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? Number((step as any).phase_type_code || 0),
+        Phase_Type: resolvePhaseType(step),
         Action_Code: Number((step as any).action_code || 0),
         Recipe_Z: getPlcStepNumber(
           ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
