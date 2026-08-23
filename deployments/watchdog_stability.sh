@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# xMixing Control - Industrial Stability & Health Watchdog
+# xMixing Control - Industrial Stability & Health Watchdog (with DB Center Check)
 # =============================================================================
 
 LOGFILE="/home/x-root/xApp/watchdog.log"
@@ -45,7 +45,12 @@ if [ -n "$NODE_PID" ]; then
     fi
 fi
 
-# 4. LOG ROTATION & DISK CLEANUP (Keep temp files < 20MB)
+# 4. DB CENTER CONNECTIVITY PROBE (192.168.121.11:3306)
+if ! nc -zvw 2 192.168.121.11 3306 >/dev/null 2>&1; then
+    log_msg "[ALERT] DB Center (192.168.121.11:3306) is UNREACHABLE! Check network switch."
+fi
+
+# 5. LOG ROTATION & DISK CLEANUP (Keep temp files < 20MB)
 for f in "$LOGFILE" /tmp/fastapi.log /tmp/nuxt.log /home/x-root/.xmixing-hmi-launch.log; do
     if [ -f "$f" ]; then
         SIZE=$(stat -c%s "$f" 2>/dev/null || echo 0)
