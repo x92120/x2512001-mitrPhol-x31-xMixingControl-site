@@ -1524,7 +1524,6 @@ const getStepLiveWeight = (step: any) => {
     }
     
     // 1. If we have a scanned volume from the QR label, ALWAYS use it!
-    const rc = String(step.re_code || '').trim()
     if (scannedVolumeMap.value[rc] != null) {
         return scannedVolumeMap.value[rc]
     }
