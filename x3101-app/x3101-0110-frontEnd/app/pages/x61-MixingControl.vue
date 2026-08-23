@@ -1446,7 +1446,6 @@ const getStepLiveWeight = (step: any) => {
     }
     
     // 0. Liquid Flowmeter for Auto Batching Major (Actions 10010, 10020, 10030, 10040)
-    const aCode = Number(step.action_code || 0)
     const pid = activePlantId.value || '1'
     const curPlant = plantsData.value[pid] || {}
     if (aCode === 10030 && curPlant.liquid_ls_act != null && curPlant.liquid_ls_act > 0) {
