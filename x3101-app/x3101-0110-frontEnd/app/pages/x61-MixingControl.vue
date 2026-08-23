@@ -95,14 +95,10 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
       return 8   // Preblending — dissolve active
     case 4: // D1030 — Dissolve Tank 2
       return 10  // First Confirm — secondary dissolve
-    case 5: // x1010 — Heating Phase
+    case 5: // x1010 / p040-p049 / p140-p149 — Heating Phase
+      if (stepTime > 0)                                 return 18  // Timed Hold / Fill Third (e.g. p046) -> ALWAYS 18
       if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
-      if (actionCode === 30500) {
-        if (stepTime > 0)    return 18  // Fill Third — timed hold
-        if (tempSp >= 83.0)  return 16  // Second Heat
-        return 12                        // Pre Heats
-      }
-      if (actionCode === 30010) return tempSp >= 83.0 ? 16 : 12
+      if (actionCode === 30500 || actionCode === 30010) return tempSp >= 83.0 ? 16 : 12
       return 12  // default: Pre Heats
     case 6: // x1020 — Pasteurization
       return 20  // Pasteurizer
@@ -1166,13 +1162,13 @@ const sendStepToPLC = (index: number) => {
         Phase_Type: resolvePhaseType(s),
         Action_Code: Number((s as any).action_code || 0),
         Recipe_Z: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
+          resolvePhaseType(s),
           Number((s as any).action_code || 0),
           Number((s as any).temperature || 0),
           Number((s as any).step_time || 0)
         ),
         Step_OF_PLC: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((s as any).phase_id||'').includes(k))||'')] ?? 0,
+          resolvePhaseType(s),
           Number((s as any).action_code || 0),
           Number((s as any).temperature || 0),
           Number((s as any).step_time || 0)
@@ -1886,13 +1882,13 @@ const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false
         Phase_Type: resolvePhaseType(step),
         Action_Code: Number((step as any).action_code || 0),
         Recipe_Z: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
+          resolvePhaseType(step),
           Number((step as any).action_code || 0),
           Number((step as any).temperature || 0),
           Number((step as any).step_time || 0)
         ),
         Step_OF_PLC: getPlcStepNumber(
-          ({A1010:1,A1020:2,D1010:3,D1030:4,x1010:5,x1020:6,x1030:7,x1040:8} as Record<string,number>)[(['A1010','A1020','D1010','D1030','x1010','x1020','x1030','x1040'].find(k=>String((step as any).phase_id||'').includes(k))||'')] ?? 0,
+          resolvePhaseType(step),
           Number((step as any).action_code || 0),
           Number((step as any).temperature || 0),
           Number((step as any).step_time || 0)
