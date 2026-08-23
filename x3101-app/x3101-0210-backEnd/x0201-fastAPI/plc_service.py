@@ -213,6 +213,50 @@ CIR_TEMP_DB_MAP = {
     4: 2006   # Line 4: DB2006.DBD0
 }
 
+
+# ─── Process-PLC Cached Reader (1s TTL) ──────────────────────────────────────
+import time as _t_proc
+_proc_cache = {'ts': 0, 'data': {}}
+
+def _get_proc_cached(plant_id: int):
+    global _proc_cache
+    now = _t_proc.time()
+    pid = int(plant_id)
+    if (now - _proc_cache.get('ts', 0)) < 1.0 and pid in _proc_cache.get('data', {}):
+        return _proc_cache['data'][pid]
+    
+    # Refresh
+    res = {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+        if proc_plc.is_connected:
+            cir_db = CIR_TEMP_DB_MAP.get(pid, 2003)
+            proc_db = get_process_db(pid)
+            
+            raw_cir = proc_plc.db_read(cir_db, 0, 4)
+            if raw_cir: res['cir_temp'] = round(struct.unpack('>f', raw_cir)[0], 2)
+            
+            raw_ls = proc_plc.db_read(proc_db, 3122, 4)
+            if raw_ls: res['ls_act'] = round(struct.unpack('>f', raw_ls)[0], 3)
+
+            raw_ro = proc_plc.db_read(proc_db, 3446, 4)
+            if raw_ro: res['ro_act'] = round(struct.unpack('>f', raw_ro)[0], 3)
+
+            raw_ibc = proc_plc.db_read(proc_db, 2960, 4)
+            if raw_ibc: res['ibc_act'] = round(struct.unpack('>f', raw_ibc)[0], 3)
+
+            raw_mis = proc_plc.db_read(proc_db, 3284, 4)
+            if raw_mis: res['mis_act'] = round(struct.unpack('>f', raw_mis)[0], 3)
+    except Exception as e:
+        logger.error(f"[Proc PLC Cache] Error: {e}")
+    
+    if 'data' not in _proc_cache: _proc_cache['data'] = {}
+    _proc_cache['data'][pid] = res
+    _proc_cache['ts'] = now
+    return res
+
+
 def read_circulation_temp(plant_id: int = 1) -> float:
     """
     Read real-time Circulation Temperature (TT CIR) from Process-PLC DB2003/2004/2006.
@@ -511,9 +555,12 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
         "liquid_ibc_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 2960, 4))[0], 3) if proc_plc.is_connected else 0.0,
         "liquid_ls_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3122, 4))[0], 3) if proc_plc.is_connected else 0.0,
         "liquid_mis_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3284, 4))[0], 3) if proc_plc.is_connected else 0.0,
-        "liquid_ro_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3446, 4))[0], 3) if proc_plc.is_connected else 0.0,
-        "circulation_temp": read_circulation_temp(plant_id),
-        "Circulation_Temperature": read_circulation_temp(plant_id),
+        "liquid_ro_act": _get_proc_cached(plant_id).get('ro_act', 0.0),
+        "liquid_ls_act": _get_proc_cached(plant_id).get('ls_act', 0.0),
+        "liquid_ibc_act": _get_proc_cached(plant_id).get('ibc_act', 0.0),
+        "liquid_mis_act": _get_proc_cached(plant_id).get('mis_act', 0.0),
+        "circulation_temp": _get_proc_cached(plant_id).get('cir_temp', 0.0),
+        "Circulation_Temperature": _get_proc_cached(plant_id).get('cir_temp', 0.0),
     }
 
 # ─── Recipe Deserialization ─────────────────────────────────────────────────
