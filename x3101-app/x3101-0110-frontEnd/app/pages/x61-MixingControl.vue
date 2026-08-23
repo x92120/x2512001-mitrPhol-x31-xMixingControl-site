@@ -1435,6 +1435,16 @@ const isWeightInTolerance = (step: any, actualWeight: number) => {
 const getStepLiveWeight = (step: any) => {
     if (!step) return 0
     
+    const reqQty = productionRequire(step)
+    const rc = String(step.re_code || '').trim()
+    const aCode = Number(step.action_code || 0)
+    const pCode = String(step.phase_id || step.phase_number || '').toLowerCase()
+
+    // 0. Manual Rinse Water / กลั้วภาชนะ (Action 20020 or small RO-Water < 20kg in dissolve/heating phases)
+    if (aCode === 20020 || (rc.includes('RO-Water') && reqQty > 0 && reqQty < 20.0 && (pCode.includes('d10') || pCode.includes('p030') || pCode.includes('x10')))) {
+        return reqQty
+    }
+    
     // 0. Liquid Flowmeter for Auto Batching Major (Actions 10010, 10020, 10030, 10040)
     const aCode = Number(step.action_code || 0)
     const pid = activePlantId.value || '1'
