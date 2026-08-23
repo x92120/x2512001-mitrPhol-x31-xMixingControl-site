@@ -3286,6 +3286,59 @@ const _doWeightRecoveryStep = async () => {
         await sendCommand('NEXT_STEP')
     }
 }
+
+// ── Process Step Auto-Advance (Heats Up / Cooling / Temp-Driven Steps) ───────
+let _tempAutoStepTimer: any = null
+let _tempAdvancedIdx: number = -1
+
+watch([actualTankTemp, () => currentStepIndex.value], () => {
+    if (!batchRunning.value) return
+    const step = currentStep.value
+    if (!step) return
+    const curIdx = currentStepIndex.value
+
+    const aCode = Number(step.action_code || 0)
+    const req = productionRequire(step)
+    const tempSP = Number(step.temperature || 0)
+
+    // Manual ingredient scan steps wait for operator QR scan
+    const isManualIngredient = (String(aCode).startsWith('2') || String(aCode).startsWith('3')) && step.re_code && step.re_code.trim() !== '-' && req > 0
+    if (isManualIngredient) {
+        if (_tempAutoStepTimer) { clearTimeout(_tempAutoStepTimer); _tempAutoStepTimer = null }
+        return
+    }
+
+    // Check Heating / Cooling process steps with temperature setpoints
+    if (tempSP > 0 && req === 0 && curIdx !== _tempAdvancedIdx) {
+        const isHeating = tempSP >= 45.0
+        const currentT = actualTankTemp.value
+        const tempReached = isHeating ? (currentT >= (tempSP - 0.2)) : (currentT > 0 && currentT <= (tempSP + 0.5))
+
+        if (tempReached) {
+            if (!_tempAutoStepTimer) {
+                console.log(`[AutoStep Temp] Target Temp Reached (${currentT.toFixed(1)}°C / ${tempSP}°C) → Auto-Advancing step ${curIdx} in 2s...`)
+                $q.notify({
+                    type: 'positive',
+                    icon: isHeating ? 'local_fire_department' : 'ac_unit',
+                    message: `✅ อุณหภูมิถึงเป้าหมาย (${currentT.toFixed(1)}°C / ${tempSP}°C) — ข้ามไปสเต็ปถัดไปอัตโนมัติ`,
+                    position: 'top',
+                    timeout: 2000
+                })
+                _tempAutoStepTimer = setTimeout(async () => {
+                    _tempAutoStepTimer = null
+                    _tempAdvancedIdx = curIdx
+                    await confirmStepFromRow(curIdx, step, false)
+                }, 2000)
+            }
+        } else {
+            if (_tempAutoStepTimer) {
+                clearTimeout(_tempAutoStepTimer)
+                _tempAutoStepTimer = null
+            }
+        }
+    }
+})
+
 watch(actualTankWeight,   () => _doWeightRecoveryStep())
 watch(actualHopperWeight, () => _doWeightRecoveryStep())
 
