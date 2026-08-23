@@ -100,10 +100,12 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
       if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
       if (actionCode === 30500 || actionCode === 30010) return tempSp >= 83.0 ? 16 : 12
       return 12  // default: Pre Heats
-    case 6: // x1020 — Pasteurization
+    case 6: // x1020 / p050 / p150 — Pasteurization (Holding temp before additions)
       return 20  // Pasteurizer
-    case 7: // x1030 / p060 — Holding (QC Confirm)
-      return 22  // Holding is always Recipe_Z = 22
+    case 7: // x1030 / p060 / p160 — Holding / QC Gate
+      if (actionCode === 30010)                         return 22  // QC Confirm (Brix/pH test)
+      if (actionCode === 30600 || actionCode === 30020) return 24  // Ready To Transfer
+      return 20  // Default holding before additions -> Recipe_Z = 20
     case 8: // x1040 — Final Cooling
       return 26  // Transferring
     default:
