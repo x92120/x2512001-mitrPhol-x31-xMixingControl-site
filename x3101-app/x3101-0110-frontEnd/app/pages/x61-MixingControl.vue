@@ -1910,7 +1910,8 @@ const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false
     }
     
     // Check if this was the last step in the recipe (e.g. Step 26 / Transfer / Cooldown)
-    const isThisLastStep = currentStepIndex.value >= skuSteps.value.length - 1 || index >= skuSteps.value.length - 1
+    const stepIdx = skuSteps.value.findIndex((s: any) => s.id === step?.id || (s.phase_number === step?.phase_number && s.sub_step === step?.sub_step))
+    const isThisLastStep = currentStepIndex.value >= skuSteps.value.length - 1 || (stepIdx >= 0 && stepIdx >= skuSteps.value.length - 1)
     if (isThisLastStep) {
         console.log(`[Confirm] Last step ${step.sub_step} confirmed! Finalizing Batch & Resetting Plant...`)
         localStepIndex.value = skuSteps.value.length
