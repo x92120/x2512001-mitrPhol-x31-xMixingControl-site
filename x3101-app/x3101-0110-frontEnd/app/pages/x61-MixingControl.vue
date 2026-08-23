@@ -3331,6 +3331,56 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
 // ── Weight Recovery Watcher: auto-step when weight comes back into tolerance ──
 // Handles the case where PLC sent step_done but weight was not in tolerance.
 // When operator corrects the weight, this fires and resumes the auto-step.
+
+// ── Reset Board Function (Clear Mixing Table & Restore Clean Stand By) ───────
+const resetPlantBoard = () => {
+    console.log('[Plant Reset] Clearing board and resetting plant to Stand By...')
+    batchRunning.value = false
+    selectedBatchId.value = ''
+    activeBatchId.value = ''
+    selectedSkuId.value = ''
+    selectedPlanId.value = ''
+    localStepIndex.value = -1
+    appOverrideStepIndex.value = -1
+    pendingWeightApproval.value = false
+    hasConfirmedCurrentStep.value = false
+    currentStepBypassed.value = false
+    scannedVolumeMap.value = {}
+    prebatchWeightMap.value = {}
+    scanBuffer.value = ''
+    qrScanBuffer.value = ''
+    _scanAccum = ''
+    _qrAccum = ''
+    if (batchInfo.value) {
+        batchInfo.value = null
+    }
+    skuSteps.value = []
+}
+
+// ── PLC Step 28 / z = 28 Completion Watcher ──────────────────────────────────
+// When Process-PLC finishes transfer and sends Step 28 (or clears to 0):
+// 1. Mark batch Done
+// 2. Clear & Reset board to Stand By immediately!
+watch([() => plantData.value?.Current_Step, () => plantData.value?.PLC_Step_FC, () => plantData.value?.Step_no], async ([curStep, fcStep, stepNo]) => {
+    const isStep28 = Number(curStep) === 28 || Number(fcStep) === 28 || Number(stepNo) === 28
+    if (isStep28 && batchRunning.value && selectedBatchId.value) {
+        console.log(`[PLC Step 28] Detected Step 28 from Process-PLC! Finalizing Batch and resetting board...`)
+        const doneBatchId = selectedBatchId.value
+        await markBatchDone('plc-step-28')
+        $q.notify({
+            type: 'positive',
+            icon: 'verified',
+            message: `🎉 PLC สเต็ป 28 (Transfer Complete) — เคลียร์กระดานและจบแบทช์สำเร็จ!`,
+            position: 'center',
+            timeout: 3500
+        })
+        resetPlantBoard()
+        setTimeout(() => {
+            router.push({ path: '/x70-ProductionReport', query: { batch_id: doneBatchId } })
+        }, 1500)
+    }
+})
+
 const _doWeightRecoveryStep = async () => {
     if (!pendingWeightApproval.value) return
     if (!batchRunning.value) return
