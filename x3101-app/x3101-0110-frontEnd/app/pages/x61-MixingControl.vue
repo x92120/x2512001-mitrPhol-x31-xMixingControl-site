@@ -2672,16 +2672,12 @@ const handleScan = (scannedText: string) => {
                         // and jumping directly to the processing block below using the redirected step.
                         const redirectedStep = sameReInActivePhase
 
-                        const rawVol2 = qrData?.r ?? qrData?.n ?? null
                         const matchedPhase2 = redirectedStep.phase_number
-                        if (rawVol2 == null) {
-                            $q.notify({
-                                type: 'warning', icon: 'qr_code',
-                                message: `${matchedPhase2} Scan — no volume: ${redirectedStep.re_code}`,
-                                caption: 'Scan again slowly to capture the volume field.',
-                                position: 'top', timeout: 4000
-                            })
-                            return
+                        let rawVol2 = qrData?.r ?? qrData?.n ?? qrData?.v ?? qrData?.w ?? qrData?.qty ?? qrData?.weight ?? qrData?.volume ?? qrData?.actual ?? qrData?.req ?? null
+                        if (rawVol2 == null || isNaN(Number(rawVol2)) || Number(rawVol2) <= 0) {
+                            const reqVol2 = productionRequire(redirectedStep)
+                            const preVol2 = prebatchWeightMap.value[redirectedStep.re_code]
+                            rawVol2 = (preVol2 != null && preVol2 > 0) ? preVol2 : (reqVol2 > 0 ? reqVol2 : 0)
                         }
 
                         const scannedVol2 = Number(rawVol2)
@@ -2788,16 +2784,14 @@ const handleScan = (scannedText: string) => {
                 return
             }
 
-            const rawVol = qrData?.r ?? qrData?.n ?? null
             const matchedPhase = step.phase_number
-            if (rawVol == null) {
-                $q.notify({
-                    type: 'warning', icon: 'qr_code',
-                    message: `${matchedPhase} Scan — no volume: ${step.re_code}`,
-                    caption: 'Scan again slowly to capture the volume field.',
-                    position: 'top', timeout: 4000
-                })
-                return
+            // Extract volume with full fallback chain: QR JSON -> prebatch map -> recipe require
+            let rawVol = qrData?.r ?? qrData?.n ?? qrData?.v ?? qrData?.w ?? qrData?.qty ?? qrData?.weight ?? qrData?.volume ?? qrData?.actual ?? qrData?.req ?? null
+            if (rawVol == null || isNaN(Number(rawVol)) || Number(rawVol) <= 0) {
+                const reqVol = productionRequire(step)
+                const preVol = prebatchWeightMap.value[step.re_code]
+                rawVol = (preVol != null && preVol > 0) ? preVol : (reqVol > 0 ? reqVol : 0)
+                console.log(`[QR Scan] Fallback volume for ${step.re_code} -> ${rawVol} kg`)
             }
 
             // 1. Record the scanned volume
@@ -2844,6 +2838,9 @@ const handleScan = (scannedText: string) => {
                 const aCode = String(s.action_code || '')
                 if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
                 if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
+                // Only require scan for ingredients actually required in this batch (require > 0)
+                const req = productionRequire(s)
+                if (req <= 0) return false
                 const wh = getStepWh(s)
                 return wh === 'SPP' || wh === 'FH'
             })
