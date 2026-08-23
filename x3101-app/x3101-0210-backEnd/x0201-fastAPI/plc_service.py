@@ -201,6 +201,8 @@ def get_process_db(plant_id: int) -> int:
         return 500
     elif pid == 2:
         return 501
+    elif pid == 3:
+        return 502
     else:
         return 503
 
