@@ -45,19 +45,39 @@ const plcStepDescriptions: Record<number, string> = {
 // Matches FC_MapPhaseToStep.scl v1.0 (2026-07-06) exactly
 // phaseType: 1=A1010, 2=A1020, 3=D1010, 4=D1030, 5=x1010, 6=x1020, 7=x1030, 8=x1040
 
-// ── Robust Phase Type Resolver (maps both p010-p070 and x1010-x1040 codes) ───
+// ── Universal Phase Type Resolver (handles p010..p070, p110..p170, 0010..0070 & keywords) ──
 const resolvePhaseType = (step: any): number => {
     if (!step) return 0
-    const raw = (String(step.phase_id || '') + ' ' + String(step.phase_number || '') + ' ' + String(step.description || '')).toUpperCase()
-    if (raw.includes('A1010') || raw.includes('P010') || raw.includes('P10')) return 1
-    if (raw.includes('A1020') || raw.includes('P020') || raw.includes('P20')) return 2
-    if (raw.includes('D1010') || raw.includes('P030') || raw.includes('P30')) return 3
-    if (raw.includes('D1030') || raw.includes('P035') || raw.includes('P036') || raw.includes('P35')) return 4
-    if (raw.includes('X1010') || raw.includes('P040') || raw.includes('P40')) return 5
-    if (raw.includes('X1020') || raw.includes('P050') || raw.includes('P50') || raw.includes('PAST')) return 6  // -> Pasteurize (Z=20)
-    if (raw.includes('X1030') || raw.includes('P060') || raw.includes('P60') || raw.includes('HOLD')) return 7  // -> Holding (Z=22/24)
-    if (raw.includes('X1040') || raw.includes('P070') || raw.includes('P70') || raw.includes('COOL') || raw.includes('TRANS')) return 8 // -> Transfer (Z=26)
-    return Number(step.phase_type_code || 0)
+    // If phase_type_code is explicitly 1-8 from DB, use it directly
+    const ptCode = Number(step.phase_type_code || 0)
+    if (ptCode >= 1 && ptCode <= 8) return ptCode
+
+    const pNum = String(step.phase_number || '').toLowerCase().replace(/[^0-9]/g, '')
+    const pId = String(step.phase_id || '').toUpperCase()
+    const desc = String(step.description || '').toUpperCase()
+    const combined = `${pId} ${desc}`
+
+    // 1. Check keyword definitions first
+    if (pId.includes('A1010') || combined.includes('MAJOR')) return 1
+    if (pId.includes('A1020') || combined.includes('HIGH SHEAR') || combined.includes('PRE-BLEND')) return 2
+    if (pId.includes('D1010') || combined.includes('DISSOLVE 1') || combined.includes('PREBLENDING')) return 3
+    if (pId.includes('D1030') || combined.includes('DISSOLVE 2')) return 4
+    if (pId.includes('X1010') || (combined.includes('HEAT') && !combined.includes('PAST'))) return 5
+    if (pId.includes('X1020') || combined.includes('PAST')) return 6  // Pasteurize -> Recipe_Z = 20
+    if (pId.includes('X1030') || combined.includes('HOLD')) return 7  // Holding -> Recipe_Z = 22
+    if (pId.includes('X1040') || combined.includes('COOL') || combined.includes('TRANS')) return 8 // Transfer -> Recipe_Z = 26
+
+    // 2. Extract numeric suffix from phase_number (e.g. p010/p110 -> 10, p020/p120 -> 20, p050/p150 -> 50, etc.)
+    if (pNum.endsWith('10')) return 1
+    if (pNum.endsWith('20')) return 2
+    if (pNum.endsWith('30')) return 3
+    if (pNum.endsWith('35') || pNum.endsWith('36')) return 4
+    if (pNum.endsWith('40')) return 5
+    if (pNum.endsWith('50')) return 6  // Pasteurize -> Recipe_Z = 20
+    if (pNum.endsWith('60')) return 7  // Holding -> Recipe_Z = 22
+    if (pNum.endsWith('70')) return 8  // Transfer -> Recipe_Z = 26
+
+    return 0
 }
 
 const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number = 0, stepTime: number = 0): number => {
