@@ -95,9 +95,9 @@ const getPlcStepNumber = (phaseType: number, actionCode: number, tempSp: number 
       return 8   // Preblending — dissolve active
     case 4: // D1030 — Dissolve Tank 2
       return 10  // First Confirm — secondary dissolve
-    case 5: // x1010 / p040-p049 / p140-p149 — Heating Phase
-      if (stepTime > 0)                                 return 18  // Timed Hold / Fill Third (e.g. p046) -> ALWAYS 18
-      if (actionCode === 20050 || actionCode === 20020) return 14  // Fill Minor
+    case 5: // x1010 / p040-p049 / p140-p149 — Heating & Pre-Addition Phase
+      if (stepTime > 0)                                 return 17  // Holding before ingredient addition -> ALWAYS 17
+      if (actionCode === 20050 || actionCode === 20040 || actionCode === 20020) return 18  // Pour/Add Ingredients (Fill Third) -> 18
       if (actionCode === 30500 || actionCode === 30010) return tempSp >= 83.0 ? 16 : 12
       return 12  // default: Pre Heats
     case 6: // x1020 / p050 / p150 — Pasteurization (Holding temp before additions)
