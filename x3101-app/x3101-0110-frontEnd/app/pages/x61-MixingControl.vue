@@ -67,15 +67,17 @@ const resolvePhaseType = (step: any): number => {
     if (pId.includes('X1030') || combined.includes('HOLD')) return 7  // Holding -> Recipe_Z = 22
     if (pId.includes('X1040') || combined.includes('COOL') || combined.includes('TRANS')) return 8 // Transfer -> Recipe_Z = 26
 
-    // 2. Extract numeric suffix from phase_number (e.g. p010/p110 -> 10, p020/p120 -> 20, p050/p150 -> 50, etc.)
-    if (pNum.endsWith('10')) return 1
-    if (pNum.endsWith('20')) return 2
-    if (pNum.endsWith('30')) return 3
-    if (pNum.endsWith('35') || pNum.endsWith('36')) return 4
-    if (pNum.endsWith('40')) return 5
-    if (pNum.endsWith('50')) return 6  // Pasteurize -> Recipe_Z = 20
-    if (pNum.endsWith('60')) return 7  // Holding -> Recipe_Z = 22
-    if (pNum.endsWith('70')) return 8  // Transfer -> Recipe_Z = 26
+    // 2. Extract numeric suffix from phase_number (e.g. p010/p110 -> 10, p045/p145 -> 4x, p050/p150 -> 50, etc.)
+    const last2 = pNum.slice(-2)
+    const last2Num = parseInt(last2, 10)
+    if (last2 === '10') return 1
+    if (last2 === '20') return 2
+    if (last2 === '30') return 3
+    if (last2 === '35' || last2 === '36') return 4
+    if (last2Num >= 40 && last2Num <= 49) return 5  // p040, p045, p046, p140, p145 -> Type 5 (Heating / Minor Additions)
+    if (last2 === '50') return 6  // Pasteurize -> Recipe_Z = 20
+    if (last2 === '60') return 7  // Holding -> Recipe_Z = 22
+    if (last2 === '70') return 8  // Transfer -> Recipe_Z = 26
 
     return 0
 }
