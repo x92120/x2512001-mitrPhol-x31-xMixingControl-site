@@ -1903,10 +1903,30 @@ const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
         }, 3000)
     }
     
-    // DO NOT optimistically advance localStepIndex here.
-    // The UI must wait for the PLC status telemetry (MQTT) to update and change currentStepIndex,
-    // which will then update localStepIndex via the watch(currentStepIndex) observer.
-    console.log(`[Confirm] Step ${step.sub_step} confirmed. Waiting for PLC telemetry to advance.`)
+    // Check if this was the last step in the recipe (e.g. Step 26 / Transfer / Cooldown)
+    const isThisLastStep = currentStepIndex.value >= skuSteps.value.length - 1 || index >= skuSteps.value.length - 1
+    if (isThisLastStep) {
+        console.log(`[Confirm] Last step ${step.sub_step} confirmed! Finalizing Batch & Resetting Plant...`)
+        localStepIndex.value = skuSteps.value.length
+        batchRunning.value = false
+        if (batchInfo.value) {
+            batchInfo.value.status = 'Done'
+            batchInfo.value.done = true
+        }
+        await markBatchDone('confirm-last-step')
+        $q.notify({
+            type: 'positive',
+            icon: 'celebration',
+            message: '🎉 BATCH COMPLETE — บันทึกจบแบทช์และรีเซ็ตหน้าจอสำเร็จ!',
+            position: 'center',
+            timeout: 4000
+        })
+        setTimeout(() => {
+            router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+        }, 1500)
+    } else {
+        console.log(`[Confirm] Step ${step.sub_step} confirmed. Waiting for PLC telemetry to advance.`)
+    }
     
     plcCmdLog.value.unshift({ time: new Date().toLocaleTimeString(), topic, payload })
     if (plcCmdLog.value.length > 10) plcCmdLog.value.pop()
