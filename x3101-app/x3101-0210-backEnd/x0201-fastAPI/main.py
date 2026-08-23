@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting background workers...")
     start_handshake_worker()
-    start_step_watcher()
+    # start_step_watcher() # Disabled legacy DB179 watcher
     yield
     # Shutdown
     logger.info("Stopping background workers...")
