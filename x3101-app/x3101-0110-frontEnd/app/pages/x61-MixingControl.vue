@@ -1435,6 +1435,23 @@ const isWeightInTolerance = (step: any, actualWeight: number) => {
 const getStepLiveWeight = (step: any) => {
     if (!step) return 0
     
+    // 0. Liquid Flowmeter for Auto Batching Major (Actions 10010, 10020, 10030, 10040)
+    const aCode = Number(step.action_code || 0)
+    const pid = activePlantId.value || '1'
+    const curPlant = plantsData.value[pid] || {}
+    if (aCode === 10030 && curPlant.liquid_ls_act != null && curPlant.liquid_ls_act > 0) {
+        return curPlant.liquid_ls_act
+    }
+    if (aCode === 10010 && curPlant.liquid_ro_act != null && curPlant.liquid_ro_act > 0) {
+        return curPlant.liquid_ro_act
+    }
+    if (aCode === 10020 && curPlant.liquid_ibc_act != null && curPlant.liquid_ibc_act > 0) {
+        return curPlant.liquid_ibc_act
+    }
+    if (aCode === 10040 && curPlant.liquid_mis_act != null && curPlant.liquid_mis_act > 0) {
+        return curPlant.liquid_mis_act
+    }
+    
     // 1. If we have a scanned volume from the QR label, ALWAYS use it!
     const rc = String(step.re_code || '').trim()
     if (scannedVolumeMap.value[rc] != null) {

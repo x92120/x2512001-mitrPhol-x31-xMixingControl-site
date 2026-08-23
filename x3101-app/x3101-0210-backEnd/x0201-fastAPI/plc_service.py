@@ -186,6 +186,54 @@ def check_scan_bit(plant_id: int = 1) -> bool:
     return False  # fail-safe: assume OFF (safe)
 
 
+
+# ─── Process-PLC Flowmeter Actual Offsets (DB500/DB501/DB503) ────────────────
+FLOWMETER_ACT_OFFSETS = {
+    1: 2960,  # Material[1] IBC
+    2: 3122,  # Material[2] LS in Line
+    3: 3284,  # Material[3] MIS
+    4: 3446,  # Material[4] RO-Water
+}
+
+def get_process_db(plant_id: int) -> int:
+    pid = int(plant_id)
+    if pid == 1:
+        return 500
+    elif pid == 2:
+        return 501
+    else:
+        return 503
+
+def read_a1010_material_actuals(plant_id: int = 1) -> Dict[str, float]:
+    """
+    Read real-time liquid flowmeter actuals from Process-PLC DB500/DB501/DB503.
+    Offsets:
+      Material[1] (IBC):      Offset 2960 (Float)
+      Material[2] (LS):       Offset 3122 (Float)
+      Material[3] (MIS):      Offset 3284 (Float)
+      Material[4] (RO-Water): Offset 3446 (Float)
+    """
+    db = get_process_db(plant_id)
+    result = {"ibc_act": 0.0, "ls_act": 0.0, "mis_act": 0.0, "ro_act": 0.0}
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+        raw_ibc = proc_plc.db_read(db, FLOWMETER_ACT_OFFSETS[1], 4)
+        if raw_ibc: result["ibc_act"] = round(struct.unpack('>f', raw_ibc)[0], 3)
+
+        raw_ls = proc_plc.db_read(db, FLOWMETER_ACT_OFFSETS[2], 4)
+        if raw_ls: result["ls_act"] = round(struct.unpack('>f', raw_ls)[0], 3)
+
+        raw_mis = proc_plc.db_read(db, FLOWMETER_ACT_OFFSETS[3], 4)
+        if raw_mis: result["mis_act"] = round(struct.unpack('>f', raw_mis)[0], 3)
+
+        raw_ro = proc_plc.db_read(db, FLOWMETER_ACT_OFFSETS[4], 4)
+        if raw_ro: result["ro_act"] = round(struct.unpack('>f', raw_ro)[0], 3)
+    except Exception as e:
+        logger.error(f"[A1010 Flowmeter] Error reading DB{db}: {e}")
+    return result
+
+
 def write_a1010_material_req(plant_id: int, materials: list) -> bool:
     """
     Write Material[x].Req weights to Process-PLC DB0501/502/503.
@@ -434,6 +482,10 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
         "Hopper_Weight": round(hopper_weight, 2),
         "plc_step_fc": int(plc_step_fc),
         "PLC_Step_FC": int(plc_step_fc),
+        "liquid_ibc_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 2960, 4))[0], 3) if proc_plc.is_connected else 0.0,
+        "liquid_ls_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3122, 4))[0], 3) if proc_plc.is_connected else 0.0,
+        "liquid_mis_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3284, 4))[0], 3) if proc_plc.is_connected else 0.0,
+        "liquid_ro_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3446, 4))[0], 3) if proc_plc.is_connected else 0.0,
     }
 
 # ─── Recipe Deserialization ─────────────────────────────────────────────────
