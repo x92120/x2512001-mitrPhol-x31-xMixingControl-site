@@ -1,3 +1,4 @@
+import time
 """
 PLC Service — Direct S7-1200 Communication via snap7
 =====================================================
