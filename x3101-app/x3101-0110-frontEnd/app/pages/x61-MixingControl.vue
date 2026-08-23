@@ -961,6 +961,68 @@ const handlePlcMessage = (topic: string, payload: any) => {
     }
 }
 
+
+// ── QC Re-Pasteurize Action (Method 2: Re-run Pasteurization on QC NG / Re-heat) ──
+const reRunPasteurize = async () => {
+    // Find the Pasteurize Step in the active recipe (Phase p050 / x1020 / Pasteurize / Action 30600)
+    const pastIdx = skuSteps.value.findIndex((s: any) => 
+        String(s.phase_number || '').includes('050') || 
+        String(s.phase_id || '').includes('1020') || 
+        String(s.description || '').toLowerCase().includes('pasteur') ||
+        Number(s.action_code || 0) === 30600
+    )
+
+    if (pastIdx >= 0) {
+        qcDialog.value = false
+        const pastStep = skuSteps.value[pastIdx]
+        $q.notify({
+            type: 'warning',
+            icon: 'local_fire_department',
+            message: `🔥 สั่ง Re-Pasteurize (ต้มฆ่าเชื้อซ้ำ) ที่ Phase ${pastStep.phase_number || 'p050'}`,
+            caption: 'ระบบส่งคำสั่งให้ PLC เริ่มลูปต้มฆ่าเชื้อใหม่อีก 1 รอบ',
+            position: 'center',
+            timeout: 3500
+        })
+        
+        // Log Re-Pasteurize audit trail to database
+        const curBatchId = selectedBatchId.value || activeBatchId.value
+        if (curBatchId) {
+            try {
+                $fetch(`${appConfig.apiBaseUrl}/production-batches/${curBatchId}/log-step`, {
+                    method: 'POST',
+                    headers: getAuthHeader() as Record<string, string>,
+                    body: {
+                        phase_id: String(pastStep.phase_number || 'p050'),
+                        step_id: Number(pastStep.sub_step || 10),
+                        action_code: '30600',
+                        re_code: 'QC-RePasteurize',
+                        target_value: 0,
+                        actual_value: 0,
+                        actual_temp: Number(actualTankTemp.value || 0)
+                    }
+                }).catch(e => console.warn('[QC] log-step Re-Pasteurize failed:', e))
+            } catch {}
+        }
+
+        // Jump local index back to Pasteurize step
+        localStepIndex.value = pastIdx
+        _lastUserStepAction = Date.now()
+
+        // Send PLC Step command (z = 20) + Start pulse
+        setTimeout(async () => {
+            await sendStepToPLC(pastIdx)
+            await sendCommand('START')
+        }, 500)
+    } else {
+        $q.notify({
+            type: 'negative',
+            icon: 'error',
+            message: 'ไม่พบสเต็ป Pasteurize ในสูตรนี้',
+            position: 'center'
+        })
+    }
+}
+
 const confirmQcCheck = async () => {
     if (pendingQcStep.value?.operation_brix_record && !actualBrix.value) {
         $q.notify({ type: 'warning', message: 'Please input Actual Brix' }); return;
@@ -4152,9 +4214,14 @@ onUnmounted(() => {
 
         <q-separator />
 
-        <q-card-actions align="right" class="bg-grey-1 q-pa-md">
-          <q-btn flat label="Pause Batch" color="grey-8" @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }" />
-          <q-btn label="Confirm & Continue" color="positive" icon="check_circle" :loading="qcSaving" @click="confirmQcCheck" />
+        <q-card-actions align="between" class="bg-grey-1 q-pa-md">
+          <q-btn unelevated label="Re-Pasteurize" color="deep-orange-9" icon="local_fire_department" @click="reRunPasteurize">
+            <q-tooltip class="bg-dark text-body2">สั่งให้ PLC วิ่งกลับไปต้มฆ่าเชื้อซ้ำอีก 1 รอบ</q-tooltip>
+          </q-btn>
+          <div class="row q-gutter-sm items-center">
+            <q-btn flat label="Pause" color="grey-8" @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }" />
+            <q-btn unelevated label="Confirm & Pass" color="positive" icon="check_circle" :loading="qcSaving" @click="confirmQcCheck" />
+          </div>
         </q-card-actions>
       </q-card>
     </q-dialog>
