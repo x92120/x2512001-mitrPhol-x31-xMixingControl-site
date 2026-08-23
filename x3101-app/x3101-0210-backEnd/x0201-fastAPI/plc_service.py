@@ -216,49 +216,68 @@ CIR_TEMP_DB_MAP = {
     4: 2006   # Line 4: DB2006.DBD0
 }
 
-
-# ─── Process-PLC Cached Reader (1s TTL) ──────────────────────────────────────
-import time as _t_proc
-_proc_cache = {'ts': 0, 'data': {}}
+# ─── High-Speed Per-Plant Process-PLC Cache (Independent 1.5s TTL) ───────────
+_proc_plant_cache = {
+    1: {'ts': 0, 'data': {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}},
+    2: {'ts': 0, 'data': {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}},
+    3: {'ts': 0, 'data': {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}},
+    4: {'ts': 0, 'data': {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}},
+}
 
 def _get_proc_cached(plant_id: int):
-    global _proc_cache
-    now = _t_proc.time()
+    global _proc_plant_cache
+    now = time.time()
     pid = int(plant_id)
-    if (now - _proc_cache.get('ts', 0)) < 1.0 and pid in _proc_cache.get('data', {}):
-        return _proc_cache['data'][pid]
+    if pid not in _proc_plant_cache:
+        _proc_plant_cache[pid] = {'ts': 0, 'data': {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}}
     
-    # Refresh
-    res = {'cir_temp': 0.0, 'ls_act': 0.0, 'ro_act': 0.0, 'ibc_act': 0.0, 'mis_act': 0.0}
+    plant_entry = _proc_plant_cache[pid]
+    # If cached data is fresh (< 1.5s), return immediately (0ms)
+    if (now - plant_entry['ts']) < 1.5 and plant_entry['data']:
+        return plant_entry['data']
+    
+    res = dict(plant_entry['data'])
     try:
         if not proc_plc.is_connected:
             proc_plc.connect()
         if proc_plc.is_connected:
+            # 1. Circulation TT (4 bytes)
             cir_db = CIR_TEMP_DB_MAP.get(pid, 2003)
+            try:
+                raw_cir = proc_plc.db_read(cir_db, 0, 4)
+                if raw_cir: res['cir_temp'] = round(struct.unpack('>f', raw_cir)[0], 2)
+            except Exception:
+                pass
+
+            # 2. Liquid Flowmeter Actuals (Single Block Read of 490 bytes from 2960 to 3450)
             proc_db = get_process_db(pid)
-            
-            raw_cir = proc_plc.db_read(cir_db, 0, 4)
-            if raw_cir: res['cir_temp'] = round(struct.unpack('>f', raw_cir)[0], 2)
-            
-            raw_ls = proc_plc.db_read(proc_db, 3122, 4)
-            if raw_ls: res['ls_act'] = round(struct.unpack('>f', raw_ls)[0], 3)
-
-            raw_ro = proc_plc.db_read(proc_db, 3446, 4)
-            if raw_ro: res['ro_act'] = round(struct.unpack('>f', raw_ro)[0], 3)
-
-            raw_ibc = proc_plc.db_read(proc_db, 2960, 4)
-            if raw_ibc: res['ibc_act'] = round(struct.unpack('>f', raw_ibc)[0], 3)
-
-            raw_mis = proc_plc.db_read(proc_db, 3284, 4)
-            if raw_mis: res['mis_act'] = round(struct.unpack('>f', raw_mis)[0], 3)
+            try:
+                # Read span 2960..3450 in ONE single S7 call
+                # Offset 2960 -> rel 0 (IBC)
+                # Offset 3122 -> rel 162 (LS)
+                # Offset 3284 -> rel 324 (MIS)
+                # Offset 3446 -> rel 486 (RO)
+                block_data = proc_plc.db_read(proc_db, 2960, 490)
+                if block_data and len(block_data) >= 490:
+                    res['ibc_act'] = round(struct.unpack_from('>f', block_data, 0)[0], 3)
+                    res['ls_act']  = round(struct.unpack_from('>f', block_data, 162)[0], 3)
+                    res['mis_act'] = round(struct.unpack_from('>f', block_data, 324)[0], 3)
+                    res['ro_act']  = round(struct.unpack_from('>f', block_data, 486)[0], 3)
+            except Exception as block_err:
+                # Fallback to individual reads if span fails
+                try:
+                    r_ls = proc_plc.db_read(proc_db, 3122, 4)
+                    if r_ls: res['ls_act'] = round(struct.unpack('>f', r_ls)[0], 3)
+                    r_ro = proc_plc.db_read(proc_db, 3446, 4)
+                    if r_ro: res['ro_act'] = round(struct.unpack('>f', r_ro)[0], 3)
+                except Exception:
+                    pass
     except Exception as e:
-        logger.error(f"[Proc PLC Cache] Error: {e}")
+        logger.error(f"[Proc PLC Cache Plant {pid}] Error: {e}")
     
-    if 'data' not in _proc_cache: _proc_cache['data'] = {}
-    _proc_cache['data'][pid] = res
-    _proc_cache['ts'] = now
+    plant_entry['data'] = res
+    plant_entry['ts'] = now
     return res
-
 
 def read_circulation_temp(plant_id: int = 1) -> float:
     """
