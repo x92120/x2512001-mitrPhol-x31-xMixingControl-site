@@ -1715,7 +1715,7 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
     return { ok: failed.length === 0, failed }
 }
 
-const confirmStepFromRow = (step: any, skipToleranceCheck: boolean = false) => {
+const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false) => {
     _lastUserStepAction = Date.now()
     if (!isPlcConnected.value) {
         $q.notify({ type: 'negative', message: 'PLC is offline!', position: 'top' })
