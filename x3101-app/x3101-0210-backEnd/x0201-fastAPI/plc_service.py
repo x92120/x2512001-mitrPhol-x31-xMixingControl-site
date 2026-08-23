@@ -548,7 +548,7 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     ph_actual     = struct.unpack_from('>f', data, 24)[0] if len(data) >= 28 else 0.0
     plc_step_fc   = struct.unpack_from('>h', data, 28)[0] if len(data) >= 30 else 0
 
-    hw = round(read_hopper_weight(pid), 3)
+    hw = round(struct.unpack_from('>f', data, 24)[0], 3) if len(data) >= 28 else 0.0
 
     res = {
         "Watch_Doc":       watchdog,
