@@ -508,17 +508,32 @@ def read_handshake(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     }
 
 
+_telem_fast_cache = {}
+
 def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     """
-    Read Telemetry DB for live PLC status.
+    High-Speed Cached Telemetry Reader (300ms TTL).
+    Serves instant 0ms responses to frontend polling without flooding S7 PLC socket.
     """
-    db_number = get_db_number('telemetry', plant_id)
+    global _telem_fast_cache
+    now = time.time()
+    pid = int(plant_id)
+    cached = _telem_fast_cache.get(pid)
+    if cached and (now - cached.get('_ts', 0)) < 0.35:
+        return cached.get('data')
+
+    db_number = get_db_number('telemetry', pid)
     try:
-        data = plc.db_read(db_number, 0, 30)  # +2 bytes for PLC_Step_FC at DBW28
+        data = plc.db_read(db_number, 0, 30)
     except Exception as e:
         logger.error(f"PLC db_read error (DB{db_number}): {e}")
+        if cached:
+            return cached.get('data')
         return None
+
     if data is None:
+        if cached:
+            return cached.get('data')
         return None
 
     watchdog      = struct.unpack_from('>h', data, 0)[0]
@@ -529,43 +544,39 @@ def read_telemetry(plant_id: int = 1) -> Optional[Dict[str, Any]]:
     mix_weight    = struct.unpack_from('>f', data, 12)[0]
     agitator_act  = struct.unpack_from('>f', data, 16)[0]
     highshear_act = struct.unpack_from('>f', data, 20)[0]
-    hopper_weight = struct.unpack_from('>f', data, 24)[0]
-    # DBW28: FC_MapPhaseToStep_v2 result (0-28, even) — SKU-independent step name
+    ph_actual     = struct.unpack_from('>f', data, 24)[0] if len(data) >= 28 else 0.0
     plc_step_fc   = struct.unpack_from('>h', data, 28)[0] if len(data) >= 30 else 0
 
-    return {
-        "watchdog": watchdog,
-        "Watch_Doc": watchdog,
-        "plc_state": plc_state,
-        "PLC_State": plc_state,
-        "current_step": current_step,
-        "Current_Step": current_step,
-        "step_timer": step_timer,
-        "Step_Timer": step_timer,
-        "mix_temp": round(mix_temp, 2),
-        "MixTank_Temp": round(mix_temp, 2),
-        "mix_weight": round(mix_weight, 2),
-        "MixTank_Weight": round(mix_weight, 2),
-        "agitator_act": round(agitator_act, 2),
-        "Agitator_Act": round(agitator_act, 2),
-        "highshear_act": round(highshear_act, 2),
-        "HighShear_Act": round(highshear_act, 2),
-        "hopper_weight": round(hopper_weight, 2),
-        "Hopper_Weight": round(hopper_weight, 2),
-        "plc_step_fc": int(plc_step_fc),
-        "PLC_Step_FC": int(plc_step_fc),
-        "liquid_ibc_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 2960, 4))[0], 3) if proc_plc.is_connected else 0.0,
-        "liquid_ls_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3122, 4))[0], 3) if proc_plc.is_connected else 0.0,
-        "liquid_mis_act": round(struct.unpack('>f', proc_plc.db_read(get_process_db(plant_id), 3284, 4))[0], 3) if proc_plc.is_connected else 0.0,
-        "liquid_ro_act": _get_proc_cached(plant_id).get('ro_act', 0.0),
-        "liquid_ls_act": _get_proc_cached(plant_id).get('ls_act', 0.0),
-        "liquid_ibc_act": _get_proc_cached(plant_id).get('ibc_act', 0.0),
-        "liquid_mis_act": _get_proc_cached(plant_id).get('mis_act', 0.0),
-        "circulation_temp": _get_proc_cached(plant_id).get('cir_temp', 0.0),
-        "Circulation_Temperature": _get_proc_cached(plant_id).get('cir_temp', 0.0),
+    hw = round(read_hopper_weight(pid), 3)
+
+    res = {
+        "Watch_Doc":       watchdog,
+        "Watch_Dog":       watchdog,
+        "PLC_State":       plc_state,
+        "PLC_Status":      plc_state,
+        "Current_Step":    current_step,
+        "PLC_Step_FC":     plc_step_fc,
+        "Step_Timer":      step_timer,
+        "Remaining_Time":  step_timer,
+        "MixTank_Temp":    round(mix_temp, 2),
+        "MixTank_Weight":  round(mix_weight, 2),
+        "Agitator_Act":    round(agitator_act, 2),
+        "HighShear_Act":   round(highshear_act, 2),
+        "PH_Actual":       round(ph_actual, 2),
+        "Brix_Actual":     0.0,
+        "Hopper_Weight":   hw,
+        "liquid_ro_act":   _get_proc_cached(pid).get('ro_act', 0.0),
+        "liquid_ls_act":   _get_proc_cached(pid).get('ls_act', 0.0),
+        "liquid_ibc_act":  _get_proc_cached(pid).get('ibc_act', 0.0),
+        "liquid_mis_act":  _get_proc_cached(pid).get('mis_act', 0.0),
+        "circulation_temp": _get_proc_cached(pid).get('cir_temp', 0.0),
+        "Circulation_Temperature": _get_proc_cached(pid).get('cir_temp', 0.0),
     }
 
-# ─── Recipe Deserialization ─────────────────────────────────────────────────
+    _telem_fast_cache[pid] = {'_ts': now, 'data': res}
+    return res
+
+
 def deserialize_recipe_step(data: bytes, offset: int) -> Dict[str, Any]:
     return {
         'seq': struct.unpack_from('>h', data, offset + 0)[0],
