@@ -571,6 +571,90 @@ def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")
     return {"status": "success", "message": f"Recipe, Cmd, and Actuals memory cleared for Plant {plant_id}"}
 
 
+
+@router.post("/plant/{plant_id}/complete-batch/{batch_id}")
+def complete_batch_and_release_plant(
+    plant_id: int = Path(..., title="Plant ID (1, 2, or 3)"),
+    batch_id: str = Path(..., title="Batch ID to complete and release"),
+    db: Session = Depends(get_db)
+):
+    """
+    Complete & Release Batch:
+      1. Update production_batches status = 'Done', done = 1 (PRESERVES ALL STEP LOGS & QC RECORDS!)
+      2. Clear DB15x0 (Step CMD)      — Zero out step command
+      3. Clear DB15x1 (Recipe)        — PLC resets recipe (batch_id = '-', sku_id = '-')
+      4. Clear DB15x7 (Actuals)       — PLC resets actuals
+      5. Reset worker_handshake state  — Reset in-memory trackers (_last_batch_id, _last_finished_step)
+      6. Clear telemetry cache        — Invalidate cache so UI sees clean standby
+    """
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    from sqlalchemy import text as _text
+
+    results = {}
+
+    # 1. Update Batch Status in DB to 'Done', done = 1 (DO NOT DELETE LOGS!)
+    try:
+        db.execute(
+            _text("""
+                UPDATE production_batches
+                SET status = 'Done', done = 1, updated_at = NOW()
+                WHERE batch_id = :bid
+            """),
+            {"bid": batch_id}
+        )
+        db.commit()
+        results["update_batch_status"] = "ok (→ Done, done=1)"
+        logger.info(f"[Complete&Release] Batch {batch_id} status → Done (done=1)")
+    except Exception as e:
+        db.rollback()
+        results["update_batch_status"] = f"failed: {e}"
+        logger.error(f"[Complete&Release] Failed to set batch status to Done: {e}")
+
+    # 2. Clear DB15x0 (Step Command)
+    try:
+        db_cmd_number = get_db_number('step_cmd', plant_id)
+        zeros_cmd = b'\x00' * 88
+        r0 = plc.db_write(db_cmd_number, 0, zeros_cmd)
+        results["clear_step_cmd_db1510"] = "ok" if r0 else "failed"
+        logger.info(f"[Complete&Release] DB15{plant_id}0 clear: {results['clear_step_cmd_db1510']}")
+    except Exception as cmd_err:
+        results["clear_step_cmd_db1510"] = f"failed: {cmd_err}"
+        logger.error(f"[Complete&Release] Failed to clear DB15{plant_id}0: {cmd_err}")
+
+    # 3. Clear DB15x1 (Recipe)
+    r1 = write_full_recipe_to_plc(batch_id="-", sku_id="-", steps=[], plant_id=plant_id)
+    results["clear_recipe_db1511"] = "ok" if r1 else "failed"
+    logger.info(f"[Complete&Release] DB15{plant_id}1 clear: {results['clear_recipe_db1511']}")
+
+    # 4. Clear DB15x7 (Actuals)
+    r2 = clear_actuals_in_plc(plant_id)
+    results["clear_actuals_db1517"] = "ok" if r2 else "failed"
+    logger.info(f"[Complete&Release] DB15{plant_id}7 clear: {results['clear_actuals_db1517']}")
+
+    # 5. Reset worker state in worker_handshake
+    try:
+        from worker_handshake import _last_batch_id, _last_finished_step
+        _last_batch_id[plant_id] = ""
+        _last_finished_step[plant_id] = -1
+        results["reset_worker_state"] = "ok (tracker cleared)"
+    except Exception as e:
+        results["reset_worker_state"] = f"warning: {e}"
+
+    # 6. Clear Telemetry Cache
+    if plant_id in _telem_cache:
+        _telem_cache.pop(plant_id, None)
+
+    all_ok = all(v.startswith("ok") for v in results.values())
+    return {
+        "status": "success" if all_ok else "partial",
+        "batch_id": batch_id,
+        "plant_id": plant_id,
+        "results": results,
+        "message": f"Batch {batch_id} marked Done and Plant {plant_id} released to Standby. Step logs preserved."
+        if all_ok else "Some steps failed — check results for details."
+    }
+
+
 @router.post("/plant/{plant_id}/reset-batch/{batch_id}")
 def reset_batch_soft(
     plant_id: int = Path(..., title="Plant ID (1, 2, or 3)"),

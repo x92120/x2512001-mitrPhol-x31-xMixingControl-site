@@ -350,7 +350,7 @@ const fetchBatchInfo = async () => {
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
         
-        // --- 1. Check PLC DB151x First (After Computer Restart Recovery) ---
+        // --- 1. Check PLC DB151x First (Physical Machine Truth) ---
         try {
             const plcStatus = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/recipe-status`, {
                 headers: getAuthHeader() as Record<string, string>
@@ -358,54 +358,44 @@ const fetchBatchInfo = async () => {
             if (plcStatus?.success && plcStatus.target?.batch_id) {
                 const plcBatchId = String(plcStatus.target.batch_id).replace(/\0/g, '').trim()
                 if (plcBatchId && plcBatchId !== '-' && plcBatchId !== '0') {
-                    console.log('[Recovery] Found active batch directly from PLC DB1511:', plcBatchId)
+                    console.log('[Recovery] Found active batch directly from PLC DB15x1:', plcBatchId)
                     await restoreBatchFromPlc(plcBatchId)
                     return // Stop further fetching, we have restored from PLC
                 }
             }
         } catch (plcErr) {
-            console.warn('[Recovery] Could not read active batch from PLC, falling back to edge...', plcErr)
+            console.warn('[Recovery] Could not read active batch from PLC:', plcErr)
         }
 
-        // --- 2. Fallback to Edge API ---
-        const data = await $fetch<any>(`${remoteApiBaseUrl}/edge/active-batch`, {
-             headers: getAuthHeader() as Record<string, string>
-        })
-        if (data) {
-            if (String(data.plant_id).replace(/\D/g, '') !== activePlantId.value) {
-                console.warn(`Edge active batch is for plant ${data.plant_id}, but we are viewing plant ${activePlantId.value}. Ignoring.`);
-                throw new Error("Edge batch belongs to a different plant");
-            }
-            batchInfo.value = { 
-                batch_id: data.batch_id,
-                plan_id: data.plan_id || '-', 
-                sku_id: data.sku_code, 
-                sku_name: data.sku_name || '-', 
-                plant: '0' + data.plant_id,
-                batch_size: data.target_total_weight
-            }
-            selectedBatchId.value = data.batch_id
-            selectedSkuId.value = data.sku_code
-            fetchSkuSteps(data.sku_code, data.batch_id)
-            fetchPrebatchWeights(data.batch_id)
-        } else {
-            throw new Error("No edge batch data")
-        }
-    } catch (e) {
-        console.warn('Could not fetch from edge API, falling back to query params.')
+        // --- 2. If PLC is empty, check URL Query Params (User explicitly dispatched from Check-for-Production) ---
         const qBatchId = route.query.batch_id as string
         const qSkuId = route.query.sku_id as string
         const qPlanId = route.query.plan_id as string
         const qSkuName = route.query.sku_name as string
         const qBatchSize = parseFloat(route.query.batch_size as string) || 0
         const qPlant = (route.query.plant as string)?.replace(/\D/g, '') || '1'
-        if (qBatchId && qSkuId) {
+        
+        if (qBatchId && qSkuId && String(qPlant) === String(activePlantId.value)) {
+            // Check if batch is already done in DB before loading
+            try {
+                const batchCheck = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/by-batch-id/${qBatchId}`, {
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                if (batchCheck && (batchCheck.status === 'Done' || batchCheck.done === 1 || batchCheck.done === true)) {
+                    console.log(`[Standby] Dispatched batch ${qBatchId} is already Done in DB. Showing Standby.`);
+                    const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+                    router.replace({ query: newQuery })
+                    resetPlantBoard()
+                    return
+                }
+            } catch {}
+
             batchInfo.value = { 
                 batch_id: qBatchId,
                 plan_id: qPlanId || '-', 
                 sku_id: qSkuId, 
                 sku_name: qSkuName || '-', 
-                plant: 'Mixing ' + qPlant,
+                plant: '0' + qPlant,
                 batch_size: qBatchSize
             }
             selectedBatchId.value = qBatchId
@@ -413,9 +403,8 @@ const fetchBatchInfo = async () => {
             fetchSkuSteps(qSkuId, qBatchId)
             fetchPrebatchWeights(qBatchId)
         } else {
-            batchInfo.value = null
-            selectedBatchId.value = null
-            skuSteps.value = []
+            // No active batch in PLC and no new batch in query params -> Clean Standby State
+            resetPlantBoard()
         }
     } finally {
         loading.value = false
@@ -1415,6 +1404,79 @@ const killBatch = () => {
     })
 }
 
+
+const completeAndReleaseBatch = (auto = false) => {
+    if (!selectedBatchId.value) {
+        $q.notify({ type: 'warning', message: 'No batch selected to complete.' })
+        return
+    }
+    const batchId = selectedBatchId.value
+    const plantId = activePlantId.value
+
+    const performComplete = async () => {
+        try {
+            $q.loading.show({ message: 'Completing batch and releasing plant...' })
+            if (batchId) {
+                try { localStorage.removeItem('stepIdx_' + batchId) } catch {}
+                try { localStorage.removeItem('stepIdx_' + batchId.trim()) } catch {}
+            }
+
+            const remoteApiBaseUrl = appConfig.apiBaseUrl
+            const res = await $fetch<any>(`${remoteApiBaseUrl}/plc/plant/${plantId}/complete-batch/${batchId}`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>
+            })
+
+            if (res && (res.status === 'success' || res.status === 'partial')) {
+                $q.notify({
+                    type: 'positive',
+                    icon: 'check_circle',
+                    message: `✅ Batch ${batchId} marked as Done. Plant ${plantId} released to Standby.`,
+                    caption: 'All production logs are safely saved in database.',
+                    position: 'top',
+                    timeout: 4000
+                })
+
+                // Reset board and clear reactive states
+                resetPlantBoard()
+
+                if (plantsData.value[plantId]) {
+                    plantsData.value[plantId] = {
+                        ...plantsData.value[plantId],
+                        Phase_ID: '', Phase_id: '', phase_id: '',
+                        Step_ID: 0,  Step_id: 0,  step_id: 0,
+                        Batch_ID: '-', batch_id: '-',
+                        Current_Step: 0, current_step: 0,
+                    }
+                }
+
+                const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+                router.replace({ query: newQuery })
+            } else {
+                $q.notify({ type: 'negative', message: res?.message || 'Failed to complete batch.' })
+            }
+        } catch (e: any) {
+            console.error('Failed to complete batch:', e)
+            $q.notify({ type: 'negative', message: 'Error calling complete-batch API.' })
+        } finally {
+            $q.loading.hide()
+        }
+    }
+
+    if (auto) {
+        performComplete()
+    } else {
+        $q.dialog({
+            title: 'Complete & Release Plant',
+            message: `Are you sure you want to finish batch ${batchId} and release Plant ${plantId}? This will mark status as 'Done', PRESERVE all step logs, clear PLC memory, and return to Standby for the next batch.`,
+            cancel: true,
+            persistent: true,
+            color: 'positive',
+            ok: { label: 'Complete & Release', color: 'positive' }
+        }).onOk(performComplete)
+    }
+}
+
 const softResetBatch = () => {
     if (!selectedBatchId.value) {
         $q.notify({ type: 'warning', message: 'No batch selected to reset.' })
@@ -2094,27 +2156,22 @@ async function markBatchDone(trigger: string = 'auto') {
     if (batchInfo.value?.status === 'Done') return  // already done
     try {
         const remoteApiBaseUrl = appConfig.apiBaseUrl
-        await $fetch(`${remoteApiBaseUrl}/production-batches/complete/${batchIdStr}`, {
-            method: 'PATCH',
-            headers: getAuthHeader() as Record<string, string>,
-            body: { completed_by: `operator [${trigger}]` }
+        const plantId = activePlantId.value
+        await $fetch(`${remoteApiBaseUrl}/plc/plant/${plantId}/complete-batch/${batchIdStr}`, {
+            method: 'POST',
+            headers: getAuthHeader() as Record<string, string>
         })
-        $q.notify({ type: 'positive', icon: 'check_circle', message: '✅ Batch marked as Done', position: 'top-right', timeout: 4000 })
+        $q.notify({ type: 'positive', icon: 'check_circle', message: `✅ Batch ${batchIdStr} Done & Plant ${plantId} Released`, position: 'top-right', timeout: 4000 })
         if (batchInfo.value) {
             batchInfo.value.status = 'Done'
             batchInfo.value.done = true
         }
+        resetPlantBoard()
+        const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+        router.replace({ query: newQuery })
         console.log(`[Batch Done] ${batchIdStr} → Done (triggered by: ${trigger})`)
     } catch (e: any) {
-        // 400 "already Done" is OK — just log it
-        const msg = e?.data?.detail || String(e)
-        if (msg.includes('already')) {
-            console.log(`[Batch Done] ${batchIdStr} already Done`)
-            if (batchInfo.value) batchInfo.value.status = 'Done'
-        } else {
-            console.error('[Batch Done] Failed:', e)
-            $q.notify({ type: 'warning', message: 'ไม่สามารถอัปเดต Batch Done ได้ — ตรวจสอบ API', position: 'top-right' })
-        }
+        console.error('[Batch Done] Failed:', e)
     }
 }
 
@@ -2384,6 +2441,19 @@ const restoreBatchFromPlc = async (batchId: string) => {
         }
 
         if (data) {
+            if (data.status === 'Done' || data.done === 1 || data.done === true) {
+                console.log(`[Standby] Batch ${batchId} is already Done in database. Clearing PLC memory.`);
+                try {
+                    await $fetch(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
+                        method: 'POST',
+                        headers: getAuthHeader() as Record<string, string>
+                    })
+                } catch {}
+                resetPlantBoard()
+                const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
+                router.replace({ query: newQuery })
+                return
+            }
             const rawSkuName = String(plantData.value.SKU_Name || '').replace(/\0/g, '').trim()
             let skuName = data.sku_name || '-'
             let skuId = data.sku_id || '-'
@@ -3790,6 +3860,10 @@ onUnmounted(() => {
              <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="print" color="grey-8" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" v-if="skuStepsByPhase.length > 0" />
+             <q-btn v-if="selectedBatchId" flat dense icon="task_alt" color="positive" @click="() => completeAndReleaseBatch(false)">
+               <q-tooltip>Complete & Release Plant (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
+             </q-btn>
+             <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
              <q-btn flat dense icon="refresh" color="teal-8" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="settings_backup_restore" color="orange-9" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>

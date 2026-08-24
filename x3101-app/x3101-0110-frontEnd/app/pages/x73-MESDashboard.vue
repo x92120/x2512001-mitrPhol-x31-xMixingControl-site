@@ -443,19 +443,20 @@ async function loadData() {
     cutoff.setDate(cutoff.getDate() - period.value)
     plans.forEach((p: any) => {
       ;(p.batches || []).forEach((b: any) => {
-        const batchDate = new Date(b.updated_at || b.created_at || 0)
+        const actDateStr = (b.status === 'Done' ? (b.end_time || b.updated_at) : (b.start_time || b.created_at)) || b.created_at
+        const batchDate = new Date(actDateStr || 0)
         const fromD = dateFrom.value ? new Date(dateFrom.value) : cutoff
         const toD   = dateTo.value   ? new Date(dateTo.value + 'T23:59:59') : new Date()
         if (batchDate >= fromD && batchDate <= toD) {
-          const durH = (b.updated_at && b.created_at && b.status === 'Done')
-            ? Math.round((new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 360000) / 10
-            : null
+          const durH = b.duration_h != null ? Number(b.duration_h) : (b.duration_min != null ? Math.round(b.duration_min / 6) / 10 : null)
           flat.push({
             ...b,
             sku_name: p.sku_name || b.sku_id,
             plant: String(b.plant || p.plant || '1'),
             date: batchDate.toISOString().slice(0, 10),
             cycle_h: durH,
+            start_ts: new Date(b.start_time || b.created_at).getTime(),
+            end_ts: new Date(b.end_time || b.updated_at).getTime(),
             created_fmt: b.created_at ? new Date(b.created_at).toLocaleString('th-TH') : '—'
           })
         }
@@ -800,18 +801,23 @@ const batchAgeRows = computed(() => {
 // ── Gantt Timeline ──────────────────────────────────────
 const ganttRows = computed(() => {
   const done = filteredBatches.value
-    .filter(b => b.status === 'Done' && b.created_at && b.updated_at)
-    .map(b => ({
-      id: b.batch_id || Math.random(),
-      sku: b.sku_name || b.sku_id || '?',
-      plant: b.plant || '?',
-      start: new Date(b.created_at).getTime(),
-      end: new Date(b.updated_at).getTime(),
-      durH: Math.round((new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 360000) / 10,
-      dateStr: new Date(b.updated_at).toLocaleDateString('th-TH'),
-      color: b.plant?.includes('1') ? '#3b82f6' : b.plant?.includes('2') ? '#14b8a6' : '#818cf8'
-    }))
-    .filter(b => b.durH > 0 && b.durH < 72)
+    .filter(b => b.status === 'Done')
+    .map(b => {
+      const dur = b.cycle_h != null ? b.cycle_h : (b.duration_min != null ? Math.round(b.duration_min / 6) / 10 : 1)
+      const endT = b.end_ts || (b.updated_at ? new Date(b.updated_at).getTime() : Date.now())
+      const startT = b.start_ts || (endT - (dur * 3600000))
+      return {
+        id: b.batch_id || Math.random(),
+        sku: b.sku_name || b.sku_id || '?',
+        plant: b.plant || '?',
+        start: startT,
+        end: endT,
+        durH: dur,
+        dateStr: new Date(endT).toLocaleDateString('th-TH'),
+        color: b.plant?.includes('1') ? '#3b82f6' : b.plant?.includes('2') ? '#14b8a6' : '#818cf8'
+      }
+    })
+    .filter(b => b.durH != null && b.durH >= 0)
     .sort((a, b) => b.end - a.end)
     .slice(0, 15)
 
@@ -821,8 +827,8 @@ const ganttRows = computed(() => {
   const range = maxT - minT || 1
   return done.map(d => ({
     ...d,
-    left: Math.round((d.start - minT) / range * 100),
-    width: Math.round((d.end - d.start) / range * 100)
+    left: Math.max(0, Math.min(100, Math.round((d.start - minT) / range * 100))),
+    width: Math.max(4, Math.min(100, Math.round((d.end - d.start) / range * 100)))
   }))
 })
 

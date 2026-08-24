@@ -447,15 +447,18 @@ async function loadData() {
 
     plans.forEach((p: any) => {
       ;(p.batches || []).forEach((b: any) => {
-        const batchDate = new Date(b.updated_at || b.created_at || 0)
+        const actDateStr = (b.status === 'Done' ? (b.end_time || b.updated_at) : (b.start_time || b.created_at)) || b.created_at
+        const batchDate = new Date(actDateStr || 0)
         const fromD = dateFrom.value ? new Date(dateFrom.value) : cutoff
         const toD   = dateTo.value   ? new Date(dateTo.value + 'T23:59:59') : new Date()
         if (batchDate >= fromD && batchDate <= toD) {
+          const durH = b.duration_h != null ? Number(b.duration_h) : (b.duration_min != null ? Math.round(b.duration_min / 6) / 10 : null)
           flat.push({
             ...b,
             sku_name: p.sku_name || b.sku_id,
-            plant: b.plant || p.plant || '1',
-            date: batchDate.toISOString().slice(0, 10)
+            plant: String(b.plant || p.plant || '1'),
+            date: batchDate.toISOString().slice(0, 10),
+            duration_h: durH
           })
         }
       })
@@ -941,9 +944,9 @@ const radialOptions = computed(() => ({
 const durationSeries = computed(() => {
   const skuDur: Record<string, number[]> = {}
   for (const b of filteredBatches.value) {
-    if (b.status === 'Done' && b.created_at && b.updated_at) {
-      const dur = (new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 3600000
-      if (dur > 0 && dur < 72) {  // filter outliers < 72h
+    if (b.status === 'Done') {
+      const dur = b.duration_h != null ? Number(b.duration_h) : (b.duration_min != null ? b.duration_min / 60 : null)
+      if (dur != null && dur > 0 && dur < 48) {
         const key = (b.sku_name || b.sku_id || 'Unknown').slice(0, 20)
         if (!skuDur[key]) skuDur[key] = []
         skuDur[key].push(dur)
@@ -960,9 +963,9 @@ const durationSeries = computed(() => {
 const durationOptions = computed(() => {
   const skuDur: Record<string, number[]> = {}
   for (const b of filteredBatches.value) {
-    if (b.status === 'Done' && b.created_at && b.updated_at) {
-      const dur = (new Date(b.updated_at).getTime() - new Date(b.created_at).getTime()) / 3600000
-      if (dur > 0 && dur < 72) {
+    if (b.status === 'Done') {
+      const dur = b.duration_h != null ? Number(b.duration_h) : (b.duration_min != null ? b.duration_min / 60 : null)
+      if (dur != null && dur > 0 && dur < 48) {
         const key = (b.sku_name || b.sku_id || 'Unknown').slice(0, 20)
         if (!skuDur[key]) skuDur[key] = []
         skuDur[key].push(dur)
@@ -994,12 +997,14 @@ const operatorRank = computed(() => {
   const opMap: Record<string, number> = {}
   for (const b of filteredBatches.value) {
     if (b.status !== 'Done') continue
-    const ops = [
-      b.pour_operator_name, b.cook_operator_name,
-      b.operator, b.operator_name
-    ].filter(Boolean)
-    const name = ops[0] || null
-    if (name) opMap[name] = (opMap[name] || 0) + 1
+    const opStr = b.operators || b.operator || b.pour_operator_name || b.cook_operator_name || b.operator_name
+    if (opStr) {
+      // Split if multiple operators logged steps
+      const names = String(opStr).split(',').map((s: string) => s.trim()).filter(Boolean)
+      names.forEach((name: string) => {
+        opMap[name] = (opMap[name] || 0) + 1
+      })
+    }
   }
   const sorted = Object.entries(opMap).sort(([,a],[,b]) => b-a).slice(0, 8)
   const max = sorted[0]?.[1] || 1

@@ -117,7 +117,7 @@ export function useMQTT() {
                     '/Mix-01/Recipe', '/Mix-02/Recipe', '/Mix-03/Recipe', // Recipe payloads
                     'MIX-01-READ', 'MIX-02-READ', 'MIX-03-READ',       // PLC readback
                     'MIX-01-PUT', 'MIX-02-PUT', 'MIX-03-PUT',         // PLC write confirm
-                    // '/MIX-01', '/MIX-02', '/MIX-03',                  // Legacy Kepware telemetry payloads (disabled to prevent flickering)
+                    '/MIX-01', '/MIX-02', '/MIX-03',                          // Live PLC telemetry payloads from Kepware/Node-RED
                     'mixing/plant/+/#',                                 // App command/status
                     'mixing/plant/+/status',
                     'mixing/plant/+/+',

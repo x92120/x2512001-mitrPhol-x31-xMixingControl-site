@@ -81,17 +81,60 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             {"plan_ids": plan_ids}
         ).fetchall()
         
-        # Fetch batch IDs that actually have step execution logs
-        log_rows = db.execute(
+        # 2a. Fetch step execution logs stats (start_time, end_time, duration, operators)
+        step_stats_map = {}
+        log_stats_rows = db.execute(
             sql_text("""
-                SELECT DISTINCT l.batch_id 
+                SELECT 
+                    l.batch_id,
+                    MIN(l.completed_at) AS start_time,
+                    MAX(l.completed_at) AS end_time,
+                    TIMESTAMPDIFF(MINUTE, MIN(l.completed_at), MAX(l.completed_at)) AS duration_min,
+                    GROUP_CONCAT(DISTINCT l.operator SEPARATOR ', ') AS operators
                 FROM production_step_logs l
                 JOIN production_batches b ON l.batch_id = b.batch_id
                 WHERE b.plan_id IN :plan_ids
+                GROUP BY l.batch_id
             """).bindparams(bindparam("plan_ids", expanding=True)),
             {"plan_ids": plan_ids}
         ).fetchall()
-        batches_with_logs = {r.batch_id for r in log_rows}
+        for r in log_stats_rows:
+            m = r._mapping
+            step_stats_map[m['batch_id']] = {
+                "start_time": m['start_time'],
+                "end_time": m['end_time'],
+                "duration_min": m['duration_min'],
+                "operators": m['operators']
+            }
+        batches_with_logs = set(step_stats_map.keys())
+
+        # 2b. Fetch QC stats (brix, pH, qc operators)
+        qc_stats_map = {}
+        qc_rows = db.execute(
+            sql_text("""
+                SELECT 
+                    q.batch_id,
+                    AVG(q.brix_target) AS brix_sp,
+                    AVG(q.brix_actual) AS brix_act,
+                    AVG(q.ph_target) AS ph_sp,
+                    AVG(q.ph_actual) AS ph_act,
+                    GROUP_CONCAT(DISTINCT q.operator SEPARATOR ', ') AS qc_operators
+                FROM production_qc_records q
+                JOIN production_batches b ON q.batch_id = b.batch_id
+                WHERE b.plan_id IN :plan_ids
+                GROUP BY q.batch_id
+            """).bindparams(bindparam("plan_ids", expanding=True)),
+            {"plan_ids": plan_ids}
+        ).fetchall()
+        for q in qc_rows:
+            qm = q._mapping
+            qc_stats_map[qm['batch_id']] = {
+                "brix_sp": qm['brix_sp'],
+                "brix_actual": qm['brix_act'],
+                "ph_sp": qm['ph_sp'],
+                "ph_actual": qm['ph_act'],
+                "qc_operators": qm['qc_operators']
+            }
         
         for b in batches:
             pid = b.plan_id
@@ -102,6 +145,23 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             status_val = b.status
             if status_val == "Done" and b.batch_id not in batches_with_logs:
                 status_val = "Prepared" if bool(b.batch_prepare) else "Created"
+            
+            s_stat = step_stats_map.get(b.batch_id, {})
+            q_stat = qc_stats_map.get(b.batch_id, {})
+            
+            dur_m = s_stat.get("duration_min")
+            dur_h = round(dur_m / 60.0, 2) if dur_m is not None else None
+            ops = s_stat.get("operators") or q_stat.get("qc_operators")
+            op_primary = ops.split(',')[0].strip() if ops else None
+
+            # Evaluate QC pass/fail
+            qc_passed = None
+            if q_stat:
+                b_sp, b_act = q_stat.get("brix_sp"), q_stat.get("brix_actual")
+                p_sp, p_act = q_stat.get("ph_sp"), q_stat.get("ph_actual")
+                b_ok = (b_sp is None or b_act is None or abs(b_act - b_sp) <= 2.0)
+                p_ok = (p_sp is None or p_act is None or abs(p_act - p_sp) <= 0.5)
+                qc_passed = b_ok and p_ok
                 
             batches_by_plan[pid].append({
                 "id": b.id, "plan_id": b.plan_id, "batch_id": b.batch_id,
@@ -114,6 +174,20 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
                 "fh_delivered_at": b.fh_delivered_at, "fh_delivered_by": b.fh_delivered_by,
                 "spp_delivered_at": b.spp_delivered_at, "spp_delivered_by": b.spp_delivered_by,
                 "created_at": b.created_at, "updated_at": b.updated_at,
+                # Real mixing lifecycle & metrics
+                "start_time": s_stat.get("start_time") or b.created_at,
+                "end_time": s_stat.get("end_time") or b.updated_at,
+                "duration_min": dur_m,
+                "duration_h": dur_h,
+                "operators": ops,
+                "operator": op_primary,
+                "pour_operator_name": op_primary,
+                "cook_operator_name": op_primary,
+                "brix_sp": q_stat.get("brix_sp"),
+                "brix_actual": q_stat.get("brix_actual"),
+                "ph_sp": q_stat.get("ph_sp"),
+                "ph_actual": q_stat.get("ph_actual"),
+                "qc_passed": qc_passed
             })
     
     # 2b. Fetch recheck/packing stats per batch from prebatch_recs, split by warehouse
