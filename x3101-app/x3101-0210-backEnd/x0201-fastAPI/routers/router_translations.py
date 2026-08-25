@@ -25,7 +25,7 @@ router = APIRouter(tags=["Translations"])
 
 # Base Directory Setup
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-I18N_DIR = os.path.join(BASE_DIR, "x01-frontEnd", "x0101-xMixing", "app", "i18n")
+I18N_DIR = "/home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/x3101-app/x3101-0110-frontEnd/app/i18n"
 LOCALES_DIR = os.path.join(I18N_DIR, "locales")
 IMPORT_PATH = os.path.join(I18N_DIR, "translations_import.json")
 

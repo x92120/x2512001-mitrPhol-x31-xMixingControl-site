@@ -1096,12 +1096,12 @@ const fetchBatchRecheck = async (batchId: string) => {
         boxId.value = batchId
         boxDetails.value = null // Clear box-level data
         const s = data.summary
-        showFeedback('success', `Batch loaded: ${s.total} items (${s.checked} checked, ${s.pending} pending)`, 'BATCH LOADED')
+        showFeedback('success', t('recheck.batchLoadedDesc', { total: s.total, checked: s.checked, pending: s.pending }), t('recheck.batchLoadedTitle'))
         
         // --- NEW: POPUP PROMPT FOR BAG SCAN ---
         $q.notify({
-            message: 'PLEASE SCAN PRE-BATCH LABELS',
-            caption: `Batch: ${batchId} | Verified: ${s.checked}/${s.total}`,
+            message: t('recheck.scanPrebatchPrompt'),
+            caption: `${t('recheck.batchLabelScannedTitle')}: ${batchId} | ${t('recheck.verified')}: ${s.checked}/${s.total}`,
             icon: 'qr_code_scanner',
             color: 'indigo-10',
             position: 'center',
@@ -1143,14 +1143,14 @@ const resetBatchRecheck = async () => {
             headers: getAuthHeader() as Record<string, string>
         })
         
-        showFeedback('success', `All checked status for batch ${recheckBatchId.value} has been reset.`, 'RESET SUCCESS')
+        showFeedback('success', t('recheck.resetSuccessDesc', { batch: recheckBatchId.value }), t('recheck.resetSuccess'))
         playSound('success')
         
         // Refresh batch recheck and prebatch items
         await fetchBatchRecheck(recheckBatchId.value)
     } catch (error: any) {
         console.error('Error resetting batch recheck:', error)
-        showFeedback('error', 'Failed to reset batch checking status.', 'RESET ERROR')
+        showFeedback('error', t('recheck.resetErrorDesc'), t('recheck.resetError'))
     } finally {
         loading.value = false
     }
@@ -1196,11 +1196,11 @@ const verifyBatchBag = async (bagBarcode: string) => {
             }
             
             if (bagBarcode === recheckBatchId.value) {
-                showFeedback('warning', 'You scanned the Batch Label! Please scan an Ingredient Bag instead.', 'BATCH LABEL SCANNED')
+                showFeedback('warning', t('recheck.batchLabelScannedDesc'), t('recheck.batchLabelScannedTitle'))
                 playSound('error')
                 setScanFeedback('error')
             } else if (parsedNewBatchId === recheckBatchId.value) {
-                showFeedback('error', `Ingredient not found in batch recipe: ${bagBarcode}`, 'INVALID INGREDIENT')
+                showFeedback('error', t('recheck.invalidIngredientDesc', { code: bagBarcode }), t('recheck.invalidIngredient'))
                 playSound('error')
                 setScanFeedback('error')
             } else {
@@ -1211,7 +1211,7 @@ const verifyBatchBag = async (bagBarcode: string) => {
                     newBatchId: parsedNewBatchId 
                 }
                 playSound('wrong_box')
-                showFeedback('error', `BAG [${bagBarcode}] does NOT belong to this batch!`, '⚠ WRONG BATCH ⚠')
+                showFeedback('error', t('recheck.wrongBatchDesc', { code: bagBarcode }), t('recheck.wrongBatch'))
             }
         } else {
             showFeedback('error', detail, 'ERROR')
@@ -1430,7 +1430,7 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
         
         if (success) {
             $q.notify({
-                message: '📦 Batch Loaded — SCAN PREBATCH LABELS',
+                message: `📦 ${t('recheck.batchLoadedTitle')} — ${t('recheck.scanPrebatchPrompt')}`,
                 caption: `Batch: ${candidate}`,
                 icon: 'qr_code_scanner',
                 color: 'indigo-10',
@@ -1548,7 +1548,7 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
             }
             setScanFeedback('success')
             playSound('success')
-            showFeedback('success', `✅ ${ing.re_code} — Verified!`, 'PREBATCH OK')
+            showFeedback('success', t('recheck.prebatchVerified', { code: ing.re_code }), t('recheck.prebatchOK'))
             matched = true
             
             // Refresh batchRecheck so UI status badges and Start Production button are updated dynamically!
@@ -1566,7 +1566,7 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
             break
         } else if (ing && ing.recheck_status === 1) {
             setScanFeedback('success')
-            showFeedback('warning', `${ing.re_code} already verified`, 'DUPLICATE SCAN')
+            showFeedback('warning', t('recheck.alreadyVerified', { code: ing.re_code }), t('recheck.duplicateScan'))
             matched = true
             break
         }
@@ -1578,15 +1578,15 @@ const verifyBagContent = async (barcode: string, batchId: string, isJson: boolea
         } else {
             setScanFeedback('error')
             playSound('error')
-            showFeedback('error', `Ingredient "${reCodeFromScan || fullRecordId}" not found in batch`, 'NOT MATCHED')
+            showFeedback('error', t('recheck.notMatchedDesc', { code: reCodeFromScan || fullRecordId }), t('recheck.notMatched'))
             console.warn('[Verify] No match found. Available RE codes:', prebatchByWarehouse.value.flatMap(g => g.ingredients.map((i: any) => i.re_code)))
         }
     }
     
     if (canStartProduction.value) {
         $q.notify({
-            message: '🎉 ALL INGREDIENTS VERIFIED!',
-            caption: 'Ready to Start Production',
+            message: t('recheck.allIngredientsVerified'),
+            caption: t('recheck.readyToStart'),
             icon: 'check_circle',
             color: 'green-9',
             position: 'center',
@@ -1663,7 +1663,7 @@ const releaseBatch = async () => {
             headers: getAuthHeader() as Record<string, string>
         })
         
-        showFeedback('success', 'Batch approved and released!', 'PRODUCTION READY')
+        showFeedback('success', t('recheck.batchReleased'), t('recheck.productionReady'))
         playSound('success')
         
         // Refresh UI state

@@ -1,6 +1,13 @@
 {
     "en": {
         "login.title": "User Login",
+        "login.qrBadgeLogin": "QR Badge Login",
+        "login.scanBadgePlaceholder": "Scan your QR Badge...",
+        "login.orLoginManually": "or login manually",
+        "login.badgeLoginDialogTitle": "Badge Authentication",
+        "login.enterBadgePin": "Enter your 4-8 digit Badge PIN",
+        "login.badgePinPlaceholder": "● ● ● ●",
+        "login.invalidPin": "Invalid badge PIN",
         "login.usernameOrEmail": "Username or Email",
         "login.password": "Password",
         "login.loginButton": "Login",
@@ -8,23 +15,30 @@
         "login.fillFields": "Please fill in all fields",
         "login.invalidCredentials": "Invalid username or password",
         "login.cannotConnect": "Cannot connect to server",
-        "login.noAccount": "Don''t have an account?",
-        "login.createAccount": "Create New Account",
+        "login.noAccount": "Don't have an account?",
+        "login.createAccount": "Register New User",
         "login.forgotPassword": "Forgot Password?",
         "login.copyright": "© 2026 xMixing. All rights reserved."
     },
     "th": {
         "login.title": "เข้าสู่ระบบ",
+        "login.qrBadgeLogin": "ล็อกอินด้วย QR Badge",
+        "login.scanBadgePlaceholder": "สแกนบัตร QR Code ของคุณ...",
+        "login.orLoginManually": "หรือเข้าสู่ระบบด้วยตนเอง",
+        "login.badgeLoginDialogTitle": "ยืนยันตัวตนด้วยบัตร QR Badge",
+        "login.enterBadgePin": "กรอกรหัส PIN บัตร 4-8 หลัก",
+        "login.badgePinPlaceholder": "● ● ● ●",
+        "login.invalidPin": "รหัส PIN ไม่ถูกต้อง",
         "login.usernameOrEmail": "ชื่อผู้ใช้หรืออีเมล",
         "login.password": "รหัสผ่าน",
         "login.loginButton": "เข้าสู่ระบบ",
         "login.loginSuccess": "เข้าสู่ระบบสำเร็จ!",
-        "login.fillFields": "กรุณากรอกข้อมูลให้ครบ",
+        "login.fillFields": "กรุณากรอกข้อมูลให้ครบทุกช่อง",
         "login.invalidCredentials": "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง",
         "login.cannotConnect": "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์",
-        "login.noAccount": "ยังไม่มีบัญชี?",
-        "login.createAccount": "สร้างบัญชีใหม่",
+        "login.noAccount": "ยังไม่มีบัญชีผู้ใช้งาน?",
+        "login.createAccount": "ลงทะเบียนผู้ใช้ใหม่",
         "login.forgotPassword": "ลืมรหัสผ่าน?",
-        "login.copyright": "© 2026 xMixing สงวนลิขสิทธิ์"
+        "login.copyright": "© 2026 xMixing สงวนลิขสิทธิ์ทั้งหมด"
     }
 }

@@ -229,6 +229,7 @@ watch(cookScanInput, (v) => {
     _cookDbx = setTimeout(() => { if (cookScanInput.value.trim()) resolveOperatorScan(cookScanInput.value, cookOperator, cookScanLoading, cookScanInput, false) }, 150)
 })
 const $q = useQuasar()
+const { t } = useI18n()
 
 // ── State ──
 const selectedBatchId = ref<string | null>(null)
@@ -1329,8 +1330,10 @@ const clearQcRecords = async (batchId: string) => {
 
 const killBatch = () => {
     $q.dialog({
-        title: 'Confirm Kill Batch',
-        message: `Are you sure you want to completely clear the PLC memory and reset all batch records for Plant ${activePlantId.value}? This cannot be undone.`,
+        title: t('mixing.killBatchTitle'),
+        message: t('mixing.killBatchMsg', { plant: activePlantId.value }),
+        cancel: { label: t('common.cancel'), flat: true },
+        ok: { label: t('common.confirm'), color: 'negative' },
         cancel: true,
         persistent: true,
         color: 'negative'
@@ -1467,8 +1470,10 @@ const completeAndReleaseBatch = (auto = false) => {
         performComplete()
     } else {
         $q.dialog({
-            title: 'Complete & Release Plant',
-            message: `Are you sure you want to finish batch ${batchId} and release Plant ${plantId}? This will mark status as 'Done', PRESERVE all step logs, clear PLC memory, and return to Standby for the next batch.`,
+            title: t('mixing.completeBatchTitle'),
+            message: t('mixing.completeBatchMsg', { batch: batchId, plant: plantId }),
+            cancel: { label: t('common.cancel'), flat: true },
+            ok: { label: t('common.confirm'), color: 'positive' },
             cancel: true,
             persistent: true,
             color: 'positive',
@@ -1483,8 +1488,10 @@ const softResetBatch = () => {
         return
     }
     $q.dialog({
-        title: 'Confirm Reset Batch',
-        message: `Are you sure you want to soft-reset batch ${selectedBatchId.value}? This will clear DB15x0 (Step CMD), DB15x1 (Recipe), DB15x7 (Actuals), delete all step logs in database, QC records (Brix/pH), and reset status back to Pending.`,
+        title: t('mixing.resetBatchTitle'),
+        message: t('mixing.resetBatchMsg', { batch: selectedBatchId.value }),
+        cancel: { label: t('common.cancel'), flat: true },
+        ok: { label: t('common.confirm'), color: 'warning' },
         cancel: true,
         persistent: true,
         color: 'warning'

@@ -1,0 +1,28 @@
+{
+    "en": {
+        "mixing.killBatchTitle": "Confirm Kill Batch",
+        "mixing.killBatchMsg": "Are you sure you want to completely clear the PLC memory and reset all batch records for Plant {plant}? This cannot be undone.",
+        "mixing.completeBatchTitle": "Complete & Release Plant",
+        "mixing.completeBatchMsg": "Are you sure you want to finish batch {batch} and release Plant {plant}? This will mark status as 'Done', PRESERVE all step logs, clear PLC memory, and return to Standby for the next batch.",
+        "mixing.resetBatchTitle": "Confirm Reset Batch",
+        "mixing.resetBatchMsg": "Are you sure you want to soft-reset batch {batch}? This will clear DB15x0 (Step CMD), DB15x1 (Recipe), DB15x7 (Actuals), delete all step logs in database, QC records (Brix/pH), and reset status back to Pending.",
+        "mixing.noBatchSelected": "No batch selected to reset.",
+        "mixing.killSuccess": "Batch successfully terminated and memory cleared.",
+        "mixing.killFailed": "Failed to terminate batch.",
+        "mixing.cancel": "Cancel",
+        "mixing.ok": "OK"
+    },
+    "th": {
+        "mixing.killBatchTitle": "ยืนยันการยกเลิกแบทช์ (Kill Batch)",
+        "mixing.killBatchMsg": "คุณแน่ใจหรือไม่ว่าต้องการล้างหน่วยความจำ PLC และรีเซ็ตข้อมูลแบทช์ทั้งหมดของ Plant {plant}? การกระทำนี้ไม่สามารถย้อนกลับได้",
+        "mixing.completeBatchTitle": "เสร็จสิ้นและปล่อย Plant",
+        "mixing.completeBatchMsg": "คุณแน่ใจหรือไม่ว่าต้องการจบแบทช์ {batch} และปล่อย Plant {plant}? ระบบจะบันทึกสถานะเป็น 'Done', เก็บประวัติบันทึกขั้นตอนทั้งหมด, ล้างหน่วยความจำ PLC และกลับสู่สถานะ Standby สำหรับแบทช์ถัดไป",
+        "mixing.resetBatchTitle": "ยืนยันการรีเซ็ตแบทช์",
+        "mixing.resetBatchMsg": "คุณแน่ใจหรือไม่ว่าต้องการรีเซ็ตแบทช์ {batch}? ระบบจะล้างคำสั่งขั้นตอน DB15x0, สูตร DB15x1, ค่าจริง DB15x7, ลบประวัติขั้นตอนในฐานข้อมูล และคืนสถานะกลับเป็นรอดำเนินการ (Pending)",
+        "mixing.noBatchSelected": "ไม่ได้เลือกแบทช์ที่จะรีเซ็ต",
+        "mixing.killSuccess": "ยกเลิกแบทช์และล้างหน่วยความจำสำเร็จ",
+        "mixing.killFailed": "ไม่สามารถยกเลิกแบทช์ได้",
+        "mixing.cancel": "ยกเลิก",
+        "mixing.ok": "ตกลง"
+    }
+}

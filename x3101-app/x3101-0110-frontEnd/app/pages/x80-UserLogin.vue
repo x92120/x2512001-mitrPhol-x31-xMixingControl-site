@@ -65,7 +65,7 @@ const handleBadgeLogin = async () => {
       await router.replace(redirectPath)
     } else {
       const err = await response.json().catch(() => ({}))
-      $q.notify({ type: 'negative', icon: 'lock', message: err.detail || 'Invalid PIN', position: 'top' })
+      $q.notify({ type: 'negative', icon: 'lock', message: err.detail || t('login.invalidPin'), position: 'top' })
       badgePin.value = ''
       pinFieldRef.value?.focus()
     }
@@ -141,12 +141,12 @@ const closeLogin = () => router.replace('/')
           <div class="badge-scan-section q-mb-md">
             <div class="row items-center q-gutter-xs q-mb-xs">
               <q-icon name="qr_code_scanner" color="deep-purple-7" size="20px" />
-              <span class="text-caption text-weight-bold text-deep-purple-8" style="letter-spacing: 0.5px; text-transform: uppercase;">QR Badge Login</span>
+              <span class="text-caption text-weight-bold text-deep-purple-8" style="letter-spacing: 0.5px; text-transform: uppercase;">{{ t('login.qrBadgeLogin') }}</span>
             </div>
             <q-input
               v-model="badgeScanInput"
               outlined dense
-              placeholder="Scan your QR Badge..."
+              :placeholder="t('login.scanBadgePlaceholder')"
               @keyup.enter="onBadgeScanSubmit"
               bg-color="white"
               autofocus
@@ -160,7 +160,7 @@ const closeLogin = () => router.replace('/')
           <!-- Divider -->
           <div class="row items-center q-gutter-sm q-mb-md">
             <q-separator class="col" color="grey-4" />
-            <span class="text-caption text-grey-6">or login manually</span>
+            <span class="text-caption text-grey-6">{{ t('login.orLoginManually') }}</span>
             <q-separator class="col" color="grey-4" />
           </div>
 
@@ -212,7 +212,7 @@ const closeLogin = () => router.replace('/')
         <!-- Header -->
         <q-card-section class="bg-deep-purple-8 text-white text-center q-py-lg">
           <q-icon name="how_to_reg" size="48px" class="q-mb-sm" />
-          <div class="text-h6 text-weight-bold">Badge Login</div>
+          <div class="text-h6 text-weight-bold">{{ t('login.badgeLoginDialogTitle') }}</div>
           <div class="text-body2 opacity-80 q-mt-xs">
             <q-icon name="person" size="sm" class="q-mr-xs" />
             <strong>{{ scannedBadgeUser }}</strong>
@@ -221,14 +221,14 @@ const closeLogin = () => router.replace('/')
 
         <!-- PIN Input -->
         <q-card-section class="q-pa-lg text-center">
-          <div class="text-body2 text-grey-7 q-mb-md">Enter your 4-digit Badge PIN</div>
+          <div class="text-body2 text-grey-7 q-mb-md">{{ t('login.enterBadgePin') }}</div>
           <q-input
             ref="pinFieldRef"
             v-model="badgePin"
             type="password"
             outlined
             dense
-            placeholder="● ● ● ●"
+            :placeholder="t('login.badgePinPlaceholder')"
             maxlength="8"
             style="font-size: 24px; letter-spacing: 8px; text-align: center;"
             @keyup.enter="handleBadgeLogin"
@@ -240,8 +240,8 @@ const closeLogin = () => router.replace('/')
 
         <!-- Actions -->
         <q-card-actions class="q-px-lg q-pb-lg row q-gutter-sm">
-          <q-btn flat class="col" label="Cancel" color="grey-7" @click="closePinDialog" />
-          <q-btn class="col" label="Login" color="deep-purple-8" unelevated :loading="badgePinLoading" @click="handleBadgeLogin" />
+          <q-btn flat class="col" :label="t('common.cancel')" color="grey-7" @click="closePinDialog" />
+          <q-btn class="col" :label="t('login.loginButton')" color="deep-purple-8" unelevated :loading="badgePinLoading" @click="handleBadgeLogin" />
         </q-card-actions>
       </q-card>
     </q-dialog>

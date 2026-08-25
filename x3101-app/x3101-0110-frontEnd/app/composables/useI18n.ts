@@ -24,13 +24,14 @@ import soundJson from '~/i18n/locales/sound.json'
 import userConfigJson from '~/i18n/locales/userConfig.json'
 import whConfigJson from '~/i18n/locales/whConfig.json'
 import wrongBoxJson from '~/i18n/locales/wrongBox.json'
+import mixingJson from '~/i18n/locales/mixing.json'
 
 // Build local fallback dictionary from JSON files
 const localeFiles = [
     aboutJson, commonJson, dashboardJson, homeJson, ingConfigJson,
     ingredientJson, loginJson, navJson, packingJson, packingListJson,
     planJson, prebatchJson, prodPlanJson, recheckJson, registerJson,
-    reportJson, skuJson, soundJson, userConfigJson, whConfigJson, wrongBoxJson
+    reportJson, skuJson, soundJson, userConfigJson, whConfigJson, wrongBoxJson, mixingJson
 ]
 
 const localDictionary: Record<string, Record<string, string>> = { en: {}, th: {} }

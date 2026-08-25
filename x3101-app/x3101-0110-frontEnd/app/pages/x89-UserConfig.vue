@@ -668,7 +668,7 @@ const deleteUser = (user: User) => {
                 <!-- Badge PIN for QR Login -->
                 <q-expansion-item
                   icon="qr_code_scanner"
-                  label="Badge PIN (QR Login)"
+                  :label="t('userConfig.badgePin')"
                   header-class="bg-deep-purple-1 text-deep-purple-9"
                   expand-icon-class="text-deep-purple-7"
                   default-closed
@@ -684,17 +684,17 @@ const deleteUser = (user: User) => {
                         v-model="selectedUser.badge_pin" 
                         outlined 
                         dense 
-                        label="Badge PIN (4-6 digits)"
+                        :label="t('userConfig.badgePinInputLabel')"
                         type="password"
                         maxlength="8"
-                        hint="e.g. 1234 — Used with QR badge scan on Login page"
+                        :hint="t('userConfig.badgePinHint')"
                         :rules="[v => !v || (v.length >= 4 && /^\d+$/.test(v)) || 'Must be 4-8 digits']"
                       >
                         <template v-slot:prepend><q-icon name="pin" color="deep-purple-7" /></template>
                         <template v-slot:append>
                           <q-btn v-if="selectedUser.badge_pin" flat round dense icon="clear" size="xs" color="grey-6"
                             @click="selectedUser.badge_pin = ''" >
-                            <q-tooltip>Clear Badge PIN</q-tooltip>
+                            <q-tooltip>{{ t('userConfig.clearBadgePin') }}</q-tooltip>
                           </q-btn>
                         </template>
                       </q-input>
@@ -714,7 +714,7 @@ const deleteUser = (user: User) => {
                   v-for="permission in allPermissions"
                   :key="permission.value"
                   :model-value="hasPermission(permission.value)"
-                  :label="permission.label"
+                  :label="t('userConfig.perm_' + permission.value)"
                   color="info"
                   @update:model-value="togglePermission(permission.value)"
                 />

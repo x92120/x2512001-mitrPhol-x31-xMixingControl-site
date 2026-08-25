@@ -118,21 +118,21 @@ const goToPlant = (plant: number) => {
         <q-route-tab
           to="/x55-ProductionPlan"
           icon="calendar_month"
-          label="PRODUCTION PLAN"
+          :label="t('nav.productionPlan')"
           v-if="hasPermission('production_list')"
         />
 
         <q-route-tab
           to="/x56-SkuView"
           icon="science"
-          label="SKU"
+          :label="t('nav.sku')"
           v-if="hasPermission('production_list')"
         />
 
         <q-route-tab
           to="/x60-CheckForProduction"
           icon="fact_check"
-          label="CHECK FOR PRODUCTION"
+          :label="t('nav.checkForProduction')"
           v-if="hasPermission('production_list')"
         />
 
@@ -141,7 +141,7 @@ const goToPlant = (plant: number) => {
           no-caps
           stretch
           icon="precision_manufacturing"
-          label="MIXING CONTROL"
+          :label="t('nav.mixingControl')"
           v-if="hasPermission('production_list')"
           class="q-tab__label"
         >
@@ -161,9 +161,9 @@ const goToPlant = (plant: number) => {
           </q-list>
         </q-btn-dropdown>
         <q-route-tab to="/x89-UserConfig" icon="manage_accounts" :label="t('nav.user')" v-if="hasPermission('admin')" />
-        <q-route-tab to="/x100-PlantMonitor" icon="monitor" label="Plant Monitor" />
-        <q-route-tab to="/x70-ProductionReport" icon="assessment" label="PRODUCTION REPORT" />
-        <q-route-tab to="/x71-MixingReport" icon="description" label="MIXING REPORT" />
+        <q-route-tab to="/x100-PlantMonitor" icon="monitor" :label="t('nav.plantMonitor')" />
+        <q-route-tab to="/x70-ProductionReport" icon="assessment" :label="t('nav.productionReport')" />
+        <q-route-tab to="/x71-MixingReport" icon="description" :label="t('nav.mixingReport')" />
         <q-route-tab to="/x99-About" icon="info" :label="t('nav.about')" />
       </q-tabs>
     </q-header>
