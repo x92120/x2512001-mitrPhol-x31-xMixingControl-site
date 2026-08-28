@@ -18,7 +18,10 @@
         "login.noAccount": "Don't have an account?",
         "login.createAccount": "Register New User",
         "login.forgotPassword": "Forgot Password?",
-        "login.copyright": "© 2026 xMixing. All rights reserved."
+        "login.copyright": "© 2026 xMixing. All rights reserved.",
+        "login.readyToScan": "Ready to scan badge",
+        "login.tapToFocus": "Tap to focus scanner",
+        "login.scannerActive": "Scanner Active"
     },
     "th": {
         "login.title": "เข้าสู่ระบบ",
@@ -39,6 +42,9 @@
         "login.noAccount": "ยังไม่มีบัญชีผู้ใช้งาน?",
         "login.createAccount": "ลงทะเบียนผู้ใช้ใหม่",
         "login.forgotPassword": "ลืมรหัสผ่าน?",
-        "login.copyright": "© 2026 xMixing สงวนลิขสิทธิ์ทั้งหมด"
+        "login.copyright": "© 2026 xMixing สงวนลิขสิทธิ์ทั้งหมด",
+        "login.readyToScan": "พร้อมสแกนบัตรพนักงาน",
+        "login.tapToFocus": "แตะเพื่อเปิดสแกน",
+        "login.scannerActive": "เครื่องสแกนพร้อมทำงาน"
     }
 }

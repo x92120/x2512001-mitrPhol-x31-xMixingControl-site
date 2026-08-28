@@ -3852,33 +3852,33 @@ onUnmounted(() => {
        <!-- CENTER: Controls & PLC Status -->
        <div class="row items-center q-gutter-x-md" style="flex-shrink: 0;">
           
-          <!-- Command Center -->
-          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-1" style="height: 36px;">
-             <q-btn flat dense icon="play_arrow" :color="batchRunning ? 'grey-4' : 'positive'" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
-             <q-btn flat dense icon="pause" :color="!batchRunning ? 'grey-4' : 'warning'" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
-             <q-btn flat dense icon="skip_next" color="primary" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
+          <!-- Command Center (Enhanced Touch-Friendly Desktop HMI) -->
+          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs" style="height: 44px; padding: 3px 6px;">
+             <q-btn unelevated dense icon="play_arrow" label="START" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="pause" label="PAUSE" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
+             <q-btn flat dense icon="skip_next" color="primary" class="q-px-xs" style="height: 36px;" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="stop" color="negative" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="stop" label="ABORT" color="negative" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="developer_board" color="indigo-7" @click="openPlcDataBlock">
+             <q-btn flat dense icon="developer_board" color="indigo-7" style="height: 36px;" @click="openPlcDataBlock">
                <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 9px;">{{ plcCmdLog.length }}</q-badge>
                <q-tooltip>View PLC Data Block (DB100)</q-tooltip>
              </q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="print" color="grey-8" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
+             <q-btn flat dense icon="print" color="grey-8" style="height: 36px;" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" v-if="skuStepsByPhase.length > 0" />
-             <q-btn v-if="selectedBatchId" flat dense icon="task_alt" color="positive" @click="() => completeAndReleaseBatch(false)">
+             <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" label="FINISH" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 36px; border-radius: 6px;" @click="() => completeAndReleaseBatch(false)">
                <q-tooltip>Complete & Release Plant (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
              </q-btn>
              <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
-             <q-btn flat dense icon="refresh" color="teal-8" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
+             <q-btn flat dense icon="refresh" color="teal-8" style="height: 36px;" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="settings_backup_restore" color="orange-9" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
+             <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 36px;" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="delete_forever" color="red-9" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
+             <q-btn flat dense icon="delete_forever" color="red-9" style="height: 36px;" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
              <!-- View Report: direct link to production report for current batch -->
-             <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-5"
+             <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-8" style="height: 36px;"
                     @click="router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId || '' } })">
                <q-tooltip>View Production Report ({{ selectedBatchId }})</q-tooltip>
              </q-btn>

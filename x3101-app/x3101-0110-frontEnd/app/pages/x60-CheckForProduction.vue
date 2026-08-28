@@ -2533,18 +2533,19 @@ onUnmounted(() => {
                 </div>
                 <q-btn
                   v-if="selectedBatchId"
-                  dense push
+                  push
+                  size="md"
                   icon="rocket_launch"
-                  label="START PRODUCTION"
+                  :label="canStartProduction ? 'START PRODUCTION (เริ่มการผลิต)' : 'VERIFY CHECKLIST FIRST'"
                   @click="goToStartProduction"
                   :loading="loading"
-                  class="q-mr-sm text-weight-bolder start-prod-btn"
-                  style="font-size: 12px; padding: 2px 12px; letter-spacing: 0.5px; transition: background 0.3s, box-shadow 0.3s;"
+                  class="q-mr-sm text-weight-bolder start-prod-btn q-px-md"
+                  style="min-height: 38px; border-radius: 8px; letter-spacing: 0.5px; transition: all 0.3s;"
                   :style="canStartProduction
                     ? (loading
-                        ? 'background:#2e7d32 !important; color:white !important; box-shadow: 0 0 12px rgba(46,125,50,0.6);'
-                        : 'background:#1565c0 !important; color:white !important; box-shadow: 0 0 10px rgba(21,101,192,0.5);')
-                    : 'background:#bdbdbd !important; color:#757575 !important; box-shadow:none; cursor:not-allowed;'"
+                        ? 'background:#2e7d32 !important; color:white !important; box-shadow: 0 0 16px rgba(46,125,50,0.8); transform: scale(1.02);'
+                        : 'background:#1565c0 !important; color:white !important; box-shadow: 0 0 12px rgba(21,101,192,0.6);')
+                    : 'background:#64748b !important; color:#e2e8f0 !important; box-shadow:none; opacity: 0.75;'"
                   :disable="!canStartProduction"
                 >
                   <q-tooltip v-if="!canStartProduction">Verify all FH &amp; SPP ingredients first</q-tooltip>

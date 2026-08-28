@@ -12,7 +12,13 @@
         "common.actions": "Actions",
         "common.status": "Status",
         "common.active": "Active",
-        "common.inactive": "Inactive"
+        "common.inactive": "Inactive",
+        "common.noAccess": "No Access",
+        "common.exportPdf": "Export PDF",
+        "common.print": "Print",
+        "common.checklist": "Checklist",
+        "common.pending": "Pending",
+        "common.verified": "Verified"
     },
     "th": {
         "common.cancel": "ยกเลิก",
@@ -27,6 +33,12 @@
         "common.actions": "การกระทำ",
         "common.status": "สถานะ",
         "common.active": "ใช้งาน",
-        "common.inactive": "ไม่ใช้งาน"
+        "common.inactive": "ไม่ใช้งาน",
+        "common.noAccess": "ไม่มีสิทธิ์เข้าถึง",
+        "common.exportPdf": "ส่งออก PDF",
+        "common.print": "พิมพ์เอกสาร",
+        "common.checklist": "รายการตรวจสอบ",
+        "common.pending": "รอดำเนินการ",
+        "common.verified": "ตรวจสอบแล้ว"
     }
 }

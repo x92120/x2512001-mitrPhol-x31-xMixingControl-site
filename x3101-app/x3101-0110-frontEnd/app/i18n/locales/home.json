@@ -38,7 +38,16 @@
         "home.newSKUCreated": "New SKU Created",
         "home.ingredientReplenishment": "Ingredient Replenishment",
         "home.batchCompleted": "Batch Completed",
-        "home.accessDenied": "Access Denied: You do not have permission to access that page"
+        "home.accessDenied": "Access Denied: You do not have permission to access that page",
+        "home.pendingBatchQueue": "Live Pending Batch Queue",
+        "home.checkRecipe": "Check Recipe",
+        "home.toMixing": "Go to Mixing",
+        "home.noPendingBatches": "No pending batches at the moment",
+        "home.batchId": "Batch ID",
+        "home.sku": "SKU Name",
+        "home.target": "Target (Kg)",
+        "home.plant": "Plant",
+        "home.actions": "Actions"
     },
     "th": {
         "home.welcome": "ยินดีต้อนรับ",
@@ -79,6 +88,15 @@
         "home.newSKUCreated": "สร้างสูตรใหม่",
         "home.ingredientReplenishment": "เติมวัตถุดิบ",
         "home.batchCompleted": "แบทช์เสร็จสิ้น",
-        "home.accessDenied": "ปฏิเสธการเข้าถึง: คุณไม่มีสิทธิ์เข้าถึงหน้านี้"
+        "home.accessDenied": "ปฏิเสธการเข้าถึง: คุณไม่มีสิทธิ์เข้าถึงหน้านี้",
+        "home.pendingBatchQueue": "รายการแบทช์รอดำเนินการ (Live Batch Queue)",
+        "home.checkRecipe": "ตรวจสอบสูตร",
+        "home.toMixing": "ไปที่ Mixing",
+        "home.noPendingBatches": "ไม่มีแบทช์ค้างในขณะนี้",
+        "home.batchId": "รหัสแบทช์",
+        "home.sku": "ชื่อสูตร (SKU)",
+        "home.target": "น้ำหนักเป้าหมาย (กก.)",
+        "home.plant": "เครื่องผสม",
+        "home.actions": "การกระทำ"
     }
 }

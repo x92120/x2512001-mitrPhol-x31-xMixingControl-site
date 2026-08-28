@@ -21,6 +21,8 @@ const fmtDT = (d: any) => {
 // ── Reactive State ──
 const counts = ref({ skus: 0, stock: 0, batches: 0, productions: 0 })
 const recentActivities = ref<any[]>([])
+const pendingBatchesList = ref<any[]>([])
+const loadingBatches = ref(false)
 const systemStatus = ref({
   dbStatus: 'Operational', uptime: '99.9%', sync: 'Real-time',
   storageUsed: 0, storageTotal: 100, storagePercent: 0, lastBackup: 'Unknown'
@@ -33,23 +35,58 @@ const apiFetch = (path: string) =>
     .catch(() => [])
 
 const fetchDashboard = async () => {
-  const [skus, intakes, batches, plansResp] = await Promise.all([
+  loadingBatches.value = true
+  const [skus, intakes, batchesResp, plansResp, awaitingBatches] = await Promise.all([
     apiFetch('/skus/'),
     apiFetch('/ingredient-intake-lists/'),
     apiFetch('/production-batches/summary'),
-    apiFetch('/production-plans/?status=all')
+    apiFetch('/production-plans/?status=all'),
+    apiFetch('/production-batches/awaiting-recheck')
   ])
   const plans = plansResp?.plans || plansResp || []
+  const batches = Array.isArray(batchesResp) ? batchesResp : []
 
-  // Counts — only uses `status` field from each record
+  // Counts
   counts.value = {
     skus: skus.filter((s: any) => s.status === 'Active').length,
     stock: intakes.filter((i: any) => i.status === 'Active').length,
-    batches: batches.filter((b: any) => ['Pending', 'Planned', 'Created'].includes(b.status)).length,
+    batches: batches.filter((b: any) => ['Pending', 'Planned', 'Created', 'Prepared'].includes(b.status)).length,
     productions: plans.filter((p: any) => ['In Progress', 'Running', 'Started'].includes(p.status)).length
   }
 
-  // Recent Activities — only uses: created_at, sku_name, creat_by, intake_at, mat_sap_code, material_description, intake_vol, uom, intake_by, updated_at, batch_id, status, done
+  // Pending batches list for Desktop HMI Queue
+  const queue: any[] = []
+  if (Array.isArray(awaitingBatches)) {
+    awaitingBatches.forEach((b: any) => {
+      queue.push({
+        batch_id: b.batch_id,
+        sku_name: b.sku_name || b.sku_id || 'Formula',
+        plant: b.plant_id || b.plant || 1,
+        target_weight: b.target_weight || b.batch_size || b.plan_vol || 0,
+        status: b.status || 'Awaiting Recheck',
+        created_at: b.created_at || b.updated_at
+      })
+    })
+  }
+
+  if (Array.isArray(batches)) {
+    batches.filter((b: any) => ['Pending', 'Prepared', 'In-Progress', 'Created'].includes(b.status)).forEach((b: any) => {
+      if (!queue.find(q => q.batch_id === b.batch_id)) {
+        queue.push({
+          batch_id: b.batch_id,
+          sku_name: b.sku_name || b.sku_id || 'Formula',
+          plant: b.plant_id || b.plant || 1,
+          target_weight: b.target_weight || b.batch_size || b.plan_vol || 0,
+          status: b.status,
+          created_at: b.created_at || b.updated_at
+        })
+      }
+    })
+  }
+  pendingBatchesList.value = queue.slice(0, 8)
+  loadingBatches.value = false
+
+  // Recent Activities
   const acts: any[] = []
   skus.forEach((s: any) => s.created_at && acts.push({
     id: `sku-${s.id}`, title: 'New SKU Created', icon: 'add_circle', color: 'blue',
@@ -64,9 +101,9 @@ const fetchDashboard = async () => {
   batches.forEach((b: any) => {
     const time = b.updated_at || b.created_at
     if (!time) return
-    const done = b.status === 'Completed' || b.done
+    const done = b.status === 'Completed' || b.status === 'Done' || b.done
     acts.push({
-      id: `batch-${b.id}`, title: done ? 'Batch Completed' : `Batch ${b.status}`,
+      id: `batch-${b.id || b.batch_id}`, title: done ? 'Batch Completed' : `Batch ${b.status}`,
       icon: done ? 'check_circle' : 'play_circle', color: done ? 'green' : 'orange',
       description: `Batch ${b.batch_id} — ${b.status}`, time, ts: new Date(time).getTime(), user: 'System'
     })
@@ -99,17 +136,27 @@ onMounted(() => {
 
 // ── Stats Config ──
 const stats = computed(() => [
-
-
+  { label: t('home.totalSKUs'), value: counts.value.skus, icon: 'science',
+    grad: 'grad-blue', glow: 'glow-blue', iconBg: 'rgba(59,130,246,.2)',
+    path: '/x56-SkuView', perm: 'sku_view', desc: t('home.manageSKU') },
+  { label: t('home.ingredientsStock'), value: counts.value.stock, icon: 'inventory_2',
+    grad: 'grad-emerald', glow: 'glow-emerald', iconBg: 'rgba(16,185,129,.2)',
+    path: '/x55-ProductionPlan', perm: 'production_planning', desc: t('home.viewInventory') },
   { label: t('home.pendingBatches'), value: counts.value.batches, icon: 'pending_actions',
     grad: 'grad-amber', glow: 'glow-amber', iconBg: 'rgba(245,158,11,.2)',
-    path: '/x30-PreBatch', perm: 'prepare_batch', desc: t('home.batchesWaiting') },
+    path: '/x55-ProductionPlan', perm: 'production_planning', desc: t('home.batchesWaiting') },
   { label: t('home.activeProductions'), value: counts.value.productions, icon: 'precision_manufacturing',
     grad: 'grad-violet', glow: 'glow-violet', iconBg: 'rgba(139,92,246,.2)',
-    path: '/x40-ProductionPlan', perm: 'production_planning', desc: t('home.monitorProduction') },
+    path: '/x60-CheckForProduction', perm: 'production_list', desc: t('home.monitorProduction') },
 ])
 
+const goToCheckRecipe = (batchId: string) => {
+  router.push({ path: '/x60-CheckForProduction', query: { batch_id: batchId } })
+}
 
+const goToMixing = (plant: number, batchId: string) => {
+  router.push({ path: '/x61-MixingControl', query: { plant: String(plant), batch_id: batchId } })
+}
 
 const go = (path: string) => router.push(path)
 const ok = (perm: string) => !!(user.value && hasPermission(perm))
@@ -122,7 +169,7 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
 
     <div class="dash q-pa-lg">
       <!-- Welcome Banner -->
-      <div class="welcome q-mb-xl">
+      <div class="welcome q-mb-lg">
         <div class="welcome-inner">
           <div class="row items-center no-wrap">
             <div class="col">
@@ -143,14 +190,14 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
               </div>
             </div>
             <div class="col-auto q-pl-md gt-sm">
-              <img src="/images/xDev_WeAreWeCan.svg" alt="xDev" style="width:320px;filter:drop-shadow(0 0 20px rgba(255,255,255,.1))" />
+              <img src="/images/xDev_WeAreWeCan.svg" alt="xDev" style="width:300px;filter:drop-shadow(0 0 20px rgba(255,255,255,.1))" />
             </div>
           </div>
         </div>
       </div>
 
       <!-- Stat Cards -->
-      <div class="row q-mb-xl q-col-gutter-lg">
+      <div class="row q-mb-lg q-col-gutter-lg">
         <div v-for="(s, i) in stats" :key="s.label" class="col-12 col-sm-6 col-lg-3">
           <div class="stat" :class="[s.grad, s.glow, ok(s.perm) ? 'clickable' : 'locked']"
                @click="ok(s.perm) && go(s.path)" :style="{ animationDelay: `${i * .1}s` }">
@@ -172,7 +219,121 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
         </div>
       </div>
 
+      <!-- ── Live Pending Batch Queue (Step 2 Improvement) ── -->
+      <div class="glass q-mb-lg">
+        <div class="glass-head justify-between">
+          <div class="row items-center">
+            <q-icon name="format_list_bulleted" size="24px" class="q-mr-sm" style="color:#fbbf24" />
+            <div>
+              <span class="sec-title">{{ t('home.pendingBatchQueue') }}</span>
+              <span class="text-caption text-grey-4 q-ml-sm gt-xs">Live production execution pipeline</span>
+            </div>
+          </div>
+          <div class="row items-center q-gutter-x-sm">
+            <q-btn flat dense round icon="refresh" color="amber-4" :loading="loadingBatches" @click="fetchDashboard">
+              <q-tooltip>Refresh Batch Queue</q-tooltip>
+            </q-btn>
+            <q-btn unelevated color="amber-8" text-color="black" icon="calendar_month" label="Production Plan" size="sm" class="text-weight-bold" @click="go('/x55-ProductionPlan')" />
+          </div>
+        </div>
+        <q-separator class="glass-sep" />
 
+        <div class="q-pa-md">
+          <q-table
+            :rows="pendingBatchesList"
+            :loading="loadingBatches"
+            row-key="batch_id"
+            flat
+            dark
+            class="bg-transparent"
+            :pagination="{ rowsPerPage: 5 }"
+            hide-pagination
+            :columns="[
+              { name: 'batch_id', label: t('home.batchId'), field: 'batch_id', align: 'left', sortable: true },
+              { name: 'sku_name', label: t('home.sku'), field: 'sku_name', align: 'left' },
+              { name: 'plant', label: t('home.plant'), field: 'plant', align: 'center' },
+              { name: 'target_weight', label: t('home.target'), field: 'target_weight', align: 'right' },
+              { name: 'status', label: 'Status', field: 'status', align: 'center' },
+              { name: 'actions', label: t('home.actions'), field: 'actions', align: 'center' }
+            ]"
+          >
+            <template #body-cell-batch_id="props">
+              <q-td :props="props">
+                <div class="row items-center q-gutter-x-sm">
+                  <q-icon name="qr_code" color="amber-4" size="18px" />
+                  <span class="text-weight-bold text-amber-3 text-subtitle2">{{ props.row.batch_id }}</span>
+                </div>
+              </q-td>
+            </template>
+
+            <template #body-cell-sku_name="props">
+              <q-td :props="props">
+                <div class="text-weight-medium text-white">{{ props.row.sku_name }}</div>
+              </q-td>
+            </template>
+
+            <template #body-cell-plant="props">
+              <q-td :props="props">
+                <q-chip dense color="deep-purple-7" text-color="white" icon="precision_manufacturing" size="sm">
+                  Plant {{ props.row.plant }}
+                </q-chip>
+              </q-td>
+            </template>
+
+            <template #body-cell-target_weight="props">
+              <q-td :props="props">
+                <span class="text-weight-bold text-green-4 text-subtitle2">{{ Number(props.row.target_weight || 0).toLocaleString() }}</span>
+                <span class="text-caption text-grey-4 q-ml-xs">Kg</span>
+              </q-td>
+            </template>
+
+            <template #body-cell-status="props">
+              <q-td :props="props">
+                <q-chip dense :color="props.row.status === 'In-Progress' ? 'orange-8' : (props.row.status === 'Prepared' ? 'teal-8' : 'blue-8')" text-color="white" size="sm">
+                  {{ props.row.status }}
+                </q-chip>
+              </q-td>
+            </template>
+
+            <template #body-cell-actions="props">
+              <q-td :props="props">
+                <div class="row justify-center q-gutter-x-xs no-wrap">
+                  <q-btn
+                    unelevated
+                    size="sm"
+                    color="blue-7"
+                    icon="fact_check"
+                    :label="t('home.checkRecipe')"
+                    class="text-weight-bold"
+                    @click="goToCheckRecipe(props.row.batch_id)"
+                  >
+                    <q-tooltip>1-Click Verify Recipe & Checklist</q-tooltip>
+                  </q-btn>
+                  <q-btn
+                    unelevated
+                    size="sm"
+                    color="green-8"
+                    icon="play_arrow"
+                    :label="t('home.toMixing')"
+                    class="text-weight-bold"
+                    @click="goToMixing(props.row.plant, props.row.batch_id)"
+                  >
+                    <q-tooltip>Go to Mixing Control Dashboard</q-tooltip>
+                  </q-btn>
+                </div>
+              </q-td>
+            </template>
+
+            <template #no-data>
+              <div class="full-width row flex-center q-pa-lg text-grey-5 q-gutter-sm">
+                <q-icon name="task_alt" size="36px" color="teal-4" />
+                <span class="text-subtitle1">{{ t('home.noPendingBatches') }}</span>
+                <q-btn outline color="amber-4" size="sm" label="Create New Plan" @click="go('/x55-ProductionPlan')" class="q-ml-md" />
+              </div>
+            </template>
+          </q-table>
+        </div>
+      </div>
 
       <!-- Activities + System Status -->
       <div class="row q-col-gutter-lg">
@@ -245,12 +406,12 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
 
 /* ── Welcome ── */
 .welcome { border-radius: 20px; background: linear-gradient(135deg,#1e3a8a,#3b82f6 50%,#2563eb); padding: 2px; box-shadow: 0 8px 32px rgba(59,130,246,.3); }
-.welcome-inner { border-radius: 18px; background: linear-gradient(135deg,rgba(30,58,138,.95),rgba(59,130,246,.85)); padding: 32px 36px; backdrop-filter: blur(20px); }
-.avatar-ring { width: 64px; height: 64px; border-radius: 50%; padding: 3px; background: linear-gradient(135deg,#60a5fa,#a78bfa); box-shadow: 0 0 20px rgba(96,165,250,.4); }
-.avatar { width: 100%; height: 100%; border-radius: 50%; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; font-weight: 700; color: #93c5fd; }
-.w-title { font-size: 1.8rem; font-weight: 800; color: #fff; letter-spacing: -.02em; }
-.w-sub { font-size: .95rem; color: rgba(191,219,254,.8); font-weight: 500; }
-.w-desc { color: rgba(191,219,254,.65); font-size: .9rem; }
+.welcome-inner { border-radius: 18px; background: linear-gradient(135deg,rgba(30,58,138,.95),rgba(59,130,246,.85)); padding: 24px 32px; backdrop-filter: blur(20px); }
+.avatar-ring { width: 56px; height: 56px; border-radius: 50%; padding: 3px; background: linear-gradient(135deg,#60a5fa,#a78bfa); box-shadow: 0 0 20px rgba(96,165,250,.4); }
+.avatar { width: 100%; height: 100%; border-radius: 50%; background: #1e293b; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; font-weight: 700; color: #93c5fd; }
+.w-title { font-size: 1.6rem; font-weight: 800; color: #fff; letter-spacing: -.02em; }
+.w-sub { font-size: .9rem; color: rgba(191,219,254,.8); font-weight: 500; }
+.w-desc { color: rgba(191,219,254,.65); font-size: .85rem; }
 .w-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 20px; font-size: .78rem; font-weight: 600; }
 .badge-green { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.3); }
@@ -261,7 +422,7 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
 
 /* ── Stat Cards ── */
 .stat { border-radius: 16px; padding: 2px; position: relative; overflow: hidden; animation: up .6s ease both; }
-.stat-inner { border-radius: 14px; padding: 24px; background: rgba(15,23,42,.85); backdrop-filter: blur(20px); position: relative; z-index: 1; }
+.stat-inner { border-radius: 14px; padding: 20px; background: rgba(15,23,42,.85); backdrop-filter: blur(20px); position: relative; z-index: 1; }
 .grad-blue { background: linear-gradient(135deg,#1d4ed8,#3b82f6); }
 .grad-emerald { background: linear-gradient(135deg,#059669,#10b981); }
 .grad-amber { background: linear-gradient(135deg,#d97706,#f59e0b); }
@@ -271,50 +432,26 @@ const ok = (perm: string) => !!(user.value && hasPermission(perm))
 .glow-amber { box-shadow: 0 8px 30px rgba(245,158,11,.25); }
 .glow-violet { box-shadow: 0 8px 30px rgba(139,92,246,.25); }
 .stat.clickable { cursor: pointer; transition: transform .3s, box-shadow .3s; }
-.stat.clickable:hover { transform: translateY(-6px) scale(1.02); }
+.stat.clickable:hover { transform: translateY(-4px) scale(1.01); }
 .stat.clickable:hover .shimmer { opacity: 1; transform: translateX(100%); }
-.glow-blue.clickable:hover { box-shadow: 0 16px 48px rgba(59,130,246,.4); }
-.glow-emerald.clickable:hover { box-shadow: 0 16px 48px rgba(16,185,129,.4); }
-.glow-amber.clickable:hover { box-shadow: 0 16px 48px rgba(245,158,11,.4); }
-.glow-violet.clickable:hover { box-shadow: 0 16px 48px rgba(139,92,246,.4); }
 .stat.locked { opacity: .5; filter: grayscale(40%); cursor: not-allowed; }
 .shimmer { position: absolute; inset: 0; background: linear-gradient(105deg,transparent 40%,rgba(255,255,255,.08) 50%,transparent 60%); opacity: 0; transform: translateX(-100%); transition: transform .8s, opacity .3s; z-index: 2; pointer-events: none; }
-.stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.stat-icon { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
 .lock-badge { font-size: .7rem; padding: 3px 8px; border-radius: 8px; }
-.stat-val { font-size: 2.4rem; font-weight: 800; color: #fff; line-height: 1; margin-top: 8px; letter-spacing: -.02em; }
-.stat-lbl { font-size: .82rem; color: rgba(255,255,255,.5); font-weight: 500; margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
+.stat-val { font-size: 2.2rem; font-weight: 800; color: #fff; line-height: 1; margin-top: 8px; letter-spacing: -.02em; }
+.stat-lbl { font-size: .8rem; color: rgba(255,255,255,.5); font-weight: 500; margin-top: 4px; text-transform: uppercase; letter-spacing: .05em; }
 @keyframes up { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
 
-/* ── Section ── */
-.sec-head { display: flex; align-items: center; }
+/* ── Section & Glass ── */
 .sec-title { font-size: 1.15rem; font-weight: 700; color: rgba(255,255,255,.9); }
-
-/* ── Quick Access ── */
-.qa { border-radius: 14px; padding: 20px; position: relative; overflow: hidden; animation: up .6s ease both; display: flex; flex-direction: column; min-height: 140px; }
-.qa.clickable { cursor: pointer; transition: transform .3s, box-shadow .3s; }
-.qa.clickable:hover { transform: translateY(-4px); box-shadow: 0 12px 36px rgba(0,0,0,.3); }
-.qa.clickable:hover .qa-arrow { transform: translateX(4px); opacity: 1; }
-.qa.locked { opacity: .4; filter: grayscale(50%); cursor: not-allowed; }
-.qa-1 { background: linear-gradient(135deg,#0e7490,#06b6d4); }
-.qa-2 { background: linear-gradient(135deg,#0284c7,#38bdf8); }
-.qa-3 { background: linear-gradient(135deg,#b45309,#f59e0b); }
-.qa-4 { background: linear-gradient(135deg,#4d7c0f,#84cc16); }
-.qa-icon { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,255,255,.15); display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-.qa-label { font-size: .95rem; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: .03em; }
-.qa-desc { font-size: .75rem; color: rgba(255,255,255,.6); margin-top: 4px; line-height: 1.3; }
-.qa-arrow { position: absolute; bottom: 16px; right: 16px; color: rgba(255,255,255,.4); transition: transform .3s, opacity .3s; opacity: .5; }
-
-/* ── Glass Cards ── */
-.glass { border-radius: 16px; background: rgba(15,23,42,.6); border: 1px solid rgba(255,255,255,.06); backdrop-filter: blur(20px); overflow: hidden; }
-.glass-head { display: flex; align-items: center; padding: 18px 22px; }
-.glass-sep { background: rgba(255,255,255,.06) !important; }
+.glass { border-radius: 16px; background: rgba(15,23,42,.7); border: 1px solid rgba(255,255,255,.08); backdrop-filter: blur(20px); overflow: hidden; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+.glass-head { display: flex; align-items: center; padding: 16px 20px; }
+.glass-sep { background: rgba(255,255,255,.08) !important; }
 
 /* ── Activities ── */
 .act-list { padding: 8px 16px 16px; max-height: 380px; overflow-y: auto; }
-.act-list::-webkit-scrollbar { width: 4px; }
-.act-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 4px; }
-.act-item { display: flex; gap: 14px; padding: 12px 8px; border-radius: 10px; transition: background .2s; animation: up .4s ease both; }
-.act-item:hover { background: rgba(255,255,255,.03); }
+.act-item { display: flex; gap: 14px; padding: 12px 8px; border-radius: 10px; transition: background .2s; }
+.act-item:hover { background: rgba(255,255,255,.04); }
 .act-ico { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .act-blue { background: rgba(59,130,246,.2); }
 .act-purple { background: rgba(139,92,246,.2); }
