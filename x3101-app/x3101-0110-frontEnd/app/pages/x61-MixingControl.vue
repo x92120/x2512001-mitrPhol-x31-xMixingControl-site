@@ -2190,11 +2190,28 @@ const openQrScanDialog = (step: any) => {
 
 const onQrScanInput = (val: string) => {
     if (val && val.trim().length > 3) {
-        qrScanDialog.value = false
-        handleScan(val.trim())
+        const textToScan = val.trim()
         qrScanBuffer.value = ''
+        qrScanDialog.value = false
+        handleScan(textToScan)
     }
 }
+
+// Auto-submit when scanner fills the manual input buffer (Zero-Click in dialog)
+let _qrBufferTimer: ReturnType<typeof setTimeout> | null = null
+watch(qrScanBuffer, (newVal) => {
+    if (!newVal || !qrScanDialog.value) return
+    if (_qrBufferTimer) clearTimeout(_qrBufferTimer)
+    
+    // If scanner rapidly dumped barcode/JSON (>5 chars), auto-confirm immediately!
+    if (newVal.trim().length >= 5) {
+        _qrBufferTimer = setTimeout(() => {
+            if (qrScanDialog.value && qrScanBuffer.value.trim().length >= 5) {
+                onQrScanInput(qrScanBuffer.value)
+            }
+        }, 80)
+    }
+})
 
 // ── Fault Alarm (wrong QR scan) ──
 const faultAlarmDialog = ref(false)
@@ -3425,8 +3442,18 @@ const handleGlobalDocClick = (e: MouseEvent) => {
 }
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-    // Ignore keydown if the user is typing in an input field or textarea
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+    // If typing in another normal input (not the qr scanner input), let standard typing occur
+    if ((e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+        if (qrScanDialog.value && (e.code === 'Enter' || e.key === 'Enter')) {
+            e.preventDefault()
+            const val = qrScanBuffer.value.trim()
+            if (val.length > 3) {
+                onQrScanInput(val)
+            }
+            return
+        }
+        if (!qrScanDialog.value) return
+    }
     if (e.ctrlKey || e.altKey || e.metaKey) return
     // ── Block all scanner input while fault alarm is showing ──────────────────
     if (faultAlarmDialog.value) return
@@ -4522,8 +4549,8 @@ onUnmounted(() => {
         </q-card-section>
         <q-card-section class="q-pa-lg text-center">
           <q-icon name="qr_code" size="4rem" color="blue-8" class="q-mb-md"/>
-          <p class="text-grey-8 q-mb-md">Point scanner at the label QR code</p>
-          <div class="text-caption text-grey-6 q-mt-sm">Or type manually and press Enter</div>
+          <p class="text-weight-bold text-blue-9 q-mb-xs">⚡ สแกนเนอร์จะ Auto-Confirm ให้อัตโนมัติทันที</p>
+          <p class="text-caption text-grey-7 q-mb-md">ไม่ต้องกดปุ่ม Confirm — สแกนเนอร์จะส่งข้อมูลให้ทันที</p>
           <!-- Single input — scanner fills this via handleGlobalKeydown, no hidden ghost input needed -->
           <q-input
             v-model="qrScanBuffer"
