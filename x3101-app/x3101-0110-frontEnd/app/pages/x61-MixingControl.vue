@@ -3133,6 +3133,8 @@ const handleScan = (scannedText: string) => {
                 const expectedPhaseMsg = activeFreeScanPhase
                     ? `ขณะนี้กำลังทำ Phase ${activeFreeScanPhase} อยู่`
                     : `ขณะนี้ไม่ได้อยู่ใน Phase สแกนอิสระ`
+                playAlarmBeep()
+                playSweetVoice('scan_error')
                 $q.notify({
                     type: 'negative',
                     icon: 'block',
