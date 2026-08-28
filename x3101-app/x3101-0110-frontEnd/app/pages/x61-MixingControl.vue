@@ -2162,52 +2162,28 @@ const playPhaseCompleteChime = () => {
 }
 
 // ── Ultra-Sweet Bilingual Neural Female Voice Player (TH: Premwadee / EN: Emma) ──
-const audioCache: Record<string, HTMLAudioElement> = {}
+let activeVoiceAudio: HTMLAudioElement | null = null
 
 const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
+    if (typeof window === 'undefined') return
     try {
-        const lang = (locale.value === 'en' || locale.value === 'gb') ? 'en' : 'th'
-        const fileKey = `${name}_${lang}`
-        if (!audioCache[fileKey]) {
-            audioCache[fileKey] = new Audio(`/sounds/mixing_${fileKey}.mp3`)
+        if (activeVoiceAudio) {
+            try { activeVoiceAudio.pause(); activeVoiceAudio.currentTime = 0 } catch {}
         }
-        const audio = audioCache[fileKey]
-        audio.currentTime = 0
-        audio.volume = 1.0
-        const p = audio.play()
-        if (p && typeof p.catch === 'function') {
-            p.catch((err) => {
-                console.warn('[Audio Autoplay Blocked or Failed]', err)
-                const fallbacks: Record<string, Record<string, string>> = {
-                    th: {
-                        scan_ok: 'สแกนสารเรียบร้อยค่า',
-                        phase_done: 'สแกนสารครบทุกถุงในเฟสแล้วค่า พร้อมเริ่มขั้นตอนถัดไปนะคะ',
-                        scan_error: 'อุ๊ย สารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบถุงสารอีกครั้งค่า',
-                        batch_done: 'การผสมแบทช์เสร็จสมบูรณ์เรียบร้อยแล้วค่า ขอบคุณพี่ๆ ทุกคนนะคะ'
-                    },
-                    en: {
-                        scan_ok: 'Ingredient verified, thank you!',
-                        phase_done: 'All ingredients in this phase are verified! Ready for the next step.',
-                        scan_error: 'Oops! This ingredient does not match the recipe.',
-                        batch_done: 'Batch production completed successfully! Thank you everyone.'
-                    }
-                }
-                try {
-                    const text = fallbacks[lang]?.[name] || ''
-                    if (text && 'speechSynthesis' in window) {
-                        window.speechSynthesis.cancel()
-                        const u = new SpeechSynthesisUtterance(text)
-                        u.lang = lang === 'en' ? 'en-US' : 'th-TH'
-                        window.speechSynthesis.speak(u)
-                    }
-                } catch {}
-            })
+        const currentLang = (locale.value || 'th').toLowerCase()
+        const lang = currentLang.startsWith('en') ? 'en' : 'th'
+        const audioSrc = `/sounds/mixing_${name}_${lang}.mp3`
+        
+        activeVoiceAudio = new Audio(audioSrc)
+        activeVoiceAudio.volume = 1.0
+        const p = activeVoiceAudio.play()
+        if (p !== undefined) {
+            p.catch(e => console.warn('[SweetVoice] Autoplay prevented:', e))
         }
-    } catch (e) {
-        console.error('Audio play error:', e)
+    } catch (err) {
+        console.warn('[SweetVoice] Error playing audio:', err)
     }
 }
-
 const testSweetVoice = () => {
     playSweetVoice('scan_ok')
     $q.notify({
@@ -3425,37 +3401,64 @@ const handleScan = (scannedText: string) => {
 // ── Universal Zero-Click Barcode Scanner Capture Engine ────────────────────────
 let globalScannerBuffer = ''
 let lastScanKeyTime = 0
+let _scannerBurstTimer: ReturnType<typeof setTimeout> | null = null
 
-// ── Thai Unicode Only to English Keyboard Mapper ──
-// Strictly translates genuine Thai characters (0x0E01-0x0E5B) without touching ASCII punctuation!
-const thaiUnicodeToEnglishMap: Record<string, string> = {
-    'ๅ': '1', 'ภ': '4', 'ถ': '5', 'ุ': '6', 'ึ': '7', 'ค': '8', 'ต': '9', 'จ': '0', 'ข': '-', 'ช': '=',
-    '๑': '@', '๒': '#', '๓': '$', '๔': '%', 'ู': '^', '฿': '&', '๕': '*', '๖': '(', '๗': ')', '๘': '_', '๙': '+',
-    'ๆ': 'q', 'ไ': 'w', 'ำ': 'e', 'พ': 'r', 'ะ': 't', 'ั': 'y', 'ี': 'u', 'ร': 'i', 'น': 'o', 'ย': 'p', 'บ': '[', 'ล': ']', 'ฃ': '\\',
-    '๐': 'Q', 'ฎ': 'E', 'ฑ': 'R', 'ธ': 'T', 'ํ': 'Y', '๊': 'U', 'ณ': 'I', 'ฯ': 'O', 'ญ': 'P', 'ฐ': '{', 'ฤ': '}', 'ฅ': '|',
-    'ฟ': 'a', 'ห': 's', 'ก': 'd', 'ด': 'f', 'เ': 'g', '้': 'h', '่': 'j', 'า': 'k', 'ส': 'l', 'ว': ';', 'ง': "'",
-    'ฆ': 'S', 'ฏ': 'D', 'โ': 'F', 'ฌ': 'G', '็': 'H', '๋': 'J', 'ษ': 'K', 'ศ': 'L', 'ซ': ':',
-    'ผ': 'z', 'ป': 'x', 'แ': 'c', 'อ': 'v', 'ิ': 'b', 'ื': 'n', 'ท': 'm', 'ม': ',', 'ใ': '.', 'ฝ': '/',
-    'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', 'ฒ': '<', 'ฬ': '>', 'ฦ': '?'
-}
+// Physical key to ASCII mapper: Derived from hardware key positions (e.code), immune to Thai OS keyboard layout!
+const physicalKeyToAscii = (e: KeyboardEvent): string => {
+    const s = e.shiftKey
+    const c = e.code
 
-const sanitizeScannerChar = (char: string): string => {
-    if (!char) return ''
-    const code = char.charCodeAt(0)
-    // Pure ASCII (letters, numbers, and all JSON symbols: { } " : , . - _ ( ) /): KEEP EXACT AS IS!
-    if (code >= 32 && code <= 126) {
-        return char
+    // Digit row: 0-9 and shifted symbols
+    if (c.startsWith('Digit')) {
+        const d = c.slice(5)
+        const shiftDigits = ')!@#$%^&*('
+        return s ? (shiftDigits[parseInt(d, 10)] ?? d) : d
     }
-    // Thai character: translate back to English key
-    return thaiUnicodeToEnglishMap[char] || char
+    // Letter keys: always produce Latin a-z / A-Z
+    if (c.startsWith('Key')) {
+        const letter = c.slice(3)
+        return s ? letter.toUpperCase() : letter.toLowerCase()
+    }
+    // Numpad keys
+    if (c.startsWith('Numpad')) {
+        const numMap: Record<string, string> = {
+            Numpad0: '0', Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4',
+            Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8', Numpad9: '9',
+            NumpadDecimal: '.', NumpadDivide: '/', NumpadMultiply: '*',
+            NumpadSubtract: '-', NumpadAdd: '+'
+        }
+        return numMap[c] ?? ''
+    }
+    // Punctuation & JSON symbols (standard hardware US positions)
+    const puncMap: Record<string, [string, string]> = {
+        BracketLeft:  ['[', '{'],
+        BracketRight: [']', '}'],
+        Quote:        ["'", '"'],
+        Semicolon:    [';', ':'],
+        Comma:        [',', '<'],
+        Period:       ['.', '>'],
+        Slash:        ['/', '?'],
+        Minus:        ['-', '_'],
+        Equal:        ['=', '+'],
+        Backslash:    ['\\', '|'],
+        Backquote:    ['`', '~'],
+        Space:        [' ', ' ']
+    }
+    if (puncMap[c]) {
+        return s ? puncMap[c][1] : puncMap[c][0]
+    }
+    
+    // Direct ASCII fallback
+    if (e.key && e.key.length === 1 && e.key.charCodeAt(0) >= 32 && e.key.charCodeAt(0) <= 126) {
+        return e.key
+    }
+    return ''
 }
 
 // ── Auto-Focus Lock: Maintain Scanner Readiness on clicks ──
 const handleGlobalDocClick = (e: MouseEvent) => {
-    // If dialog is open or user clicked non-interactive area, maintain state
+    // Keep readiness
 }
-
-let _scannerBurstTimer: ReturnType<typeof setTimeout> | null = null
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
     // Ignore browser shortcuts
@@ -3466,7 +3469,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     if (e.key.length > 1 && !isEnter) return
 
     const now = Date.now()
-    // Barcode scanner character burst is < 50ms. If pause > 150ms, reset buffer for new scan.
+    // Barcode scanner character burst is < 50ms. If pause > 150ms, start fresh buffer.
     if (now - lastScanKeyTime > 150) {
         globalScannerBuffer = ''
     }
@@ -3492,23 +3495,24 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
             console.log('[Zero-Click FreeScan Enter]', codeToProcess)
             handleScan(codeToProcess)
         }
-    } else if (e.key.length === 1) {
-        // Direct character capture with Thai layout fallback translation
-        const char = sanitizeScannerChar(e.key)
-        globalScannerBuffer += char
-        
-        // Auto-submit safety timer: If scanner does not send Enter, auto-process after 120ms burst
-        if (_scannerBurstTimer) clearTimeout(_scannerBurstTimer)
-        _scannerBurstTimer = setTimeout(() => {
-            if (globalScannerBuffer.trim().length >= 6) {
-                const codeToProcess = globalScannerBuffer.trim()
-                globalScannerBuffer = ''
-                qrScanBuffer.value = ''
-                qrScanDialog.value = false
-                console.log('[Zero-Click FreeScan Burst Timeout]', codeToProcess)
-                handleScan(codeToProcess)
-            }
-        }, 120)
+    } else {
+        const char = physicalKeyToAscii(e)
+        if (char) {
+            globalScannerBuffer += char
+            
+            // Auto-submit safety timer: If scanner does not send Enter, auto-process after 120ms burst
+            if (_scannerBurstTimer) clearTimeout(_scannerBurstTimer)
+            _scannerBurstTimer = setTimeout(() => {
+                if (globalScannerBuffer.trim().length >= 6) {
+                    const codeToProcess = globalScannerBuffer.trim()
+                    globalScannerBuffer = ''
+                    qrScanBuffer.value = ''
+                    qrScanDialog.value = false
+                    console.log('[Zero-Click FreeScan Burst Timeout]', codeToProcess)
+                    handleScan(codeToProcess)
+                }
+            }, 120)
+        }
     }
 }
 
