@@ -2161,13 +2161,55 @@ const playPhaseCompleteChime = () => {
     } catch {}
 }
 
-// ── Ultra-Sweet Neural Female Voice Player (Premwadee Neural) ──
+// ── Ultra-Sweet Bilingual Neural Female Voice Player (TH: Premwadee / EN: Emma) ──
 const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
     try {
-        const audio = new Audio(`/sounds/mixing_${name}.mp3`)
+        const lang = (locale.value === 'en' || locale.value === 'gb') ? 'en' : 'th'
+        const audio = new Audio(`/sounds/mixing_${name}_${lang}.mp3`)
         audio.volume = 1.0
-        audio.play().catch(() => {})
-    } catch {}
+        const p = audio.play()
+        if (p && typeof p.catch === 'function') {
+            p.catch((err) => {
+                console.warn('[Audio Autoplay Blocked or Failed]', err)
+                const fallbacks: Record<string, Record<string, string>> = {
+                    th: {
+                        scan_ok: 'สแกนสารเรียบร้อยค่า',
+                        phase_done: 'สแกนสารครบทุกถุงในเฟสแล้วค่า พร้อมเริ่มขั้นตอนถัดไปนะคะ',
+                        scan_error: 'อุ๊ย สารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบถุงสารอีกครั้งค่า',
+                        batch_done: 'การผสมแบทช์เสร็จสมบูรณ์เรียบร้อยแล้วค่า ขอบคุณพี่ๆ ทุกคนนะคะ'
+                    },
+                    en: {
+                        scan_ok: 'Ingredient verified, thank you!',
+                        phase_done: 'All ingredients in this phase are verified! Ready for the next step.',
+                        scan_error: 'Oops! This ingredient does not match the recipe.',
+                        batch_done: 'Batch production completed successfully! Thank you everyone.'
+                    }
+                }
+                try {
+                    const text = fallbacks[lang]?.[name] || ''
+                    if (text && 'speechSynthesis' in window) {
+                        window.speechSynthesis.cancel()
+                        const u = new SpeechSynthesisUtterance(text)
+                        u.lang = lang === 'en' ? 'en-US' : 'th-TH'
+                        window.speechSynthesis.speak(u)
+                    }
+                } catch {}
+            })
+        }
+    } catch (e) {
+        console.error('Audio play error:', e)
+    }
+}
+
+const testSweetVoice = () => {
+    playSweetVoice('scan_ok')
+    $q.notify({
+        type: 'positive',
+        icon: 'volume_up',
+        message: locale.value === 'en' ? '🔊 Playing Emma Neural Voice (EN)' : '🔊 กำลังเล่นเสียงน้องเปรมวดี (TH)',
+        position: 'top',
+        timeout: 2000
+    })
 }
 
 const speakStepAnnounce = (text: string) => {
@@ -4239,8 +4281,11 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <!-- Status indicator -->
+                <!-- Status indicator & Voice Test Button -->
                 <div class="row items-center q-gutter-x-sm no-wrap q-ml-md">
+                  <q-btn round flat dense icon="volume_up" color="amber-3" size="sm" @click.stop="testSweetVoice" class="bg-black-3">
+                    <q-tooltip>🔊 ทดสอบเสียงน้องสาว / Test Voice</q-tooltip>
+                  </q-btn>
                   <div class="q-px-sm q-py-xs rounded-borders text-weight-bold row items-center no-wrap"
                        :class="activeFreeScanPhaseGroup.isCompleted ? 'bg-green-10 text-white' : 'bg-blue-10 text-amber-3'"
                        style="font-size: 12px; border: 1px solid rgba(255,255,255,0.3);">
