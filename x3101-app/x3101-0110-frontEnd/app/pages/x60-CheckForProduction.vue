@@ -805,7 +805,7 @@ const openSkuDetail = async () => {
 }
 
 const goToStartProduction = async () => {
-    stopDragonBallIntro()
+    stopCelebrationSound()
     if (!selectedBatchId.value) return
     loading.value = true
     // Extract plant ID before try so it's available in catch
@@ -1874,99 +1874,39 @@ const focusScanInput = () => {
     }
 }
 
-// ── Female Voice Helper & Dragon Ball Legend Theme ────────────────────────────
-let dbIntroAudio: HTMLAudioElement | null = null
+// ── Studio Neural Sweet Female Voice + Dragon Ball Intro ───────────────────────
+let celebrationAudio: HTMLAudioElement | null = null
 
-const stopDragonBallIntro = () => {
-    if (dbIntroAudio) {
+const stopCelebrationSound = () => {
+    if (celebrationAudio) {
         try {
-            dbIntroAudio.pause()
-            dbIntroAudio.currentTime = 0
+            celebrationAudio.pause()
+            celebrationAudio.currentTime = 0
         } catch {}
     }
 }
 
-const playDragonBallIntro = () => {
+const playCelebrationSound = () => {
     if (typeof window === 'undefined') return
+    stopCelebrationSound()
     try {
-        if (!dbIntroAudio) {
-            dbIntroAudio = new Audio('/sounds/dragonball_intro.mp3')
-        }
-        dbIntroAudio.currentTime = 0
-        dbIntroAudio.volume = 0.85
-        const playPromise = dbIntroAudio.play()
-        if (playPromise !== undefined) {
-            playPromise.catch(e => {
-                console.warn('[Audio] Dragon Ball intro autoplay notice:', e)
-            })
-        }
-    } catch (err) {
-        console.warn('[Audio] Error playing Dragon Ball intro:', err)
-    }
-}
-
-const getFemaleVoice = (lang: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null
-    const voices = window.speechSynthesis.getVoices()
-    if (!voices || voices.length === 0) return null
-
-    const isTh = lang.toLowerCase().startsWith('th')
-    if (isTh) {
-        // Look for Thai female voices (Premwadee, Narisa, Achara, Google ภาษาไทย, etc.)
-        const thFemale = voices.find(v => 
-            v.lang.toLowerCase().startsWith('th') && 
-            (v.name.includes('Premwadee') || v.name.includes('Narisa') || v.name.includes('Achara') || v.name.includes('Female') || v.name.includes('Google ภาษาไทย') || v.name.includes('Siri') || !v.name.includes('Niwat'))
-        )
-        return thFemale || voices.find(v => v.lang.toLowerCase().startsWith('th')) || null
-    } else {
-        // Look for English female voices (Zira, Jenny, Aria, Samantha, etc.)
-        const enFemale = voices.find(v => 
-            v.lang.toLowerCase().startsWith('en') && 
-            (v.name.includes('Zira') || v.name.includes('Jenny') || v.name.includes('Aria') || v.name.includes('Samantha') || v.name.includes('Female') || v.name.includes('Google US English'))
-        )
-        return enFemale || voices.find(v => v.lang.toLowerCase().startsWith('en')) || null
-    }
-}
-
-// ── Voice Prompts (Sweet Female Voice + Dragon Ball Intro 0-10s) ─────────────
-const speakAllVerifiedVoice = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-        playDragonBallIntro()
-        return
-    }
-    try {
-        window.speechSynthesis.cancel() // clear any prior speech queue
         const currentLang = (locale.value || 'th').toLowerCase()
         const isTh = currentLang.startsWith('th')
+        const audioSrc = isTh ? '/sounds/celebration_th.mp3' : '/sounds/celebration_en.mp3'
         
-        // Polite, friendly female phrasing
-        const message = isTh
-            ? 'สแกนครบแล้วค่า พร้อมเริ่ม Start Production ได้เลยค่ะ'
-            : 'All ingredients verified! Ready to start production.'
-        
-        const utterance = new SpeechSynthesisUtterance(message)
-        utterance.lang = isTh ? 'th-TH' : 'en-US'
-        utterance.rate = 1.02
-        utterance.pitch = 1.25 // Sweet, bright female pitch
-        
-        const femaleVoice = getFemaleVoice(utterance.lang)
-        if (femaleVoice) {
-            utterance.voice = femaleVoice
+        celebrationAudio = new Audio(audioSrc)
+        celebrationAudio.volume = 0.95
+        const p = celebrationAudio.play()
+        if (p !== undefined) {
+            p.catch(e => console.warn('[Celebration] Autoplay prevented:', e))
         }
-
-        // When female voice finishes -> Play Dragon Ball - Makafushigi Adventure (0-10s)!
-        utterance.onend = () => {
-            playDragonBallIntro()
-        }
-        utterance.onerror = () => {
-            playDragonBallIntro()
-        }
-
-        window.speechSynthesis.speak(utterance)
     } catch (err) {
-        console.warn('[Speech] Error speaking verification:', err)
-        playDragonBallIntro()
+        console.warn('[Celebration] Error playing audio:', err)
     }
+}
+
+const speakAllVerifiedVoice = () => {
+    playCelebrationSound()
 }
 
 let announcedVerifiedBatchId = ''
