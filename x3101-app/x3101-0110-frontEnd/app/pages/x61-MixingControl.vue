@@ -3375,122 +3375,57 @@ const handleScan = (scannedText: string) => {
     }
 }
 
-// ── Non-reactive scan accumulators ───────────────────────────────────────────
-// Plain JS strings — no Vue reactivity per keystroke (avoids ~60 DOM re-renders
-// per QR scan). Reactive refs are only written ONCE on Enter (scan complete).
-let _scanAccum  = ''   // global background buffer (no dialog)
-let _qrAccum    = ''   // buffer when QR scan dialog is open
+// ── Universal Zero-Click Barcode Scanner Capture Engine ────────────────────────
+let globalScannerBuffer = ''
+let lastScanKeyTime = 0
 
-// ── Physical key → ASCII mapper (layout-agnostic) ───────────────────────────
-// Barcode scanners emulate keyboard input. When OS layout is Thai (or any
-// non-Latin layout), e.key returns Thai characters. Using e.code (physical
-// key position) lets us always derive the intended ASCII character correctly.
-const physicalKeyToAscii = (e: KeyboardEvent): string => {
-    const s = e.shiftKey
-    const c = e.code
-
-    // Digit row: 0-9 and their shifted symbols
-    if (c.startsWith('Digit')) {
-        const d = c[5]                                   // '0'–'9'
-        return s ? '!@#$%^&*()'['0123456789'.indexOf(d)] ?? d : d
-    }
-    // Letter keys: always produce Latin a-z / A-Z
-    if (c.startsWith('Key')) {
-        const letter = c[3]                              // 'A'–'Z'
-        return s ? letter.toUpperCase() : letter.toLowerCase()
-    }
-    // Numpad
-    if (c.startsWith('Numpad')) {
-        const numMap: Record<string, string> = {
-            Numpad0: '0', Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4',
-            Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8', Numpad9: '9',
-            NumpadDecimal: '.', NumpadDivide: '/', NumpadMultiply: '*',
-            NumpadSubtract: '-', NumpadAdd: '+'
-        }
-        return numMap[c] ?? ''
-    }
-    // Punctuation & symbols (standard US layout positions — same physical location on all keyboards)
-    const puncMap: Record<string, [string, string]> = {  // [normal, shifted]
-        Minus:        ['-', '_'],
-        Equal:        ['=', '+'],
-        BracketLeft:  ['[', '{'],
-        BracketRight: [']', '}'],
-        Backslash:    ['\\', '|'],
-        Semicolon:    [';', ':'],
-        Quote:        ["'", '"'],
-        Comma:        [',', '<'],
-        Period:       ['.', '>'],
-        Slash:        ['/', '?'],
-        Backquote:    ['`', '~'],
-        Space:        [' ', ' '],
-    }
-    const pair = puncMap[c]
-    if (pair) return s ? pair[1] : pair[0]
-
-    return '' // Unknown / non-printable key
-}
-
-
-// ── Auto-Focus Lock: Maintain Scanner Readiness on clicks ──
-const handleGlobalDocClick = (e: MouseEvent) => {
-    const target = e.target as HTMLElement | null
-    if (!target) return
-    const isInteractive = target.closest('input, textarea, button, select, [contenteditable="true"], .q-btn, .q-dialog')
-    if (!isInteractive && qrScanDialog.value) {
-        // If dialog open, keep focus in dialog
-    }
+// Thai keyboard to ASCII map (if scanner types while OS keyboard is Thai)
+const thaiToAsciiMap: Record<string, string> = {
+    'ๅ': '1', '/': '2', '-': '3', 'ภ': '4', 'ถ': '5', 'ุ': '6', 'ึ': '7', 'ค': '8', 'ต': '9', 'จ': '0', 'ข': '-', 'ช': '=',
+    '+': '!', '๑': '@', '๒': '#', '๓': '$', '๔': '%', 'ู': '^', '฿': '&', '๕': '*', '๖': '(', '๗': ')', '๘': '_', '๙': '+',
+    'ๆ': 'q', 'ไ': 'w', 'ำ': 'e', 'พ': 'r', 'ะ': 't', 'ั': 'y', 'ี': 'u', 'ร': 'i', 'น': 'o', 'ย': 'p', 'บ': '[', 'ล': ']', 'ฃ': '\\',
+    '๐': 'Q', '"': 'W', 'ฎ': 'E', 'ฑ': 'R', 'ธ': 'T', 'ํ': 'Y', '๊': 'U', 'ณ': 'I', 'ฯ': 'O', 'ญ': 'P', 'ฐ': '{', 'ฤ': '}', 'ฅ': '|',
+    'ฟ': 'a', 'ห': 's', 'ก': 'd', 'ด': 'f', 'เ': 'g', '้': 'h', '่': 'j', 'า': 'k', 'ส': 'l', 'ว': ';', 'ง': "'",
+    'ฤ': 'A', 'ฆ': 'S', 'ฏ': 'D', 'โ': 'F', 'ฌ': 'G', '็': 'H', '๋': 'J', 'ษ': 'K', 'ศ': 'L', 'ซ': ':', '.': '"',
+    'ผ': 'z', 'ป': 'x', 'แ': 'c', 'อ': 'v', 'ิ': 'b', 'ื': 'n', 'ท': 'm', 'ม': ',', 'ใ': '.', 'ฝ': '/',
+    '(' : 'Z', ')': 'X', 'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', '?': 'M', 'ฒ': '<', 'ฬ': '>', 'ฦ': '?'
 }
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-    // If typing in another normal input (not the qr scanner input), let standard typing occur
-    if ((e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
-        if (qrScanDialog.value && (e.code === 'Enter' || e.key === 'Enter')) {
-            e.preventDefault()
-            const val = qrScanBuffer.value.trim()
-            if (val.length > 3) {
-                onQrScanInput(val)
-            }
-            return
-        }
-        if (!qrScanDialog.value) return
-    }
+    // Ignore browser function keys and shortcuts
     if (e.ctrlKey || e.altKey || e.metaKey) return
-    // ── Block all scanner input while fault alarm is showing ──────────────────
     if (faultAlarmDialog.value) return
+    if (e.key.length > 1 && e.key !== 'Enter' && e.key !== 'Tab') return
 
-    if (e.code === 'Enter' || e.key === 'Enter') {
-        if (qrScanDialog.value) {
-            // ── Dialog open: scanner finished → write to ref ONCE then process ──
-            const finalQr = _qrAccum.trim()
-            _qrAccum = ''
-            if (finalQr.length > 3) {
-                qrScanBuffer.value = finalQr   // single reactive write → 1 DOM update
-                onQrScanInput(finalQr)
-            }
-        } else {
-            // ── Background scan (no dialog) ──
-            const finalScan = _scanAccum.trim()
-            _scanAccum = ''
-            scanBuffer.value = ''
-            if (finalScan.length > 3) handleScan(finalScan)
+    const now = Date.now()
+    // Barcode scanner character burst is < 50ms. If pause > 130ms, reset buffer for new scan.
+    if (now - lastScanKeyTime > 130) {
+        globalScannerBuffer = ''
+    }
+    lastScanKeyTime = now
+
+    const activeEl = document.activeElement as HTMLElement
+    const isOtherInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !qrScanDialog.value
+
+    if (e.key === 'Enter' || e.key === 'Tab') {
+        // If typing in another normal input with few characters (human typing), let user submit normally
+        if (isOtherInput && globalScannerBuffer.length < 3) return
+
+        const codeToProcess = globalScannerBuffer.trim() || qrScanBuffer.value.trim()
+        if (codeToProcess && codeToProcess.length >= 3) {
+            e.preventDefault()
+            e.stopPropagation()
+            globalScannerBuffer = ''
+            qrScanBuffer.value = ''
+            qrScanDialog.value = false
+            
+            console.log('[Zero-Click FreeScan Keydown]', codeToProcess)
+            handleScan(codeToProcess)
         }
-        if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
-    } else {
-        // ── Accumulate into plain string (zero Vue reactivity overhead) ──
-        const char = physicalKeyToAscii(e)
-        if (char) {
-            if (qrScanDialog.value) {
-                _qrAccum += char
-            } else {
-                _scanAccum += char
-            }
-            if (scanTimeout) clearTimeout(scanTimeout)
-            // Reset buffer if scanner stops sending (>150ms gap = not a scanner)
-            scanTimeout = setTimeout(() => {
-                _scanAccum = ''
-                if (!qrScanDialog.value) _qrAccum = ''
-            }, 150)
-        }
+    } else if (e.key.length === 1) {
+        // Direct character capture with Thai layout fallback translation
+        const char = thaiToAsciiMap[e.key] || e.key
+        globalScannerBuffer += char
     }
 }
 
