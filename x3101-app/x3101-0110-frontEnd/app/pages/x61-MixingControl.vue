@@ -2072,6 +2072,108 @@ const submitManualPass = () => {
 }
 
 // ── QR Scan Dialog (SPP / FH steps) ──
+
+// ── LIVE FREE-SCAN HUD COMPUTED ──
+const activeFreeScanPhaseGroup = computed(() => {
+    if (!skuSteps.value || skuSteps.value.length === 0) return null
+    const cur = currentStep.value
+    const curPhase = cur?.phase_number || (skuSteps.value[localStepIndex.value || 0]?.phase_number)
+    if (!curPhase) return null
+
+    const phaseScanSteps = skuSteps.value.filter((s: any) => {
+        if (s.phase_number !== curPhase) return false
+        const aCode = String(s.action_code || '')
+        if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
+        if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
+        const req = productionRequire(s)
+        if (req <= 0) return false
+        const wh = getStepWh(s)
+        return wh === 'SPP' || wh === 'FH'
+    })
+
+    if (phaseScanSteps.length === 0) return null
+
+    const scannedSteps = phaseScanSteps.filter((s: any) => {
+        const phaseScanKey = `${s.phase_number}|${s.re_code}`
+        return scannedVolumeMap.value[phaseScanKey] != null
+    })
+
+    const pendingSteps = phaseScanSteps.filter((s: any) => {
+        const phaseScanKey = `${s.phase_number}|${s.re_code}`
+        return scannedVolumeMap.value[phaseScanKey] == null
+    })
+
+    return {
+        phase: curPhase,
+        total: phaseScanSteps.length,
+        scanned: scannedSteps.length,
+        pending: pendingSteps,
+        isCompleted: scannedSteps.length >= phaseScanSteps.length && phaseScanSteps.length > 0,
+        allSteps: phaseScanSteps
+    }
+})
+
+// Audio Synthesizers for Instant Audio Feedback
+const playSuccessChime = () => {
+    try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const osc1 = ctx.createOscillator()
+        const osc2 = ctx.createOscillator()
+        const gain = ctx.createGain()
+        
+        osc1.type = 'sine'
+        osc2.type = 'sine'
+        osc1.frequency.setValueAtTime(880, ctx.currentTime) // A5
+        osc1.frequency.setValueAtTime(1760, ctx.currentTime + 0.08) // A6
+        osc2.frequency.setValueAtTime(1320, ctx.currentTime) // E6
+        osc2.frequency.setValueAtTime(2640, ctx.currentTime + 0.08) // E7
+        
+        gain.gain.setValueAtTime(0.2, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
+        
+        osc1.connect(gain)
+        osc2.connect(gain)
+        gain.connect(ctx.destination)
+        
+        osc1.start(ctx.currentTime)
+        osc2.start(ctx.currentTime)
+        osc1.stop(ctx.currentTime + 0.25)
+        osc2.stop(ctx.currentTime + 0.25)
+    } catch {}
+}
+
+const playPhaseCompleteChime = () => {
+    try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const freqs = [523.25, 659.25, 783.99, 1046.50] // C5, E5, G5, C6
+        freqs.forEach((f, idx) => {
+            const osc = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.type = 'triangle'
+            osc.frequency.value = f
+            gain.gain.setValueAtTime(0.25, ctx.currentTime + idx * 0.08)
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.08 + 0.3)
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.start(ctx.currentTime + idx * 0.08)
+            osc.stop(ctx.currentTime + idx * 0.08 + 0.3)
+        })
+    } catch {}
+}
+
+const speakStepAnnounce = (text: string) => {
+    if (!('speechSynthesis' in window)) return
+    try {
+        window.speechSynthesis.cancel()
+        const u = new SpeechSynthesisUtterance(text)
+        u.lang = 'th-TH'
+        u.rate = 1.15
+        u.pitch = 1.05
+        window.speechSynthesis.speak(u)
+    } catch {}
+}
+
+// ── QR Scan Dialog (SPP / FH steps) ──
 const qrScanDialog = ref(false)
 const qrScanBuffer = ref('')
 const qrScanStep = ref<any>(null)
@@ -2926,6 +3028,8 @@ const handleScan = (scannedText: string) => {
                                 return `${s.re_code.trim()}(scanned:${scannedVolumeMap.value[k] != null})`
                             }))
 
+                        playSuccessChime()
+                        speakStepAnnounce(`สาร ${redirectedStep.re_code} สแกนเรียบร้อย`)
                         $q.notify({
                             type: 'positive',
                             message: `✅ ${matchedPhase2}: ${redirectedStep.re_code} — ${scannedCount2}/${allFreeScanSteps2.length} done`,
@@ -2949,6 +3053,8 @@ const handleScan = (scannedText: string) => {
                                     const nextPhase2 = nextStep2.phase_number || '0'
                                     const isSamePhase2 = nextPhase2 === matchedPhase2
                                     expandedPhases.value[nextPhase2] = true
+                                    playPhaseCompleteChime()
+                                    speakStepAnnounce(`Phase ${matchedPhase2} สแกนครบแล้วค่ะ`)
                                     $q.notify({
                                         type: 'positive', icon: 'rocket_launch',
                                         message: `🎉 ${matchedPhase2} สแกนครบ! → ${isSamePhase2 ? 'ต่อ' : 'ข้ามไป'} ${nextPhase2}`,
@@ -3057,6 +3163,8 @@ const handleScan = (scannedText: string) => {
 
 
 
+            playSuccessChime()
+            speakStepAnnounce(`สาร ${step.re_code} สแกนเรียบร้อย`)
             $q.notify({
                 type: 'positive',
                 message: `✅ ${matchedPhase}: ${step.re_code} — ${scannedCount}/${allFreeScanSteps.length} done`,
@@ -3303,6 +3411,17 @@ const physicalKeyToAscii = (e: KeyboardEvent): string => {
     if (pair) return s ? pair[1] : pair[0]
 
     return '' // Unknown / non-printable key
+}
+
+
+// ── Auto-Focus Lock: Maintain Scanner Readiness on clicks ──
+const handleGlobalDocClick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement | null
+    if (!target) return
+    const isInteractive = target.closest('input, textarea, button, select, [contenteditable="true"], .q-btn, .q-dialog')
+    if (!isInteractive && qrScanDialog.value) {
+        // If dialog open, keep focus in dialog
+    }
 }
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
@@ -3604,7 +3723,8 @@ onMounted(async () => {
         checkShowConfirmDialog()
     })
 
-    window.addEventListener('keydown', handleGlobalKeydown)
+    window.addEventListener('keydown', handleGlobalKeydown, { capture: true })
+    document.addEventListener('click', handleGlobalDocClick, { capture: true })
 
     connect() // Shared MQTT composable connects here
     onMessage(handlePlcMessage)
@@ -3808,7 +3928,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-    window.removeEventListener('keydown', handleGlobalKeydown)
+    window.removeEventListener('keydown', handleGlobalKeydown, { capture: true })
+    document.removeEventListener('click', handleGlobalDocClick, { capture: true })
     document.removeEventListener('visibilitychange', _onVisibilityChange)
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
     if (_telemetryPollInterval) { clearInterval(_telemetryPollInterval); _telemetryPollInterval = null }
@@ -4103,6 +4224,50 @@ onUnmounted(() => {
             </div>
             
 
+
+            <!-- ── LIVE ZERO-CLICK FREE-SCAN HUD BANNER ── -->
+            <div v-if="activeFreeScanPhaseGroup" class="q-mb-xs rounded-borders shadow-2 overflow-hidden"
+              :style="{
+                background: activeFreeScanPhaseGroup.isCompleted ? 'linear-gradient(90deg, #1b5e20, #2e7d32)' : 'linear-gradient(90deg, #0d47a1, #1565c0)',
+                border: '2px solid ' + (activeFreeScanPhaseGroup.isCompleted ? '#66bb6a' : '#42a5f5')
+              }">
+              <div class="row items-center justify-between q-pa-sm text-white no-wrap">
+                <div class="row items-center q-gutter-x-sm" style="overflow: hidden;">
+                  <div class="row items-center q-px-sm q-py-xs rounded-borders" :class="activeFreeScanPhaseGroup.isCompleted ? 'bg-green-9' : 'bg-blue-10'">
+                    <q-icon :name="activeFreeScanPhaseGroup.isCompleted ? 'check_circle' : 'qr_code_scanner'" size="24px" class="q-mr-xs text-amber-3 pulse-scanner" />
+                    <span class="text-weight-bolder" style="font-size: 15px; letter-spacing: 0.5px;">
+                      PHASE {{ activeFreeScanPhaseGroup.phase }}
+                    </span>
+                  </div>
+                  
+                  <div class="column">
+                    <div class="row items-center q-gutter-x-xs">
+                      <span class="text-weight-bolder" style="font-size: 14px;">
+                        {{ activeFreeScanPhaseGroup.isCompleted ? '🎉 สแกนครบทุกถุงใน Phase นี้เรียบร้อยแล้ว!' : `⚡ ZERO-CLICK SCANNER : สแกนครบแล้ว ${activeFreeScanPhaseGroup.scanned}/${activeFreeScanPhaseGroup.total} ถุง` }}
+                      </span>
+                    </div>
+                    <div v-if="!activeFreeScanPhaseGroup.isCompleted" class="row items-center q-gutter-x-xs q-mt-xs" style="font-size: 12px;">
+                      <span class="text-amber-2 text-weight-bold">ถุงที่รอสแกน:</span>
+                      <div class="row items-center q-gutter-x-xs" style="flex-wrap: wrap;">
+                        <q-badge v-for="ing in activeFreeScanPhaseGroup.pending" :key="ing.id" color="amber-9" text-color="black" class="q-px-xs text-weight-bolder shadow-1" style="font-size: 12px;">
+                          {{ ing.re_code }} ({{ productionRequire(ing).toFixed(3) }} kg)
+                        </q-badge>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Status indicator -->
+                <div class="row items-center q-gutter-x-sm no-wrap q-ml-md">
+                  <div class="q-px-sm q-py-xs rounded-borders text-weight-bold row items-center no-wrap"
+                       :class="activeFreeScanPhaseGroup.isCompleted ? 'bg-green-10 text-white' : 'bg-blue-10 text-amber-3'"
+                       style="font-size: 12px; border: 1px solid rgba(255,255,255,0.3);">
+                    <span class="scanner-live-dot q-mr-xs" :class="activeFreeScanPhaseGroup.isCompleted ? 'dot-green' : 'dot-amber'"></span>
+                    <span>{{ activeFreeScanPhaseGroup.isCompleted ? 'PHASE DONE' : 'READY TO SCAN' }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <div v-if="skuStepsByPhase.length > 0" ref="stepTableScroll" class="scroll" style="flex: 1; min-height: 0;">
               <q-markup-table flat bordered dense separator="cell" style="font-size: 16px;" class="full-width production-table sticky-header-table">
@@ -4875,6 +5040,33 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.pulse-scanner {
+  animation: pulse-scanner-anim 1.5s infinite alternate;
+}
+@keyframes pulse-scanner-anim {
+  0% { transform: scale(1); opacity: 0.9; }
+  100% { transform: scale(1.18); opacity: 1; filter: drop-shadow(0 0 6px #ffd54f); }
+}
+.scanner-live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot-amber {
+  background-color: #ffd54f;
+  box-shadow: 0 0 8px #ffd54f;
+  animation: blink-dot 1s infinite alternate;
+}
+.dot-green {
+  background-color: #69f0ae;
+  box-shadow: 0 0 8px #69f0ae;
+}
+@keyframes blink-dot {
+  0% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
 .heartbeat-icon {
   animation: heartbeat 1s ease-in-out infinite;
 }
