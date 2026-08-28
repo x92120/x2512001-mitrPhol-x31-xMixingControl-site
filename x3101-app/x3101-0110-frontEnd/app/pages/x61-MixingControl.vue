@@ -2162,10 +2162,17 @@ const playPhaseCompleteChime = () => {
 }
 
 // ── Ultra-Sweet Bilingual Neural Female Voice Player (TH: Premwadee / EN: Emma) ──
+const audioCache: Record<string, HTMLAudioElement> = {}
+
 const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
     try {
         const lang = (locale.value === 'en' || locale.value === 'gb') ? 'en' : 'th'
-        const audio = new Audio(`/sounds/mixing_${name}_${lang}.mp3`)
+        const fileKey = `${name}_${lang}`
+        if (!audioCache[fileKey]) {
+            audioCache[fileKey] = new Audio(`/sounds/mixing_${fileKey}.mp3`)
+        }
+        const audio = audioCache[fileKey]
+        audio.currentTime = 0
         audio.volume = 1.0
         const p = audio.play()
         if (p && typeof p.catch === 'function') {
@@ -3419,16 +3426,28 @@ const handleScan = (scannedText: string) => {
 let globalScannerBuffer = ''
 let lastScanKeyTime = 0
 
-// Thai keyboard to ASCII map (if scanner types while OS keyboard is Thai)
-const thaiToAsciiMap: Record<string, string> = {
-    'ๅ': '1', '/': '2', '-': '3', 'ภ': '4', 'ถ': '5', 'ุ': '6', 'ึ': '7', 'ค': '8', 'ต': '9', 'จ': '0', 'ข': '-', 'ช': '=',
-    '+': '!', '๑': '@', '๒': '#', '๓': '$', '๔': '%', 'ู': '^', '฿': '&', '๕': '*', '๖': '(', '๗': ')', '๘': '_', '๙': '+',
+// ── Thai Unicode Only to English Keyboard Mapper ──
+// Strictly translates genuine Thai characters (0x0E01-0x0E5B) without touching ASCII punctuation!
+const thaiUnicodeToEnglishMap: Record<string, string> = {
+    'ๅ': '1', 'ภ': '4', 'ถ': '5', 'ุ': '6', 'ึ': '7', 'ค': '8', 'ต': '9', 'จ': '0', 'ข': '-', 'ช': '=',
+    '๑': '@', '๒': '#', '๓': '$', '๔': '%', 'ู': '^', '฿': '&', '๕': '*', '๖': '(', '๗': ')', '๘': '_', '๙': '+',
     'ๆ': 'q', 'ไ': 'w', 'ำ': 'e', 'พ': 'r', 'ะ': 't', 'ั': 'y', 'ี': 'u', 'ร': 'i', 'น': 'o', 'ย': 'p', 'บ': '[', 'ล': ']', 'ฃ': '\\',
-    '๐': 'Q', '"': 'W', 'ฎ': 'E', 'ฑ': 'R', 'ธ': 'T', 'ํ': 'Y', '๊': 'U', 'ณ': 'I', 'ฯ': 'O', 'ญ': 'P', 'ฐ': '{', 'ฤ': '}', 'ฅ': '|',
+    '๐': 'Q', 'ฎ': 'E', 'ฑ': 'R', 'ธ': 'T', 'ํ': 'Y', '๊': 'U', 'ณ': 'I', 'ฯ': 'O', 'ญ': 'P', 'ฐ': '{', 'ฤ': '}', 'ฅ': '|',
     'ฟ': 'a', 'ห': 's', 'ก': 'd', 'ด': 'f', 'เ': 'g', '้': 'h', '่': 'j', 'า': 'k', 'ส': 'l', 'ว': ';', 'ง': "'",
-    'ฤ': 'A', 'ฆ': 'S', 'ฏ': 'D', 'โ': 'F', 'ฌ': 'G', '็': 'H', '๋': 'J', 'ษ': 'K', 'ศ': 'L', 'ซ': ':', '.': '"',
+    'ฆ': 'S', 'ฏ': 'D', 'โ': 'F', 'ฌ': 'G', '็': 'H', '๋': 'J', 'ษ': 'K', 'ศ': 'L', 'ซ': ':',
     'ผ': 'z', 'ป': 'x', 'แ': 'c', 'อ': 'v', 'ิ': 'b', 'ื': 'n', 'ท': 'm', 'ม': ',', 'ใ': '.', 'ฝ': '/',
-    '(' : 'Z', ')': 'X', 'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', '?': 'M', 'ฒ': '<', 'ฬ': '>', 'ฦ': '?'
+    'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', 'ฒ': '<', 'ฬ': '>', 'ฦ': '?'
+}
+
+const sanitizeScannerChar = (char: string): string => {
+    if (!char) return ''
+    const code = char.charCodeAt(0)
+    // Pure ASCII (letters, numbers, and all JSON symbols: { } " : , . - _ ( ) /): KEEP EXACT AS IS!
+    if (code >= 32 && code <= 126) {
+        return char
+    }
+    // Thai character: translate back to English key
+    return thaiUnicodeToEnglishMap[char] || char
 }
 
 // ── Auto-Focus Lock: Maintain Scanner Readiness on clicks ──
@@ -3475,7 +3494,7 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
         }
     } else if (e.key.length === 1) {
         // Direct character capture with Thai layout fallback translation
-        const char = thaiToAsciiMap[e.key] || e.key
+        const char = sanitizeScannerChar(e.key)
         globalScannerBuffer += char
         
         // Auto-submit safety timer: If scanner does not send Enter, auto-process after 120ms burst
