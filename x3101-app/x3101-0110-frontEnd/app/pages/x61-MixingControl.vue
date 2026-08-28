@@ -2161,16 +2161,17 @@ const playPhaseCompleteChime = () => {
     } catch {}
 }
 
-const speakStepAnnounce = (text: string) => {
-    if (!('speechSynthesis' in window)) return
+// ── Ultra-Sweet Neural Female Voice Player (Premwadee Neural) ──
+const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
     try {
-        window.speechSynthesis.cancel()
-        const u = new SpeechSynthesisUtterance(text)
-        u.lang = 'th-TH'
-        u.rate = 1.15
-        u.pitch = 1.05
-        window.speechSynthesis.speak(u)
+        const audio = new Audio(`/sounds/mixing_${name}.mp3`)
+        audio.volume = 1.0
+        audio.play().catch(() => {})
     } catch {}
+}
+
+const speakStepAnnounce = (text: string) => {
+    // Kept for backward compatibility
 }
 
 // ── QR Scan Dialog (SPP / FH steps) ──
@@ -2248,6 +2249,7 @@ const triggerFaultAlarm = (scanned: string, expected: string, step: any) => {
     qrScanBuffer.value = ''
     globalScannerBuffer = ''
     playAlarmBeep()
+    playSweetVoice('scan_error')
 }
 
 const printProduction = () => {
@@ -3040,7 +3042,7 @@ const handleScan = (scannedText: string) => {
                             }))
 
                         playSuccessChime()
-                        speakStepAnnounce(`สาร ${redirectedStep.re_code} สแกนเรียบร้อย`)
+                        playSweetVoice('scan_ok')
                         $q.notify({
                             type: 'positive',
                             message: `✅ ${matchedPhase2}: ${redirectedStep.re_code} — ${scannedCount2}/${allFreeScanSteps2.length} done`,
@@ -3065,7 +3067,7 @@ const handleScan = (scannedText: string) => {
                                     const isSamePhase2 = nextPhase2 === matchedPhase2
                                     expandedPhases.value[nextPhase2] = true
                                     playPhaseCompleteChime()
-                                    speakStepAnnounce(`Phase ${matchedPhase2} สแกนครบแล้วค่ะ`)
+                                    playSweetVoice('phase_done')
                                     $q.notify({
                                         type: 'positive', icon: 'rocket_launch',
                                         message: `🎉 ${matchedPhase2} สแกนครบ! → ${isSamePhase2 ? 'ต่อ' : 'ข้ามไป'} ${nextPhase2}`,
@@ -3175,7 +3177,7 @@ const handleScan = (scannedText: string) => {
 
 
             playSuccessChime()
-            speakStepAnnounce(`สาร ${step.re_code} สแกนเรียบร้อย`)
+            playSweetVoice('scan_ok')
             $q.notify({
                 type: 'positive',
                 message: `✅ ${matchedPhase}: ${step.re_code} — ${scannedCount}/${allFreeScanSteps.length} done`,
