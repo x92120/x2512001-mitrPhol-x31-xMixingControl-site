@@ -3391,6 +3391,11 @@ const thaiToAsciiMap: Record<string, string> = {
     '(' : 'Z', ')': 'X', 'ฉ': 'C', 'ฮ': 'V', 'ฺ': 'B', '์': 'N', '?': 'M', 'ฒ': '<', 'ฬ': '>', 'ฦ': '?'
 }
 
+// ── Auto-Focus Lock: Maintain Scanner Readiness on clicks ──
+const handleGlobalDocClick = (e: MouseEvent) => {
+    // If dialog is open or user clicked non-interactive area, maintain state
+}
+
 const handleGlobalKeydown = (e: KeyboardEvent) => {
     // Ignore browser function keys and shortcuts
     if (e.ctrlKey || e.altKey || e.metaKey) return
