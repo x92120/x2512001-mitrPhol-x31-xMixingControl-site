@@ -8,7 +8,7 @@ import { generateQrDataUrl } from '~/composables/useQrCode'
 
 const $q = useQuasar()
 const { getAuthHeader, user, switchStationUser } = useAuth()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // --- MQTT Integration ---
 const { connect, disconnect, onMessage, offMessage, publishMessage, plantsData } = useMQTT()
@@ -1715,6 +1715,7 @@ const onUnifiedScanSubmit = () => {
     const context = (selectedBatchId.value && batchPreBatchItems.value.length > 0) ? 'bag' : 'box'
     parseAndHandleScan(val, context)
     boxScanInput.value = ''
+    focusScanInput()
 }
 
 // Auto-submit debounce for unified scan input
@@ -1725,6 +1726,106 @@ watch(boxScanInput, (val) => {
     if (!val?.trim()) return
     scanDebounce = setTimeout(() => { onUnifiedScanSubmit() }, 500)
 })
+
+
+// ── Focus Helper & Global Scanner Capture ─────────────────────────────────────
+const focusScanInput = () => {
+    if (import.meta.client) {
+        nextTick(() => {
+            const inputEl = bagScanRef.value?.$el?.querySelector('input') || bagScanRef.value
+            inputEl?.focus?.()
+        })
+    }
+}
+
+// ── Voice Prompts (Text-to-Speech) ──────────────────────────────────────────
+const speakAllVerifiedVoice = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    try {
+        window.speechSynthesis.cancel() // clear any prior speech queue
+        const currentLang = (locale.value || 'th').toLowerCase()
+        const isTh = currentLang.startsWith('th')
+        const message = isTh
+            ? 'สแกนครบแล้ว พร้อมเริ่ม Start Production'
+            : 'All ingredients verified. Ready to start production.'
+        
+        const utterance = new SpeechSynthesisUtterance(message)
+        utterance.lang = isTh ? 'th-TH' : 'en-US'
+        utterance.rate = 1.05
+        utterance.pitch = 1.0
+        window.speechSynthesis.speak(utterance)
+    } catch (err) {
+        console.warn('[Speech] Error speaking verification:', err)
+    }
+}
+
+let announcedVerifiedBatchId = ''
+
+watch(isAllPrepackVerified, (newVal) => {
+    if (newVal && selectedBatchId.value && announcedVerifiedBatchId !== selectedBatchId.value) {
+        announcedVerifiedBatchId = selectedBatchId.value
+        playSound('success')
+        speakAllVerifiedVoice()
+        $q.notify({
+            type: 'positive',
+            icon: 'rocket_launch',
+            message: '🎉 สแกนครบแล้ว! พร้อมเริ่ม Start Production',
+            caption: `Batch ${selectedBatchId.value} verified — all pre-batches ready`,
+            position: 'top',
+            timeout: 4500
+        })
+    } else if (!newVal) {
+        if (announcedVerifiedBatchId === selectedBatchId.value) {
+            announcedVerifiedBatchId = ''
+        }
+    }
+})
+
+watch(selectedBatchId, () => {
+    announcedVerifiedBatchId = ''
+    focusScanInput()
+})
+
+// ── Global Barcode Scanner Capture Hook ──────────────────────────────────────
+let globalScannerBuffer = ''
+let lastScanKeyTime = 0
+
+const handleGlobalScanKeydown = (e: KeyboardEvent) => {
+    // Ignore function keys / browser shortcuts
+    if (e.ctrlKey || e.altKey || e.metaKey || (e.key.length > 1 && e.key !== 'Enter')) return
+
+    const activeEl = document.activeElement as HTMLElement
+    const mainInputEl = bagScanRef.value?.$el?.querySelector('input')
+
+    // Check if user is manually typing into search or inspector box
+    const isOtherInputField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl !== mainInputEl
+
+    const now = Date.now()
+    const isRapid = (now - lastScanKeyTime) < 120
+    lastScanKeyTime = now
+
+    // If typing slowly by hand (gap > 200ms), restart buffer
+    if (!isRapid && now - lastScanKeyTime > 200) {
+        globalScannerBuffer = ''
+    }
+
+    if (e.key === 'Enter') {
+        if (globalScannerBuffer.length >= 2) {
+            const scannedBarcode = globalScannerBuffer.trim()
+            globalScannerBuffer = ''
+
+            // If user was typing in treeSearch box manually, let them submit search
+            if (isOtherInputField && !isRapid) return
+
+            e.preventDefault()
+            boxScanInput.value = scannedBarcode
+            onUnifiedScanSubmit()
+            focusScanInput()
+        }
+    } else if (e.key.length === 1) {
+        globalScannerBuffer += e.key
+    }
+}
 
 // --- Helpers ---
 
@@ -2222,6 +2323,10 @@ onMounted(() => {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     window.addEventListener('unload', handleUnload)
+    if (import.meta.client) {
+        window.addEventListener('keydown', handleGlobalScanKeydown)
+        focusScanInput()
+    }
 })
 
 // Keep inspector in sync if user changes (re-login)
@@ -2239,6 +2344,9 @@ onUnmounted(() => {
     disconnect()
     window.removeEventListener('beforeunload', handleBeforeUnload)
     window.removeEventListener('unload', handleUnload)
+    if (import.meta.client) {
+        window.removeEventListener('keydown', handleGlobalScanKeydown)
+    }
 })
 </script>
 
@@ -2269,11 +2377,11 @@ onUnmounted(() => {
           v-model="boxScanInput" 
           ref="bagScanRef"
           outlined dense
-          :placeholder="selectedBatchId ? 'SCAN NEXT PREBATCH LABEL...' : 'Scan Batch ID or Ingredient Label...'" 
+          :placeholder="selectedBatchId ? '⚡ READY TO SCAN (ยิงบาร์โค้ดได้ทันที ไม่ต้องคลิกช่อง)...' : 'Scan Batch ID or Ingredient Label...'" 
           @keyup.enter="onUnifiedScanSubmit"
           autofocus
           bg-color="white"
-          style="font-size: 14px;"
+          style="font-size: 14px; box-shadow: 0 0 8px rgba(33, 150, 243, 0.25);"
         >
           <template v-slot:prepend>
             <q-icon name="qr_code_scanner" :color="lastScanResult === 'success' ? 'green' : (lastScanResult === 'error' ? 'red' : 'primary')" size="sm" />

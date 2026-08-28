@@ -5,11 +5,13 @@ const $q = useQuasar()
 
 // Zoom control
 const ZOOM_KEY = 'app-zoom-level'
-const zoomLevel = ref(1.5)
+const zoomLevel = ref(1.0)
 
 const applyZoom = () => {
-  document.documentElement.style.zoom = String(zoomLevel.value)
-  localStorage.setItem(ZOOM_KEY, String(zoomLevel.value))
+  if (import.meta.client) {
+    document.documentElement.style.zoom = String(zoomLevel.value)
+    localStorage.setItem(ZOOM_KEY, String(zoomLevel.value))
+  }
 }
 
 const zoomOptions = [
@@ -26,11 +28,6 @@ const zoomOptions = [
   { label: '180%', value: 1.8 },
   { label: '190%', value: 1.9 },
   { label: '200%', value: 2.0 },
-  { label: '210%', value: 2.1 },
-  { label: '220%', value: 2.2 },
-  { label: '230%', value: 2.3 },
-  { label: '240%', value: 2.4 },
-  { label: '250%', value: 2.5 },
 ]
 
 watch(zoomLevel, applyZoom)
@@ -64,7 +61,7 @@ const goToPlant = (plant: number) => {
 </script>
 
 <template>
-  <q-layout view="hHh lpR fFf">
+  <q-layout view="hHh lpR fFf" class="bg-grey-2">
     <q-header elevated class="bg-primary text-white" height-hint="98">
       <q-toolbar>
         <q-toolbar-title>
@@ -74,9 +71,9 @@ const goToPlant = (plant: number) => {
         </q-toolbar-title>
 
         <!-- Zoom Control -->
-        <div class="row items-center q-mr-md gt-xs" style="min-width: 200px;">
+        <div class="row items-center q-mr-md gt-xs" style="min-width: 180px;">
           <q-icon name="zoom_out" size="xs" class="q-mr-xs" />
-          <q-slider v-model="zoomLevel" :min="0.8" :max="2.5" :step="0.1" color="white" dense style="flex: 1;" />
+          <q-slider v-model="zoomLevel" :min="0.8" :max="2.0" :step="0.1" color="white" dense style="flex: 1;" />
           <q-icon name="zoom_in" size="xs" class="q-mx-xs" />
           <q-select
             v-model="zoomLevel"
@@ -112,7 +109,7 @@ const goToPlant = (plant: number) => {
         </q-btn>
       </q-toolbar>
 
-      <q-tabs align="left" dense>
+      <q-tabs align="left" dense active-color="amber-3" indicator-color="amber-3">
         <q-route-tab to="/" icon="home" :label="t('nav.home')" />
 
         <q-route-tab
@@ -168,15 +165,17 @@ const goToPlant = (plant: number) => {
       </q-tabs>
     </q-header>
 
-    <q-page-container style="padding-top: 105px !important;">
+    <q-page-container>
       <NuxtPage />
     </q-page-container>
   </q-layout>
 </template>
 
 <style>
-body {
-  overflow: hidden !important;
+/* Smooth scrolling */
+html, body {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
 }
-/* Global styles if needed */
 </style>
