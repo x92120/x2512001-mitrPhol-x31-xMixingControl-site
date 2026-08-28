@@ -646,8 +646,9 @@ def get_batches_awaiting_recheck(db: Session = Depends(get_db)):
         models.ProductionPlan, models.ProductionBatch.plan_id == models.ProductionPlan.id
     ).filter(
         (models.ProductionBatch.fh_boxed_at.isnot(None)) | (models.ProductionBatch.spp_boxed_at.isnot(None)),
-        models.ProductionBatch.ready_to_product == False
-    ).all()
+        models.ProductionBatch.ready_to_product == False,
+        models.ProductionBatch.status.notin_(['Done', 'Cancelled'])
+    ).order_by(models.ProductionBatch.created_at.desc()).limit(100).all()
 
     return [{
         "batch_id": b.batch_id,

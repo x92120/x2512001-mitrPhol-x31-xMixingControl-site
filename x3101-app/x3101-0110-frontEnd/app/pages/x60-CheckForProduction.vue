@@ -1025,7 +1025,7 @@ const getWhStatus = (wh: string) => {
 
 const fetchPlansAndBatches = async () => {
     try {
-        const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active`, {
+        const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active&limit=100`, {
             headers: getAuthHeader() as Record<string, string>
         })
         rawPlans.value = resp.plans || resp || []
