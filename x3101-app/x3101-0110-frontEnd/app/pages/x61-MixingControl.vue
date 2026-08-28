@@ -1334,7 +1334,7 @@ const killBatch = () => {
         message: t('mixing.killBatchMsg', { plant: activePlantId.value }),
         cancel: { label: t('common.cancel'), flat: true },
         ok: { label: t('common.confirm'), color: 'negative' },
-        cancel: true,
+        
         persistent: true,
         color: 'negative'
     }).onOk(async () => {
@@ -1474,7 +1474,7 @@ const completeAndReleaseBatch = (auto = false) => {
             message: t('mixing.completeBatchMsg', { batch: batchId, plant: plantId }),
             cancel: { label: t('common.cancel'), flat: true },
             ok: { label: t('common.confirm'), color: 'positive' },
-            cancel: true,
+            
             persistent: true,
             color: 'positive',
             ok: { label: 'Complete & Release', color: 'positive' }
@@ -1492,7 +1492,7 @@ const softResetBatch = () => {
         message: t('mixing.resetBatchMsg', { batch: selectedBatchId.value }),
         cancel: { label: t('common.cancel'), flat: true },
         ok: { label: t('common.confirm'), color: 'warning' },
-        cancel: true,
+        
         persistent: true,
         color: 'warning'
     }).onOk(async () => {

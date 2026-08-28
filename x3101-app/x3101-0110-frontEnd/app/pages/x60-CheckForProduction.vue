@@ -123,47 +123,100 @@ const scannedInspector = ref<{ username: string; full_name: string } | null>(nul
 const userScanLoading = ref(false)
 const lotScanInput = ref('')
 const scannedLot = ref('')
+const cachedUsers = ref<any[]>([])
 
-/** Resolves scanned username against /users/ and sets scannedInspector */
-const onUserScanSubmit = async () => {
-  const val = userScanInput.value.trim()
-  if (!val) return
-  userScanLoading.value = true
-  userScanInput.value = ''   // clear immediately so scanner is ready for next
+// Fetch all registered users for instant scanner matching
+const fetchUsersCache = async () => {
   try {
     const res = await $fetch<any[]>(`${appConfig.apiBaseUrl}/users/`, {
       headers: getAuthHeader() as Record<string, string>
     })
-    const found = res.find((u: any) => u.username.toLowerCase() === val.toLowerCase())
-    if (found) {
-      scannedInspector.value = { username: found.username, full_name: found.full_name || found.username }
-      // Switch active station user → updates top-right display across the app
-      switchStationUser(found)
-      playSound('success')
-      $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ Inspector: ${found.full_name || found.username}`, position: 'top-right', timeout: 2000 })
-    } else {
-      // User not found → alarm!
+    if (Array.isArray(res)) cachedUsers.value = res
+  } catch (e) {
+    console.warn('[Users] Cannot prefetch users cache:', e)
+  }
+}
+
+/** Resolves scanned username / badge QR against registered users */
+const resolveAndSetInspector = async (rawVal: string): Promise<boolean> => {
+  const clean = rawVal.replace(/^[@!]/, '').replace(/^(user|inspector|id)[:=]/i, '').trim()
+  if (!clean) return false
+  
+  if (cachedUsers.value.length === 0) {
+    await fetchUsersCache()
+  }
+  
+  const found = cachedUsers.value.find((u: any) => 
+    u.username.toLowerCase() === clean.toLowerCase() ||
+    (u.full_name && u.full_name.toLowerCase() === clean.toLowerCase())
+  )
+  
+  if (found) {
+    scannedInspector.value = { username: found.username, full_name: found.full_name || found.username }
+    switchStationUser(found)
+    playSound('success')
+    setScanFeedback('success')
+    $q.notify({
+      type: 'positive',
+      icon: 'how_to_reg',
+      message: `✅ Inspector: ${found.full_name || found.username}`,
+      caption: `@${found.username}`,
+      position: 'top',
+      timeout: 2500
+    })
+    return true
+  }
+  return false
+}
+
+const resolveAndSetLot = (rawVal: string): boolean => {
+  let clean = rawVal.trim()
+  if (/^lot[:=\-_]?/i.test(clean)) {
+    clean = clean.replace(/^lot[:=\-_]?/i, '').trim()
+  } else if (/^l\/n[:=\-_]?/i.test(clean)) {
+    clean = clean.replace(/^l\/n[:=\-_]?/i, '').trim()
+  }
+  if (clean) {
+    scannedLot.value = clean
+    playSound('success')
+    setScanFeedback('success')
+    $q.notify({
+      type: 'info',
+      icon: 'inventory_2',
+      message: `✅ ล็อก Lot: ${clean}`,
+      position: 'top',
+      timeout: 2000
+    })
+    return true
+  }
+  return false
+}
+
+const onUserScanSubmit = async () => {
+  const val = userScanInput.value.trim()
+  if (!val) return
+  userScanLoading.value = true
+  userScanInput.value = ''
+  try {
+    const ok = await resolveAndSetInspector(val)
+    if (!ok) {
       playSound('error')
       setScanFeedback('error')
       $q.notify({
         type: 'negative',
         icon: 'person_off',
-        message: `❌ User "${val}" not found`,
+        message: `❌ ไม่พบผู้ใช้งาน "${val}"`,
         caption: 'QR Badge not registered in the system',
         position: 'top',
-        timeout: 4000,
-        actions: [{ label: 'OK', color: 'white' }]
+        timeout: 3500
       })
     }
-  } catch (e) {
-    playSound('error')
-    $q.notify({ type: 'negative', icon: 'wifi_off', message: 'Cannot reach server to verify user', position: 'top', timeout: 3000 })
   } finally {
     userScanLoading.value = false
+    focusScanInput()
   }
 }
 
-// Auto-submit user scan via debounce (handles scanners that don't send Enter)
 let _userScanDebounce: ReturnType<typeof setTimeout> | null = null
 watch(userScanInput, (val) => {
   if (!val) return
@@ -176,9 +229,9 @@ watch(userScanInput, (val) => {
 const onLotScanSubmit = () => {
   const val = lotScanInput.value.trim()
   if (!val) return
-  scannedLot.value = val
   lotScanInput.value = ''
-  $q.notify({ type: 'info', icon: 'inventory_2', message: `Lot locked: ${val}`, position: 'top', timeout: 1200 })
+  resolveAndSetLot(val)
+  focusScanInput()
 }
 
 // Snapshot of the original session user (before any badge switch)
@@ -187,7 +240,6 @@ const _sessionUser = import.meta.client
     : null
 
 const clearInspector = () => {
-    // Restore original login user
     if (_sessionUser) {
         switchStationUser(_sessionUser)
         scannedInspector.value = { username: _sessionUser.username, full_name: _sessionUser.full_name || _sessionUser.username }
@@ -197,12 +249,16 @@ const clearInspector = () => {
             full_name: (user.value as any).full_name || user.value.username || ''
         } : null
     }
+    focusScanInput()
 }
-const clearLot = () => { scannedLot.value = '' }
+const clearLot = () => { 
+    scannedLot.value = '' 
+    focusScanInput()
+}
 
 /** Active operator — prefers scanned inspector over logged-in user */
 const currentOperator = computed(() =>
-  scannedInspector.value?.username || currentOperator.value
+  scannedInspector.value?.username || user.value?.username || 'admin'
 )
 
 
@@ -1281,7 +1337,41 @@ const handleMqttBarcode = (topic: string, payload: any) => {
 
 const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
     barcode = barcode.trim()
+    if (!barcode) return
     
+    const upperTrimmed = barcode.toUpperCase().trim()
+
+    // ── COMMAND SHORTCUTS (Zero-Click) ──
+    if (upperTrimmed === 'START' || upperTrimmed === 'RELEASE' || upperTrimmed === 'START_PRODUCTION' || upperTrimmed === 'START PRODUCTION' || upperTrimmed === 'GO' || upperTrimmed === 'OK') {
+        if (canStartProduction.value) {
+            playSound('success')
+            $q.notify({
+                type: 'positive',
+                icon: 'rocket_launch',
+                message: '🚀 เริ่มต้นกระบวนการผลิต (Start Production)...',
+                position: 'top',
+                timeout: 2000
+            })
+            await goToStartProduction()
+            return
+        } else if (selectedBatchId.value) {
+            playSound('error')
+            setScanFeedback('error')
+            $q.notify({
+                type: 'warning',
+                icon: 'warning',
+                message: '⚠️ ต้องสแกนตรวจสอบส่วนผสมใน Batch ให้ครบ 100% ก่อนเริ่มผลิต',
+                position: 'top',
+                timeout: 3000
+            })
+            return
+        }
+    }
+    if (upperTrimmed === 'RESET' || upperTrimmed === 'RESCAN' || upperTrimmed === 'CLEAR') {
+        confirmResetBatchRecheck()
+        return
+    }
+
     let candidate = barcode
     let isJson = false
 
@@ -1338,6 +1428,17 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
             isJson = true
             console.log('[Scanner Parse]', { candidate, batchRecordId, scanFields })
         }
+
+        // Smart JSON user badge / lot detection
+        if (scanFields.user || scanFields.username || scanFields.u || scanFields.inspector) {
+            const u = scanFields.user || scanFields.username || scanFields.u || scanFields.inspector
+            await resolveAndSetInspector(String(u))
+            return
+        }
+        if (scanFields.lot || scanFields.l) {
+            resolveAndSetLot(String(scanFields.lot || scanFields.l))
+            return
+        }
     }
 
     if (!isJson) {
@@ -1364,6 +1465,22 @@ const parseAndHandleScan = async (barcode: string, context: 'box' | 'bag') => {
             if (dashParts.length >= 4) {
                 candidate = dashParts.slice(0, 4).join('-')
             }
+        }
+
+        // Smart non-JSON user badge resolution (e.g. "@piyapong", "user:piyapong", or direct username)
+        if (/^[@!]|^(user|inspector|id)[:=]/i.test(barcode)) {
+            const ok = await resolveAndSetInspector(barcode)
+            if (ok) return
+        }
+        // Smart non-JSON Lot resolution (e.g. "LOT:12345", "LOT-12345", "L/N:12345")
+        if (/^(lot|l\/n)[:=\-_]/i.test(barcode)) {
+            const ok = resolveAndSetLot(barcode)
+            if (ok) return
+        }
+        // Check if barcode is an exact match for a registered username
+        if (cachedUsers.value.some((u: any) => u.username.toLowerCase() === barcode.toLowerCase())) {
+            const ok = await resolveAndSetInspector(barcode)
+            if (ok) return
         }
     }
  
@@ -1708,27 +1825,45 @@ const onBagScanSubmit = () => {
 }
 
 // ── Unified scan handler (single input for everything) ──
-const onUnifiedScanSubmit = () => {
-    const val = boxScanInput.value.trim()
-    if (!val) return
-    // Auto-detect context: if a batch is already loaded, treat as bag scan
-    const context = (selectedBatchId.value && batchPreBatchItems.value.length > 0) ? 'bag' : 'box'
-    parseAndHandleScan(val, context)
-    boxScanInput.value = ''
-    focusScanInput()
+let isScanExecuting = false
+
+const executeScan = async (rawCode: string) => {
+    const code = rawCode?.trim()
+    if (!code || isScanExecuting) return
+    isScanExecuting = true
+    try {
+        const context = (selectedBatchId.value && batchPreBatchItems.value.length > 0) ? 'bag' : 'box'
+        await parseAndHandleScan(code, context)
+    } catch (err) {
+        console.error('[Scan Engine] Error in executeScan:', err)
+    } finally {
+        isScanExecuting = false
+        boxScanInput.value = ''
+        focusScanInput()
+    }
 }
 
-// Auto-submit debounce for unified scan input
-let scanDebounce: ReturnType<typeof setTimeout> | null = null
+const onUnifiedScanSubmit = () => {
+    const val = boxScanInput.value.trim()
+    if (val) {
+        executeScan(val)
+    }
+}
 
+// Auto-submit debounce for unified scan input (for scanners pasting without Enter)
+let scanDebounce: ReturnType<typeof setTimeout> | null = null
 watch(boxScanInput, (val) => {
     if (scanDebounce) clearTimeout(scanDebounce)
     if (!val?.trim()) return
-    scanDebounce = setTimeout(() => { onUnifiedScanSubmit() }, 500)
+    scanDebounce = setTimeout(() => {
+        const code = boxScanInput.value.trim()
+        if (code) {
+            executeScan(code)
+        }
+    }, 200)
 })
 
-
-// ── Focus Helper & Global Scanner Capture ─────────────────────────────────────
+// ── Focus Helper ─────────────────────────────────────────────────────────────
 const focusScanInput = () => {
     if (import.meta.client) {
         nextTick(() => {
@@ -1792,38 +1927,44 @@ let lastScanKeyTime = 0
 
 const handleGlobalScanKeydown = (e: KeyboardEvent) => {
     // Ignore function keys / browser shortcuts
-    if (e.ctrlKey || e.altKey || e.metaKey || (e.key.length > 1 && e.key !== 'Enter')) return
+    if (e.ctrlKey || e.altKey || e.metaKey) return
+    if (e.key.length > 1 && e.key !== 'Enter' && e.key !== 'Tab') return
+
+    const now = Date.now()
+    // Barcode scanners type with < 50ms between characters. If human pause > 130ms, start fresh buffer.
+    if (now - lastScanKeyTime > 130) {
+        globalScannerBuffer = ''
+    }
+    lastScanKeyTime = now
 
     const activeEl = document.activeElement as HTMLElement
     const mainInputEl = bagScanRef.value?.$el?.querySelector('input')
-
-    // Check if user is manually typing into search or inspector box
     const isOtherInputField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl !== mainInputEl
 
-    const now = Date.now()
-    const isRapid = (now - lastScanKeyTime) < 120
-    lastScanKeyTime = now
+    if (e.key === 'Enter' || e.key === 'Tab') {
+        // If user is actively typing in treeSearch box manually, let them submit search
+        if (isOtherInputField && globalScannerBuffer.length < 3) return
 
-    // If typing slowly by hand (gap > 200ms), restart buffer
-    if (!isRapid && now - lastScanKeyTime > 200) {
-        globalScannerBuffer = ''
-    }
-
-    if (e.key === 'Enter') {
-        if (globalScannerBuffer.length >= 2) {
-            const scannedBarcode = globalScannerBuffer.trim()
-            globalScannerBuffer = ''
-
-            // If user was typing in treeSearch box manually, let them submit search
-            if (isOtherInputField && !isRapid) return
-
+        const codeToProcess = (globalScannerBuffer.trim() || boxScanInput.value.trim())
+        if (codeToProcess) {
             e.preventDefault()
-            boxScanInput.value = scannedBarcode
-            onUnifiedScanSubmit()
-            focusScanInput()
+            e.stopPropagation()
+            globalScannerBuffer = ''
+            boxScanInput.value = ''
+            executeScan(codeToProcess)
         }
     } else if (e.key.length === 1) {
         globalScannerBuffer += e.key
+    }
+}
+
+// ── Keep Scanner Focused on Any Document Click ─────────────────────────────────
+const handleGlobalDocClick = (e: MouseEvent) => {
+    if (!import.meta.client) return
+    const target = e.target as HTMLElement
+    const isInteractive = target?.closest('input, textarea, select, .q-field--focused, button, .q-btn, .q-dialog, .q-menu')
+    if (!isInteractive) {
+        focusScanInput()
     }
 }
 
@@ -2321,10 +2462,13 @@ onMounted(() => {
     connect()
     onMessage(handleMqttBarcode)
 
+    fetchUsersCache()
     window.addEventListener('beforeunload', handleBeforeUnload)
     window.addEventListener('unload', handleUnload)
     if (import.meta.client) {
-        window.addEventListener('keydown', handleGlobalScanKeydown)
+        window.addEventListener('keydown', handleGlobalScanKeydown, true)
+        document.addEventListener('click', handleGlobalDocClick)
+        window.addEventListener('focus', focusScanInput)
         focusScanInput()
     }
 })
@@ -2345,7 +2489,9 @@ onUnmounted(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload)
     window.removeEventListener('unload', handleUnload)
     if (import.meta.client) {
-        window.removeEventListener('keydown', handleGlobalScanKeydown)
+        window.removeEventListener('keydown', handleGlobalScanKeydown, true)
+        document.removeEventListener('click', handleGlobalDocClick)
+        window.removeEventListener('focus', focusScanInput)
     }
 })
 </script>
