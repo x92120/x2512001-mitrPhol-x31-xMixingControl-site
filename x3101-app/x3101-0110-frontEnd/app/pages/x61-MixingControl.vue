@@ -2181,10 +2181,7 @@ const qrScanStep = ref<any>(null)
 const openQrScanDialog = (step: any) => {
     qrScanStep.value = step
     qrScanBuffer.value = ''
-    _qrAccum   = ''   // clear non-reactive accumulators
-    _scanAccum = ''
-    scanBuffer.value = ''
-    if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
+    globalScannerBuffer = ''
     qrScanDialog.value = true
 }
 
@@ -2247,12 +2244,9 @@ const triggerFaultAlarm = (scanned: string, expected: string, step: any) => {
     }
     faultAlarmDialog.value = true
     qrScanDialog.value = false
-    // ── Clear ALL accumulators (reactive + non-reactive) ──
-    scanBuffer.value = ''
+    // ── Clear scanner buffers ──
     qrScanBuffer.value = ''
-    _scanAccum = ''
-    _qrAccum   = ''
-    if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null }
+    globalScannerBuffer = ''
     playAlarmBeep()
 }
 
@@ -3396,15 +3390,19 @@ const handleGlobalDocClick = (e: MouseEvent) => {
     // If dialog is open or user clicked non-interactive area, maintain state
 }
 
+let _scannerBurstTimer: ReturnType<typeof setTimeout> | null = null
+
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-    // Ignore browser function keys and shortcuts
+    // Ignore browser shortcuts
     if (e.ctrlKey || e.altKey || e.metaKey) return
     if (faultAlarmDialog.value) return
-    if (e.key.length > 1 && e.key !== 'Enter' && e.key !== 'Tab') return
+    
+    const isEnter = e.key === 'Enter' || e.key === 'Tab' || e.code === 'Enter' || e.code === 'NumpadEnter'
+    if (e.key.length > 1 && !isEnter) return
 
     const now = Date.now()
-    // Barcode scanner character burst is < 50ms. If pause > 130ms, reset buffer for new scan.
-    if (now - lastScanKeyTime > 130) {
+    // Barcode scanner character burst is < 50ms. If pause > 150ms, reset buffer for new scan.
+    if (now - lastScanKeyTime > 150) {
         globalScannerBuffer = ''
     }
     lastScanKeyTime = now
@@ -3412,7 +3410,9 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
     const activeEl = document.activeElement as HTMLElement
     const isOtherInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && !qrScanDialog.value
 
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    if (isEnter) {
+        if (_scannerBurstTimer) { clearTimeout(_scannerBurstTimer); _scannerBurstTimer = null }
+        
         // If typing in another normal input with few characters (human typing), let user submit normally
         if (isOtherInput && globalScannerBuffer.length < 3) return
 
@@ -3424,13 +3424,26 @@ const handleGlobalKeydown = (e: KeyboardEvent) => {
             qrScanBuffer.value = ''
             qrScanDialog.value = false
             
-            console.log('[Zero-Click FreeScan Keydown]', codeToProcess)
+            console.log('[Zero-Click FreeScan Enter]', codeToProcess)
             handleScan(codeToProcess)
         }
     } else if (e.key.length === 1) {
         // Direct character capture with Thai layout fallback translation
         const char = thaiToAsciiMap[e.key] || e.key
         globalScannerBuffer += char
+        
+        // Auto-submit safety timer: If scanner does not send Enter, auto-process after 120ms burst
+        if (_scannerBurstTimer) clearTimeout(_scannerBurstTimer)
+        _scannerBurstTimer = setTimeout(() => {
+            if (globalScannerBuffer.trim().length >= 6) {
+                const codeToProcess = globalScannerBuffer.trim()
+                globalScannerBuffer = ''
+                qrScanBuffer.value = ''
+                qrScanDialog.value = false
+                console.log('[Zero-Click FreeScan Burst Timeout]', codeToProcess)
+                handleScan(codeToProcess)
+            }
+        }, 120)
     }
 }
 
