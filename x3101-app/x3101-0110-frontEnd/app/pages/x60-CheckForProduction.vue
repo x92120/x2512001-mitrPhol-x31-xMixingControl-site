@@ -944,8 +944,26 @@ const getPhaseColor = (step: any) => {
 }
 
 const isAllPrepackVerified = computed(() => {
-    if (!batchRecheck.value || !batchRecheck.value.summary) return false
-    return batchRecheck.value.summary.all_ok
+    if (!selectedBatchId.value) return false
+    
+    // Check real-time status from active warehouse checklist (FH, SPP)
+    if (prebatchByWarehouse.value && prebatchByWarehouse.value.length > 0) {
+        const nonMixGroups = prebatchByWarehouse.value.filter((g: any) => g.warehouse !== 'MIX' && g.warehouse !== 'MIXING')
+        if (nonMixGroups.length > 0) {
+            // Every non-MIX warehouse (FH, SPP) must have all its ingredients 100% verified
+            return nonMixGroups.every((group: any) => {
+                if (!group.ingredients || group.ingredients.length === 0) return true
+                return group.ingredients.every((ing: any) => ing.recheck_status === 1)
+            })
+        }
+    }
+    
+    // Fallback if batch has only MIX items
+    if (batchPreBatchItems.value && batchPreBatchItems.value.length > 0) {
+        return batchPreBatchItems.value.every((item: any) => item.recheck_status === 1)
+    }
+
+    return false
 })
 
 const canStartProduction = computed(() => {
@@ -2797,9 +2815,7 @@ onUnmounted(() => {
                 <q-icon name="assignment" size="18px" class="q-mr-xs" />
                 <span>{{ selectedBatchInfo.plan_id }} · {{ selectedBatchInfo.sku_name }}</span>
                 <q-space />
-                <div class="q-mr-sm bg-yellow text-black q-pa-xs rounded-borders" style="font-size:10px;">
-                  allOk: {{ isAllPrepackVerified }}, fifo: {{ isFifoBatch(selectedBatchId || '') }}
-                </div>
+                
                 <q-btn
                   v-if="selectedBatchId"
                   push
