@@ -2168,7 +2168,7 @@ const playPhaseCompleteChime = () => {
     } catch {}
 }
 
-// ── Studio Neural Sweet Female Voice Player (Proven x60 Audio Engine) ──
+// ── Studio Neural Sweet Female Voice Player (Pure Premwadee TH / Emma EN MP3) ──
 let activeVoiceAudio: HTMLAudioElement | null = null
 
 const stopSweetVoice = () => {
@@ -2180,7 +2180,7 @@ const stopSweetVoice = () => {
     }
 }
 
-const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done', customText?: string) => {
+const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
     if (typeof window === 'undefined') return
     stopSweetVoice()
 
@@ -2192,58 +2192,22 @@ const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_d
     } catch {}
     const lang = isEn ? 'en' : 'th'
 
-    // 1. Play Studio Female Voice MP3 (Exact same method as x60 celebration audio)
+    // Play Pure Studio Neural Female Voice MP3 (น้องเปรมวดี TH / Emma EN)
     try {
         const audioSrc = `/sounds/mixing_${name}_${lang}.mp3`
         activeVoiceAudio = new Audio(audioSrc)
         activeVoiceAudio.volume = 1.0
         const p = activeVoiceAudio.play()
         if (p !== undefined) {
-            p.catch(e => {
-                console.warn('[SweetVoice] HTML5 Audio autoplay blocked, using Web Speech:', e)
-                speakFallback(name, isEn, customText)
-            })
+            p.catch(e => console.warn('[SweetVoice] Autoplay note:', e))
         }
     } catch (err) {
         console.warn('[SweetVoice] HTML5 Audio init error:', err)
-        speakFallback(name, isEn, customText)
-    }
-
-    function speakFallback(event: string, english: boolean, textOverride?: string) {
-        if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
-        try {
-            window.speechSynthesis.cancel()
-            const defaultTexts: Record<string, Record<string, string>> = {
-                th: {
-                    scan_ok: textOverride || 'สแกนสารเรียบร้อยค่า',
-                    phase_done: textOverride || 'สแกนสารครบทุกถุงในเฟสแล้วค่า',
-                    scan_error: textOverride || 'อุ๊ย สารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบถุงสารอีกครั้งค่า',
-                    batch_done: textOverride || 'การผสมแบทช์นี้เสร็จสมบูรณ์เรียบร้อยแล้วค่า ขอบคุณค่ะ'
-                },
-                en: {
-                    scan_ok: textOverride || 'Ingredient verified, thank you!',
-                    phase_done: textOverride || 'All ingredients in this phase are verified! Ready for the next step.',
-                    scan_error: textOverride || 'Warning! This ingredient does not match the recipe.',
-                    batch_done: textOverride || 'Batch production completed successfully! Thank you.'
-                }
-            }
-            const langKey = english ? 'en' : 'th'
-            const textToSpeak = textOverride || defaultTexts[langKey]?.[event] || ''
-            if (textToSpeak) {
-                const u = new SpeechSynthesisUtterance(textToSpeak)
-                u.lang = english ? 'en-US' : 'th-TH'
-                u.rate = 1.1
-                u.pitch = 1.08
-                window.speechSynthesis.speak(u)
-            }
-        } catch (synthErr) {
-            console.warn('[SpeechSynthesis] Error:', synthErr)
-        }
     }
 }
 
 const speakStepAnnounce = (text: string) => {
-    playSweetVoice('scan_ok', text)
+    playSweetVoice('scan_ok')
 }
 
 const testSweetVoice = () => {
@@ -2252,7 +2216,7 @@ const testSweetVoice = () => {
     $q.notify({
         type: 'positive',
         icon: 'volume_up',
-        message: '🔊 เล่นเสียงน้องสาวเรียบร้อยค่า',
+        message: '🔊 เล่นเสียงน้องเปรมวดีเรียบร้อยค่า',
         position: 'top',
         timeout: 2000
     })
@@ -2980,7 +2944,7 @@ const isFreeScanPhase = (phaseNumber: any) => {
     // p010–p069: free-scan zone (any order within phase_number)
     // p050–p069 = สารละลาย (solution) phases — need free scan same as p010–p049
     // hasScanSteps filter ensures phases without SPP/FH scan steps fall through to normal flow.
-    return num >= 10 && num <= 69
+    return num >= 10 && num <= 120
 }
 
 const handleScan = (scannedText: string) => {
@@ -3439,24 +3403,15 @@ const handleScan = (scannedText: string) => {
             }
         }
     } else {
-        // No match found anywhere
-        const s = currentStep.value
-        const hasReCode = s && s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
-        const activeRequiresScan = s && hasReCode && (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3'))
-        
-        if (activeRequiresScan) {
-            // Active step requires scan -> wrong barcode, trigger fault alarm
-            const expectedIds = prebatchIdMap.value[s.re_code] || s.re_code || ''
-            triggerFaultAlarm(barcodeId, expectedIds, s)
-        } else {
-            // Active step does not require scan -> just show general info
-            $q.notify({
-                type: 'info',
-                message: `Scanned: ${scannedText}`,
-                position: 'top',
-                caption: 'Current step does not require scanning.'
-            })
-        }
+        // No match found in active phase -> Always trigger SCAN FAULT Alarm!
+        const cur = currentStep.value
+        const curPhase = activeFreeScanPhase || cur?.phase_number || 'Current Phase'
+        const expectedMsg = `Phase ${curPhase} (Current: ${cur?.re_code || cur?.description || 'Active Step'})`
+        triggerFaultAlarm(
+            barcodeId,
+            expectedMsg,
+            { re_code: `บาร์โค้ดไม่ตรงกับสูตรหรือขั้นตอนปัจจุบัน (${barcodeId})` }
+        )
     }
 }
 
