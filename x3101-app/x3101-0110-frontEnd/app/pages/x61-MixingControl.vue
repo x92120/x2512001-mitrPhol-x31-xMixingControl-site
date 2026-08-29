@@ -229,7 +229,7 @@ watch(cookScanInput, (v) => {
     _cookDbx = setTimeout(() => { if (cookScanInput.value.trim()) resolveOperatorScan(cookScanInput.value, cookOperator, cookScanLoading, cookScanInput, false) }, 150)
 })
 const $q = useQuasar()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 // ── State ──
 const selectedBatchId = ref<string | null>(null)
@@ -2068,6 +2068,194 @@ const submitManualPass = () => {
     manualPassDialog.value = false
     manualPassStepTarget.value = null
     manualPassReason.value = ''
+}
+
+// ── QR Scan Dialog (SPP / FH steps) ──
+
+// ── LIVE FREE-SCAN HUD COMPUTED ──
+const activeFreeScanPhaseGroup = computed(() => {
+    if (!skuSteps.value || skuSteps.value.length === 0) return null
+    const cur = currentStep.value
+    const curPhase = cur?.phase_number || (skuSteps.value[localStepIndex.value || 0]?.phase_number)
+    if (!curPhase) return null
+
+    const phaseScanSteps = skuSteps.value.filter((s: any) => {
+        if (s.phase_number !== curPhase) return false
+        const aCode = String(s.action_code || '')
+        if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
+        if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
+        const req = productionRequire(s)
+        if (req <= 0) return false
+        const wh = getStepWh(s)
+        return wh === 'SPP' || wh === 'FH'
+    })
+
+    if (phaseScanSteps.length === 0) return null
+
+    const scannedSteps = phaseScanSteps.filter((s: any) => {
+        const phaseScanKey = `${s.phase_number}|${s.re_code}`
+        return scannedVolumeMap.value[phaseScanKey] != null
+    })
+
+    const pendingSteps = phaseScanSteps.filter((s: any) => {
+        const phaseScanKey = `${s.phase_number}|${s.re_code}`
+        return scannedVolumeMap.value[phaseScanKey] == null
+    })
+
+    return {
+        phase: curPhase,
+        total: phaseScanSteps.length,
+        scanned: scannedSteps.length,
+        pending: pendingSteps,
+        isCompleted: scannedSteps.length >= phaseScanSteps.length && phaseScanSteps.length > 0,
+        allSteps: phaseScanSteps
+    }
+})
+
+// Audio Synthesizers for Instant Audio Feedback
+const playSuccessChime = () => {
+    try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioCtx) return
+        const ctx = new AudioCtx()
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+
+        const osc1 = ctx.createOscillator()
+        const osc2 = ctx.createOscillator()
+        const gain = ctx.createGain()
+        
+        osc1.type = 'sine'
+        osc2.type = 'sine'
+        osc1.frequency.setValueAtTime(880, ctx.currentTime) // A5
+        osc1.frequency.setValueAtTime(1760, ctx.currentTime + 0.08) // A6
+        osc2.frequency.setValueAtTime(1320, ctx.currentTime) // E6
+        osc2.frequency.setValueAtTime(2640, ctx.currentTime + 0.08) // E7
+        
+        gain.gain.setValueAtTime(0.25, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
+        
+        osc1.connect(gain)
+        osc2.connect(gain)
+        gain.connect(ctx.destination)
+        
+        osc1.start(ctx.currentTime)
+        osc2.start(ctx.currentTime)
+        osc1.stop(ctx.currentTime + 0.25)
+        osc2.stop(ctx.currentTime + 0.25)
+    } catch {}
+}
+
+const playPhaseCompleteChime = () => {
+    try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioCtx) return
+        const ctx = new AudioCtx()
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+
+        const freqs = [523.25, 659.25, 783.99, 1046.50] // C5, E5, G5, C6
+        freqs.forEach((f, idx) => {
+            const osc = ctx.createOscillator()
+            const gain = ctx.createGain()
+            osc.type = 'triangle'
+            osc.frequency.value = f
+            gain.gain.setValueAtTime(0.28, ctx.currentTime + idx * 0.08)
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.08 + 0.3)
+            osc.connect(gain)
+            gain.connect(ctx.destination)
+            osc.start(ctx.currentTime + idx * 0.08)
+            osc.stop(ctx.currentTime + idx * 0.08 + 0.3)
+        })
+    } catch {}
+}
+
+// ── Studio Neural Sweet Female Voice Player (Proven x60 Audio Engine) ──
+let activeVoiceAudio: HTMLAudioElement | null = null
+
+const stopSweetVoice = () => {
+    if (activeVoiceAudio) {
+        try {
+            activeVoiceAudio.pause()
+            activeVoiceAudio.currentTime = 0
+        } catch {}
+    }
+}
+
+const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done', customText?: string) => {
+    if (typeof window === 'undefined') return
+    stopSweetVoice()
+
+    let isEn = false
+    try {
+        if (typeof locale !== 'undefined' && locale?.value) {
+            isEn = String(locale.value).toLowerCase().startsWith('en')
+        }
+    } catch {}
+    const lang = isEn ? 'en' : 'th'
+
+    // 1. Play Studio Female Voice MP3 (Exact same method as x60 celebration audio)
+    try {
+        const audioSrc = `/sounds/mixing_${name}_${lang}.mp3`
+        activeVoiceAudio = new Audio(audioSrc)
+        activeVoiceAudio.volume = 1.0
+        const p = activeVoiceAudio.play()
+        if (p !== undefined) {
+            p.catch(e => {
+                console.warn('[SweetVoice] HTML5 Audio autoplay blocked, using Web Speech:', e)
+                speakFallback(name, isEn, customText)
+            })
+        }
+    } catch (err) {
+        console.warn('[SweetVoice] HTML5 Audio init error:', err)
+        speakFallback(name, isEn, customText)
+    }
+
+    function speakFallback(event: string, english: boolean, textOverride?: string) {
+        if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+        try {
+            window.speechSynthesis.cancel()
+            const defaultTexts: Record<string, Record<string, string>> = {
+                th: {
+                    scan_ok: textOverride || 'สแกนสารเรียบร้อยค่า',
+                    phase_done: textOverride || 'สแกนสารครบทุกถุงในเฟสแล้วค่า',
+                    scan_error: textOverride || 'อุ๊ย สารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบถุงสารอีกครั้งค่า',
+                    batch_done: textOverride || 'การผสมแบทช์นี้เสร็จสมบูรณ์เรียบร้อยแล้วค่า ขอบคุณค่ะ'
+                },
+                en: {
+                    scan_ok: textOverride || 'Ingredient verified, thank you!',
+                    phase_done: textOverride || 'All ingredients in this phase are verified! Ready for the next step.',
+                    scan_error: textOverride || 'Warning! This ingredient does not match the recipe.',
+                    batch_done: textOverride || 'Batch production completed successfully! Thank you.'
+                }
+            }
+            const langKey = english ? 'en' : 'th'
+            const textToSpeak = textOverride || defaultTexts[langKey]?.[event] || ''
+            if (textToSpeak) {
+                const u = new SpeechSynthesisUtterance(textToSpeak)
+                u.lang = english ? 'en-US' : 'th-TH'
+                u.rate = 1.1
+                u.pitch = 1.08
+                window.speechSynthesis.speak(u)
+            }
+        } catch (synthErr) {
+            console.warn('[SpeechSynthesis] Error:', synthErr)
+        }
+    }
+}
+
+const speakStepAnnounce = (text: string) => {
+    playSweetVoice('scan_ok', text)
+}
+
+const testSweetVoice = () => {
+    playSuccessChime()
+    playSweetVoice('scan_ok')
+    $q.notify({
+        type: 'positive',
+        icon: 'volume_up',
+        message: '🔊 เล่นเสียงน้องสาวเรียบร้อยค่า',
+        position: 'top',
+        timeout: 2000
+    })
 }
 
 // ── QR Scan Dialog (SPP / FH steps) ──
