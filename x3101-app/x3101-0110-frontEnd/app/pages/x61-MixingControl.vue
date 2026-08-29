@@ -3139,6 +3139,8 @@ const handleScan = (scannedText: string) => {
                             position: 'top', icon: 'inventory_2', timeout: 3000
                         })
 
+                        confirmStepFromRow(redirectedStep, true)
+
                         if (allScanned2) {
                             const scannedIdxList2 = allFreeScanSteps2.map((s: any) =>
                                 skuSteps.value.findIndex((sk: any) => Number(sk.id) === Number(s.id))
@@ -3167,9 +3169,12 @@ const handleScan = (scannedText: string) => {
                                 }
                             }
 
-                            if (isPlcConnected.value && nextIdx2 < skuSteps.value.length) {
-                                setTimeout(() => { sendStepToPLC(nextIdx2) }, 600)
-                            }
+                            setTimeout(async () => {
+                                await sendCommand('NEXT_STEP')
+                                if (isPlcConnected.value && nextIdx2 < skuSteps.value.length) {
+                                    sendStepToPLC(nextIdx2)
+                                }
+                            }, 500)
                         }
 
                         return
@@ -3274,12 +3279,11 @@ const handleScan = (scannedText: string) => {
             // 3. Find this step's index in skuSteps
             const stepIdx = skuSteps.value.findIndex((s: any) => Number(s.id) === Number(step.id))
 
+            confirmStepFromRow(step, true)
+
             if (allScanned) {
                 // All SPP/FH scan steps in this phase are done.
                 // Advance to AFTER the highest-indexed scan step in the phase
-                // (not just stepIdx+1) because steps may have been scanned out of order.
-                // Example: Kelcogel(sub40) scanned before CPK(sub20) →
-                //   stepIdx = CPK index, but we must advance past Kelcogel(sub40), not back to W100(sub30)
                 const scannedIdxList = allFreeScanSteps.map((s: any) =>
                     skuSteps.value.findIndex((sk: any) => Number(sk.id) === Number(s.id))
                 ).filter((i: number) => i >= 0)
@@ -3287,20 +3291,17 @@ const handleScan = (scannedText: string) => {
                     ? Math.max(...scannedIdxList)
                     : stepIdx
                 let nextIdx = maxScannedIdx + 1
-                // Skip over steps in the SAME phase that are already completed (have stamp_time)
-                // e.g. Frozen Dice Orange Peel (sub130) was scanned earlier but isn't in allFreeScanSteps
-                // → advance past it to p040 instead of stopping there
                 while (nextIdx < skuSteps.value.length) {
                     const candidateStep = skuSteps.value[nextIdx]
                     if (!candidateStep) break
-                    if (candidateStep.phase_number !== matchedPhase) break  // reached new phase → stop
+                    if (candidateStep.phase_number !== matchedPhase) break
                     const isAlreadyDone = (candidateStep.stamp_time != null && candidateStep.stamp_time !== '-') ||
                         scannedVolumeMap.value[`${candidateStep.phase_number}|${candidateStep.re_code}`] != null
-                    if (!isAlreadyDone) break  // not done yet → stop here for user to handle
-                    nextIdx++  // already done → skip forward
+                    if (!isAlreadyDone) break
+                    nextIdx++
                 }
                 localStepIndex.value = nextIdx
-                appOverrideStepIndex.value = nextIdx  // ← force UI past PLC telemetry
+                appOverrideStepIndex.value = nextIdx
 
                 // Auto-expand the next phase and scroll after DOM update
                 if (nextIdx < skuSteps.value.length) {
@@ -3309,26 +3310,28 @@ const handleScan = (scannedText: string) => {
                         const nextPhase = nextStep.phase_number || '0'
                         const isSamePhase = nextPhase === matchedPhase
                         expandedPhases.value[nextPhase] = true
+                        playPhaseCompleteChime()
+                        playSweetVoice('phase_done')
                         $q.notify({
                             type: 'positive', icon: 'rocket_launch',
                             message: `🎉 ${matchedPhase} สแกนครบ! → ${isSamePhase ? 'ต่อ' : 'ข้ามไป'} ${nextPhase}`,
                             caption: `Phase ${nextPhase} Step ${nextStep.sub_step} - กรุณาดำเนินการต่อ`,
                             position: 'center', timeout: 3500
-                        })
-                        // Wait 2 ticks: 1st for reactive update, 2nd for DOM render
-                        ;(async () => {
+                        });
+                        (async () => {
                             await nextTick()
                             scrollToActiveStep()
                         })()
                     }
                 }
                 
-                // RESTORE OLD FUNCTION: send NEXT_STEP/next step setpoints to PLC
-                if (isPlcConnected.value && nextIdx < skuSteps.value.length) {
-                    setTimeout(() => {
+                // Advance PLC to NEXT_STEP and send new setpoints
+                setTimeout(async () => {
+                    await sendCommand('NEXT_STEP')
+                    if (isPlcConnected.value && nextIdx < skuSteps.value.length) {
                         sendStepToPLC(nextIdx)
-                    }, 600)
-                }
+                    }
+                }, 500)
             }
 
             return
