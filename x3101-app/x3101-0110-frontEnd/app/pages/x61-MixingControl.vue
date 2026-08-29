@@ -1473,11 +1473,9 @@ const completeAndReleaseBatch = (auto = false) => {
             title: t('mixing.completeBatchTitle'),
             message: t('mixing.completeBatchMsg', { batch: batchId, plant: plantId }),
             cancel: { label: t('common.cancel'), flat: true },
-            ok: { label: t('common.confirm'), color: 'positive' },
-            
+            ok: { label: t('common.confirm') || 'Complete & Release', color: 'positive' },
             persistent: true,
-            color: 'positive',
-            ok: { label: 'Complete & Release', color: 'positive' }
+            color: 'positive'
         }).onOk(performComplete)
     }
 }
@@ -2023,6 +2021,7 @@ const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false
             batchInfo.value.done = true
         }
         await markBatchDone('confirm-last-step')
+        playSweetVoice('batch_done')
         $q.notify({
             type: 'positive',
             icon: 'celebration',
