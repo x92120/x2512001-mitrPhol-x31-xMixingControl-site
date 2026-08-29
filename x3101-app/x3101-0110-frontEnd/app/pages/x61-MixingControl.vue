@@ -2115,54 +2115,6 @@ const activeFreeScanPhaseGroup = computed(() => {
 // Audio Synthesizers for Instant Audio Feedback
 const playSuccessChime = () => {
     try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const osc1 = ctx.createOscillator()
-        const osc2 = ctx.createOscillator()
-        const gain = ctx.createGain()
-        
-        osc1.type = 'sine'
-        osc2.type = 'sine'
-        osc1.frequency.setValueAtTime(880, ctx.currentTime) // A5
-        osc1.frequency.setValueAtTime(1760, ctx.currentTime + 0.08) // A6
-        osc2.frequency.setValueAtTime(1320, ctx.currentTime) // E6
-        osc2.frequency.setValueAtTime(2640, ctx.currentTime + 0.08) // E7
-        
-        gain.gain.setValueAtTime(0.2, ctx.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
-        
-        osc1.connect(gain)
-        osc2.connect(gain)
-        gain.connect(ctx.destination)
-        
-        osc1.start(ctx.currentTime)
-        osc2.start(ctx.currentTime)
-        osc1.stop(ctx.currentTime + 0.25)
-        osc2.stop(ctx.currentTime + 0.25)
-    } catch {}
-}
-
-const playPhaseCompleteChime = () => {
-    try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const freqs = [523.25, 659.25, 783.99, 1046.50] // C5, E5, G5, C6
-        freqs.forEach((f, idx) => {
-            const osc = ctx.createOscillator()
-            const gain = ctx.createGain()
-            osc.type = 'triangle'
-            osc.frequency.value = f
-            gain.gain.setValueAtTime(0.25, ctx.currentTime + idx * 0.08)
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.08 + 0.3)
-            osc.connect(gain)
-            gain.connect(ctx.destination)
-            osc.start(ctx.currentTime + idx * 0.08)
-            osc.stop(ctx.currentTime + idx * 0.08 + 0.3)
-        })
-    } catch {}
-}
-
-// ── Audio Synthesizers for Instant Hardware Feedback (Web Audio API) ──
-const playSuccessChime = () => {
-    try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
         if (!AudioCtx) return
         const ctx = new AudioCtx()
@@ -2206,7 +2158,7 @@ const playPhaseCompleteChime = () => {
             const gain = ctx.createGain()
             osc.type = 'triangle'
             osc.frequency.value = f
-            gain.gain.setValueAtTime(0.3, ctx.currentTime + idx * 0.08)
+            gain.gain.setValueAtTime(0.28, ctx.currentTime + idx * 0.08)
             gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.08 + 0.3)
             osc.connect(gain)
             gain.connect(ctx.destination)
@@ -2216,221 +2168,47 @@ const playPhaseCompleteChime = () => {
     } catch {}
 }
 
-const playAlarmBeep = () => {
-    try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
-        if (!AudioCtx) return
-        const ctx = new AudioCtx()
-        if (ctx.state === 'suspended') ctx.resume().catch(() => {})
-
-        const freqs = [880, 660, 440]
-        freqs.forEach((f, idx) => {
-            const osc = ctx.createOscillator()
-            const gain = ctx.createGain()
-            osc.type = 'square'
-            osc.frequency.value = f
-            gain.gain.setValueAtTime(0.35, ctx.currentTime + idx * 0.15)
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.15 + 0.13)
-            osc.connect(gain)
-            gain.connect(ctx.destination)
-            osc.start(ctx.currentTime + idx * 0.15)
-            osc.stop(ctx.currentTime + idx * 0.15 + 0.13)
-        })
-    } catch {}
-}
-
-// ── Multi-Engine Voice Player (Web Audio Tone + Web SpeechSynthesis + Studio MP3) ──
-const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done', customText?: string) => {
-    // 1. Immediate hardware tone (0ms response)
-    if (name === 'scan_ok') {
-        playSuccessChime()
-    } else if (name === 'phase_done') {
-        playPhaseCompleteChime()
-    } else if (name === 'scan_error') {
-        playAlarmBeep()
-    } else if (name === 'batch_done') {
-        playPhaseCompleteChime()
-    }
-
-    // 2. Web Speech Synthesis (Reliable browser TTS engine)
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        try {
-            window.speechSynthesis.cancel()
-            const isEn = (locale.value || 'th').toLowerCase().startsWith('en')
-            const defaultTexts: Record<string, Record<string, string>> = {
-                th: {
-                    scan_ok: customText || 'สแกนสารเรียบร้อยค่ะ',
-                    phase_done: customText || 'สแกนสารครบทุกถุงในเฟสแล้วค่ะ',
-                    scan_error: customText || 'สแกนสารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบอีกครั้งค่ะ',
-                    batch_done: customText || 'การผสมแบทช์นี้เสร็จสมบูรณ์เรียบร้อยแล้วค่ะ'
-                },
-                en: {
-                    scan_ok: customText || 'Ingredient verified, thank you!',
-                    phase_done: customText || 'All ingredients in this phase are verified!',
-                    scan_error: customText || 'Warning! This ingredient does not match the recipe.',
-                    batch_done: customText || 'Batch production completed successfully! Thank you.'
-                }
-            }
-            const langKey = isEn ? 'en' : 'th'
-            const textToSpeak = defaultTexts[langKey]?.[name] || customText || ''
-            if (textToSpeak) {
-                const u = new SpeechSynthesisUtterance(textToSpeak)
-                u.lang = isEn ? 'en-US' : 'th-TH'
-                u.rate = 1.15
-                u.pitch = 1.05
-                window.speechSynthesis.speak(u)
-            }
-        } catch (e) {
-            console.warn('[SpeechSynthesis] Error:', e)
-        }
-    }
-
-    // 3. Also try studio MP3 file
-    try {
-        const isEn = (locale.value || 'th').toLowerCase().startsWith('en')
-        const audioSrc = `/sounds/mixing_${name}_${isEn ? 'en' : 'th'}.mp3`
-        const audio = new Audio(audioSrc)
-        audio.volume = 0.95
-        audio.play().catch(() => {})
-    } catch {}
-}
+// ── Multi-Engine Voice Player (Web SpeechSynthesis + Studio MP3) ──
+let activeVoiceAudio: HTMLAudioElement | null = null
 
 const speakStepAnnounce = (text: string) => {
-    playSweetVoice('scan_ok', text)
-}
-
-const testSweetVoice = () => {
-    playSweetVoice('scan_ok')
-    $q.notify({
-        type: 'positive',
-        icon: 'volume_up',
-        message: locale.value === 'en' ? '🔊 Playing Voice (EN)' : '🔊 กำลังเล่นเสียงน้องสาว (TH)',
-        position: 'top',
-        timeout: 2000
-    })
-}
-
-// ── QR Scan Dialog (SPP / FH steps) ──
-
-// ── LIVE FREE-SCAN HUD COMPUTED ──
-const activeFreeScanPhaseGroup = computed(() => {
-    if (!skuSteps.value || skuSteps.value.length === 0) return null
-    const cur = currentStep.value
-    const curPhase = cur?.phase_number || (skuSteps.value[localStepIndex.value || 0]?.phase_number)
-    if (!curPhase) return null
-
-    const phaseScanSteps = skuSteps.value.filter((s: any) => {
-        if (s.phase_number !== curPhase) return false
-        const aCode = String(s.action_code || '')
-        if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
-        if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
-        const req = productionRequire(s)
-        if (req <= 0) return false
-        const wh = getStepWh(s)
-        return wh === 'SPP' || wh === 'FH'
-    })
-
-    if (phaseScanSteps.length === 0) return null
-
-    const scannedSteps = phaseScanSteps.filter((s: any) => {
-        const phaseScanKey = `${s.phase_number}|${s.re_code}`
-        return scannedVolumeMap.value[phaseScanKey] != null
-    })
-
-    const pendingSteps = phaseScanSteps.filter((s: any) => {
-        const phaseScanKey = `${s.phase_number}|${s.re_code}`
-        return scannedVolumeMap.value[phaseScanKey] == null
-    })
-
-    return {
-        phase: curPhase,
-        total: phaseScanSteps.length,
-        scanned: scannedSteps.length,
-        pending: pendingSteps,
-        isCompleted: scannedSteps.length >= phaseScanSteps.length && phaseScanSteps.length > 0,
-        allSteps: phaseScanSteps
-    }
-})
-
-// Audio Synthesizers for Instant Audio Feedback
-const playSuccessChime = () => {
+    if (!('speechSynthesis' in window)) return
     try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const osc1 = ctx.createOscillator()
-        const osc2 = ctx.createOscillator()
-        const gain = ctx.createGain()
-        
-        osc1.type = 'sine'
-        osc2.type = 'sine'
-        osc1.frequency.setValueAtTime(880, ctx.currentTime) // A5
-        osc1.frequency.setValueAtTime(1760, ctx.currentTime + 0.08) // A6
-        osc2.frequency.setValueAtTime(1320, ctx.currentTime) // E6
-        osc2.frequency.setValueAtTime(2640, ctx.currentTime + 0.08) // E7
-        
-        gain.gain.setValueAtTime(0.2, ctx.currentTime)
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
-        
-        osc1.connect(gain)
-        osc2.connect(gain)
-        gain.connect(ctx.destination)
-        
-        osc1.start(ctx.currentTime)
-        osc2.start(ctx.currentTime)
-        osc1.stop(ctx.currentTime + 0.25)
-        osc2.stop(ctx.currentTime + 0.25)
+        window.speechSynthesis.cancel()
+        const isEn = (locale.value || 'th').toLowerCase().startsWith('en')
+        const u = new SpeechSynthesisUtterance(text)
+        u.lang = isEn ? 'en-US' : 'th-TH'
+        u.rate = 1.12
+        u.pitch = 1.05
+        window.speechSynthesis.speak(u)
     } catch {}
 }
 
-const playPhaseCompleteChime = () => {
-    try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-        const freqs = [523.25, 659.25, 783.99, 1046.50] // C5, E5, G5, C6
-        freqs.forEach((f, idx) => {
-            const osc = ctx.createOscillator()
-            const gain = ctx.createGain()
-            osc.type = 'triangle'
-            osc.frequency.value = f
-            gain.gain.setValueAtTime(0.25, ctx.currentTime + idx * 0.08)
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.08 + 0.3)
-            osc.connect(gain)
-            gain.connect(ctx.destination)
-            osc.start(ctx.currentTime + idx * 0.08)
-            osc.stop(ctx.currentTime + idx * 0.08 + 0.3)
-        })
-    } catch {}
-}
-
-// ── Ultra-Sweet Bilingual Neural Female Voice Player & Audio Unlocker ──
-let activeVoiceAudio: HTMLAudioElement | null = null
-let sharedAudioCtx: AudioContext | null = null
-
-const getAudioContext = (): AudioContext | null => {
-    if (typeof window === 'undefined') return null
-    try {
-        if (!sharedAudioCtx) {
-            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
-            if (AudioCtx) sharedAudioCtx = new AudioCtx()
-        }
-        if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
-            sharedAudioCtx.resume().catch(() => {})
-        }
-        return sharedAudioCtx
-    } catch {
-        return null
-    }
-}
-
-const unlockAudio = () => {
-    getAudioContext()
-}
-
-const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done') => {
-    if (typeof window === 'undefined') return
-    const currentLang = (locale.value || 'th').toLowerCase()
-    const isEn = currentLang.startsWith('en')
+const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_done', customText?: string) => {
+    const isEn = (locale.value || 'th').toLowerCase().startsWith('en')
     const lang = isEn ? 'en' : 'th'
 
-    // 1. Try HTML5 Audio file first
+    // 1. Web Speech Synthesis (Reliable TTS on touch kiosk)
+    const defaultTexts: Record<string, Record<string, string>> = {
+        th: {
+            scan_ok: customText || 'สแกนสารเรียบร้อยค่ะ',
+            phase_done: customText || 'สแกนสารครบทุกถุงในเฟสแล้วค่ะ',
+            scan_error: customText || 'สแกนสารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบอีกครั้งค่ะ',
+            batch_done: customText || 'การผสมแบทช์นี้เสร็จสมบูรณ์เรียบร้อยแล้วค่ะ'
+        },
+        en: {
+            scan_ok: customText || 'Ingredient verified, thank you!',
+            phase_done: customText || 'All ingredients in this phase are verified! Ready for next step.',
+            scan_error: customText || 'Warning! This ingredient does not match the recipe.',
+            batch_done: customText || 'Batch production completed successfully! Thank you.'
+        }
+    }
+    const textToSpeak = customText || defaultTexts[lang]?.[name] || ''
+    if (textToSpeak) {
+        speakStepAnnounce(textToSpeak)
+    }
+
+    // 2. Play HTML5 Audio Studio Voice
     try {
         if (activeVoiceAudio) {
             try { activeVoiceAudio.pause(); activeVoiceAudio.currentTime = 0 } catch {}
@@ -2438,66 +2216,20 @@ const playSweetVoice = (name: 'scan_ok' | 'phase_done' | 'scan_error' | 'batch_d
         const audioSrc = `/sounds/mixing_${name}_${lang}.mp3`
         activeVoiceAudio = new Audio(audioSrc)
         activeVoiceAudio.volume = 1.0
-        const p = activeVoiceAudio.play()
-        if (p !== undefined) {
-            p.catch(e => {
-                console.warn('[SweetVoice] HTML5 Audio autoplay prevented, using Web Speech:', e)
-                speakFallback()
-            })
-        }
-    } catch (err) {
-        console.warn('[SweetVoice] HTML5 Audio init error:', err)
-        speakFallback()
-    }
-
-    // 2. Web Speech Synthesis as guaranteed voice
-    function speakFallback() {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-            try {
-                window.speechSynthesis.cancel()
-                const defaultTexts: Record<string, Record<string, string>> = {
-                    th: {
-                        scan_ok: 'สแกนสารเรียบร้อยค่ะ',
-                        phase_done: 'สแกนสารครบทุกถุงในเฟสแล้วค่ะ',
-                        scan_error: 'สแกนสารไม่ตรงกับสูตรนะคะ กรุณาตรวจสอบถุงสารอีกครั้งค่ะ',
-                        batch_done: 'การผสมแบทช์นี้เสร็จสมบูรณ์เรียบร้อยแล้วค่ะ'
-                    },
-                    en: {
-                        scan_ok: 'Ingredient verified, thank you!',
-                        phase_done: 'All ingredients in this phase are verified! Ready for the next step.',
-                        scan_error: 'Warning! This ingredient does not match the recipe.',
-                        batch_done: 'Batch production completed successfully! Thank you.'
-                    }
-                }
-                const text = defaultTexts[lang]?.[name] || ''
-                if (text) {
-                    const u = new SpeechSynthesisUtterance(text)
-                    u.lang = isEn ? 'en-US' : 'th-TH'
-                    u.rate = 1.05
-                    u.pitch = 1.1
-                    window.speechSynthesis.speak(u)
-                }
-            } catch (synthErr) {
-                console.warn('[SweetVoice] SpeechSynthesis error:', synthErr)
-            }
-        }
-    }
+        activeVoiceAudio.play().catch(() => {})
+    } catch {}
 }
 
 const testSweetVoice = () => {
-    unlockAudio()
-    playSweetVoice('scan_ok')
+    playSuccessChime()
+    playSweetVoice('scan_ok', 'ทดสอบระบบเสียง สแกนเนอร์พร้อมใช้งานค่ะ')
     $q.notify({
         type: 'positive',
         icon: 'volume_up',
-        message: locale.value === 'en' ? '🔊 Playing Voice (EN)' : '🔊 กำลังเล่นเสียงน้องสาว (TH)',
+        message: locale.value === 'en' ? '🔊 Playing Emma Voice (EN)' : '🔊 ทดสอบเสียงน้องเปรมวดี (TH)',
         position: 'top',
         timeout: 2000
     })
-}
-
-const speakStepAnnounce = (text: string) => {
-    // Kept for backward compatibility
 }
 
 // ── QR Scan Dialog (SPP / FH steps) ──
@@ -2543,35 +2275,31 @@ const faultAlarmInfo = ref({ scanned: '', expected: '', stepName: '', re_code: '
 
 const playAlarmBeep = () => {
     try {
-        const ctx = getAudioContext() || new (window.AudioContext || (window as any).webkitAudioContext)()
-        if (ctx.state === 'suspended') {
-            ctx.resume().catch(() => {})
-        }
-        const playTone = (freq: number, start: number, duration: number) => {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        if (!AudioCtx) return
+        const ctx = new AudioCtx()
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+
+        const freqs = [880, 660, 440]
+        freqs.forEach((f, idx) => {
             const osc = ctx.createOscillator()
             const gain = ctx.createGain()
+            osc.type = 'square'
+            osc.frequency.value = f
+            gain.gain.setValueAtTime(0.35, ctx.currentTime + idx * 0.15)
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + idx * 0.15 + 0.13)
             osc.connect(gain)
             gain.connect(ctx.destination)
-            osc.frequency.value = freq
-            osc.type = 'square'
-            gain.gain.setValueAtTime(0.4, ctx.currentTime + start)
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration)
-            osc.start(ctx.currentTime + start)
-            osc.stop(ctx.currentTime + start + duration)
-        }
-        playTone(880, 0, 0.15)
-        playTone(660, 0.2, 0.15)
-        playTone(440, 0.4, 0.3)
-    } catch (e) {
-        console.warn('playAlarmBeep error:', e)
-    }
+            osc.start(ctx.currentTime + idx * 0.15)
+            osc.stop(ctx.currentTime + idx * 0.15 + 0.13)
+        })
+    } catch {}
 }
 
 const triggerFaultAlarm = (scanned: string, expected: string, step: any) => {
-    // Stop any pending auto-step or burst timers
     if (_scannerBurstTimer) { clearTimeout(_scannerBurstTimer); _scannerBurstTimer = null }
     if (_tempAutoStepTimer) { clearTimeout(_tempAutoStepTimer); _tempAutoStepTimer = null }
-    
+
     faultAlarmInfo.value = {
         scanned,
         expected: expected || 'None',
@@ -2580,14 +2308,11 @@ const triggerFaultAlarm = (scanned: string, expected: string, step: any) => {
     }
     faultAlarmDialog.value = true
     qrScanDialog.value = false
-    
-    // Clear scanner buffers
+    // ── Clear scanner buffers ──
     qrScanBuffer.value = ''
     globalScannerBuffer = ''
-    
-    // Play dual audio alert (Beep + Sweet Voice)
     playAlarmBeep()
-    playSweetVoice('scan_error')
+    playSweetVoice('scan_error', 'สแกนสารผิดค่ะ ไม่ตรงกับสูตรนะคะ')
 }
 
 const printProduction = () => {
@@ -3769,8 +3494,6 @@ const handleGlobalDocClick = (e: MouseEvent) => {
 }
 
 const handleGlobalKeydown = (e: KeyboardEvent) => {
-    unlockAudio()
-
     // Ignore browser shortcuts
     if (e.ctrlKey || e.altKey || e.metaKey) return
     
