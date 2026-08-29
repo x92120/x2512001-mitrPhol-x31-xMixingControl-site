@@ -282,7 +282,9 @@ const plcActiveBatchId = computed(() => {
 })
 const hasPlcActiveBatch = computed(() => {
     const id = plcActiveBatchId.value
-    return id && id !== '-' && id !== '0'
+    const state = Number(plantData.value.State ?? plantData.value.state ?? 0)
+    // Only active if batch ID is non-empty AND PLC State is active (not Standby 0)
+    return id && id !== '-' && id !== '0' && state > 0
 })
 const plcActivePlanId = computed(() => {
     const raw = plantData.value.Plan_ID || plantData.value.Plan_id || plantData.value.plan_id || ''
@@ -2627,6 +2629,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
                 resetPlantBoard()
                 const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
                 router.replace({ query: newQuery })
+                loading.value = false
                 return
             }
             const rawSkuName = String(plantData.value.SKU_Name || '').replace(/\0/g, '').trim()
