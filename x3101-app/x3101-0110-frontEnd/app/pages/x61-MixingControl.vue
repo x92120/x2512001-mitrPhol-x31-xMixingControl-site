@@ -384,7 +384,7 @@ const fetchBatchInfo = async () => {
                 const batchCheck = await $fetch<any>(`${remoteApiBaseUrl}/production-batches/by-batch-id/${qBatchId}`, {
                     headers: getAuthHeader() as Record<string, string>
                 })
-                if (batchCheck && (batchCheck.status === 'Done' || batchCheck.done === 1 || batchCheck.done === true)) {
+                if (batchCheck && batchCheck.status === 'Done') {
                     console.log(`[Standby] Dispatched batch ${qBatchId} is already Done in DB. Showing Standby.`);
                     const { batch_id, sku_id, plan_id, sku_name, batch_size, ...newQuery } = route.query;
                     router.replace({ query: newQuery })
@@ -510,6 +510,45 @@ const fetchSkuSteps = async (skuId: string, batchId?: string) => {
 
 
 
+        } else if (skuId) {
+            // Fallback: Query steps directly from SKU DB API if PLC DB is not populated yet
+            try {
+                const dbSteps = await $fetch<any[]>(`${remoteApiBaseUrl}/sku-steps/?sku_id=${encodeURIComponent(skuId)}&limit=200`, {
+                    headers: getAuthHeader() as Record<string, string>
+                })
+                if (dbSteps && dbSteps.length > 0) {
+                    skuSteps.value = dbSteps.map((s: any, idx: number) => ({
+                        id: idx + 1,
+                        phase_number: s.phase_number?.startsWith('p') ? s.phase_number : `p${String(s.phase_number || '0').padStart(3, '0')}`,
+                        phase_id: s.phase_id || '',
+                        phase_type_code: s.phase_type_code || 0,
+                        sub_step: s.sub_step || 10,
+                        action_code: s.action_code || '',
+                        action_description: s.action_description || s.action || '',
+                        re_code: s.re_code || '',
+                        require: s.require || 0,
+                        temperature: s.temperature || 0,
+                        temp_low: s.temp_low || 0,
+                        temp_high: s.temp_high || 0,
+                        agitator_rpm: s.agitator_rpm || 0,
+                        high_shear_rpm: s.high_shear_rpm || 0,
+                        step_time: s.step_time || 0,
+                        brix_sp: s.brix_sp || '',
+                        ph_sp: s.ph_sp || '',
+                        actual_volume: null,
+                        actual_temp: null,
+                        actual_agitator: null,
+                        actual_high_shear: null,
+                        actual_brix: null,
+                        actual_ph: null,
+                        duration_sec: null
+                    }))
+                } else {
+                    skuSteps.value = []
+                }
+            } catch {
+                skuSteps.value = []
+            }
         } else {
             skuSteps.value = []
         }
@@ -1559,7 +1598,10 @@ const goBack = () => {
     router.push('/x60-CheckForProduction')
 }
 
-const switchPlant = (plantId: number) => {
+const switchPlant = async (plantId: number) => {
+    activePlantId.value = plantId
+    viewMode.value = 'focus'
+    
     // If the currently loaded batch belongs to a different plant, clear it
     if (batchInfo.value && String(batchInfo.value.plant).replace(/\D/g, '') !== String(plantId)) {
         batchInfo.value = null
@@ -1573,8 +1615,14 @@ const switchPlant = (plantId: number) => {
     newQuery.plant = String(plantId);
 
     // Update the URL and refresh the page data
-    router.replace({ query: newQuery }).then(() => {
-        fetchBatchInfo()
+    await router.replace({ query: newQuery })
+    await fetchBatchInfo()
+    $q.notify({
+        type: 'info',
+        icon: 'swap_horiz',
+        message: `สลับไปยัง Plant ${plantId} เรียบร้อย`,
+        position: 'top',
+        timeout: 1000
     })
 }
 
@@ -1582,6 +1630,182 @@ const openInNewWindow = (plantId: number) => {
     // Open the Mixing Control page for the specified plant in a new browser tab/window
     const url = router.resolve({ path: '/x61-MixingControl', query: { plant: String(plantId) } }).href
     window.open(url, '_blank')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🌐 3-Plant Multi-Control & Overview Grid States
+// ─────────────────────────────────────────────────────────────────────────────
+const viewMode = ref<'focus' | 'overview'>('focus')
+
+interface PlantOverviewInfo {
+    plantId: number
+    name: string
+    batchId: string
+    skuId: string
+    skuName: string
+    planId: string
+    batchSize: number
+    currentStepIndex: number
+    totalSteps: number
+    currentPhase: string
+    currentStepDesc: string
+    status: 'Running' | 'Standby' | 'QC Wait' | 'Paused' | 'Complete'
+    isQcWait: boolean
+    isAlarm: boolean
+    temp: number
+    weight: number
+    agitator: number
+    highShear: number
+    progressPercent: number
+}
+
+const multiPlantSummary = ref<Record<number, PlantOverviewInfo>>({
+    1: { plantId: 1, name: 'Mixing 1', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
+    2: { plantId: 2, name: 'Mixing 2', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
+    3: { plantId: 3, name: 'Mixing 3', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 }
+})
+
+let multiPlantPollInterval: any = null
+
+const fetchMultiPlantSummary = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    const baseUrl = appConfig.apiBaseUrl
+
+    for (const pid of [1, 2, 3]) {
+        // Sync telemetry from plantsData (which receives live MQTT / telemetry-live)
+        const pLive = plantsData.value[String(pid)] || {}
+        const curTemp = pLive.Mixing_Tank_Temperature ?? 0
+        const curWeight = pLive.Mixing_Tank_Volume ?? 0
+        const curAgitator = pLive.MixingTank_Agitator_Speed ?? 0
+        const curHighShear = pLive.HighShare_Speed ?? 0
+
+        // If this is the currently active plant and we have loaded batch locally, use local truth
+        if (Number(activePlantId.value) === pid && selectedBatchId.value) {
+            const total = skuSteps.value.length
+            const curIdx = currentStepIndex.value
+            const step = skuSteps.value[curIdx]
+            const desc = step?.description || step?.action_name || (curIdx >= total ? 'Complete' : 'Processing')
+            const isQc = String(desc).toLowerCase().includes('qc') || String(step?.action_code) === '40010'
+            const percent = total > 0 ? Math.min(100, Math.round(((curIdx + 1) / total) * 100)) : 0
+
+            multiPlantSummary.value[pid] = {
+                plantId: pid,
+                name: `Mixing ${pid}`,
+                batchId: selectedBatchId.value,
+                skuId: selectedSkuId.value || batchInfo.value?.sku_id || '',
+                skuName: batchInfo.value?.sku_name || selectedSkuId.value || '',
+                planId: batchInfo.value?.plan_id || '',
+                batchSize: batchInfo.value?.batch_size || 0,
+                currentStepIndex: curIdx + 1,
+                totalSteps: total,
+                currentPhase: step?.phase_number || (curIdx >= total ? 'pDone' : 'p000'),
+                currentStepDesc: desc,
+                status: isQc ? 'QC Wait' : (batchRunning.value ? 'Running' : 'Paused'),
+                isQcWait: isQc,
+                isAlarm: false,
+                temp: curTemp,
+                weight: curWeight,
+                agitator: curAgitator,
+                highShear: curHighShear,
+                progressPercent: percent
+            }
+            continue
+        }
+
+        // For other plants, query remote status
+        try {
+            const res = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/recipe-status`, { timeout: 3000 }).catch(() => null)
+            if (res?.success && res.target?.batch_id && res.target.batch_id !== '-' && res.target.batch_id !== '0') {
+                const bId = res.target.batch_id
+                const sku = res.target.sku_name || res.target.sku_id || ''
+                const steps = res.target.steps || []
+                const total = steps.length
+                const curIdx = Number(res.target.current_step || res.actual?.current_step || 1)
+                const curStepObj = steps[Math.max(0, curIdx - 1)] || {}
+                const desc = curStepObj.description || curStepObj.action_name || `Step ${curIdx}`
+                const isQc = String(desc).toLowerCase().includes('qc') || String(curStepObj.action_code) === '40010'
+                const percent = total > 0 ? Math.min(100, Math.round((curIdx / total) * 100)) : 0
+
+                multiPlantSummary.value[pid] = {
+                    plantId: pid,
+                    name: `Mixing ${pid}`,
+                    batchId: bId,
+                    skuId: res.target.sku_id || '',
+                    skuName: sku,
+                    planId: res.target.plan_id || '',
+                    batchSize: res.target.batch_size || 0,
+                    currentStepIndex: curIdx,
+                    totalSteps: total,
+                    currentPhase: curStepObj.phase_no ? `p${String(curStepObj.phase_no).padStart(3, '0')}` : 'p000',
+                    currentStepDesc: desc,
+                    status: isQc ? 'QC Wait' : 'Running',
+                    isQcWait: isQc,
+                    isAlarm: false,
+                    temp: curTemp,
+                    weight: curWeight,
+                    agitator: curAgitator,
+                    highShear: curHighShear,
+                    progressPercent: percent
+                }
+            } else {
+                multiPlantSummary.value[pid] = {
+                    plantId: pid,
+                    name: `Mixing ${pid}`,
+                    batchId: '',
+                    skuId: '',
+                    skuName: '',
+                    planId: '',
+                    batchSize: 0,
+                    currentStepIndex: 0,
+                    totalSteps: 0,
+                    currentPhase: 'p000',
+                    currentStepDesc: 'Standby / Clean',
+                    status: 'Standby',
+                    isQcWait: false,
+                    isAlarm: false,
+                    temp: curTemp,
+                    weight: curWeight,
+                    agitator: curAgitator,
+                    highShear: curHighShear,
+                    progressPercent: 0
+                }
+            }
+        } catch {
+            // retain previous
+        }
+    }
+}
+
+// ── Color & Identity Helpers ──
+const getPlantAccent = (p: number) => {
+    if (p === 1) return { color: 'blue-8', hex: '#1976D2', light: '#E3F2FD', dark: '#0D47A1' }
+    if (p === 2) return { color: 'teal-8', hex: '#00897B', light: '#E0F2F1', dark: '#004D40' }
+    return { color: 'deep-purple-8', hex: '#7E57C2', light: '#EDE7F6', dark: '#311B92' }
+}
+
+const getPlantShortBadge = (p: number) => {
+    const summary = multiPlantSummary.value[p]
+    if (!summary || summary.status === 'Standby') return 'Standby'
+    if (summary.isQcWait) return 'QC Wait ⚠'
+    return `Step ${summary.currentStepIndex}/${summary.totalSteps || '?'}`
+}
+
+const getPlantBadgeColor = (p: number) => {
+    const summary = multiPlantSummary.value[p]
+    if (!summary || summary.status === 'Standby') return 'grey-6'
+    if (summary.isQcWait) return 'negative'
+    return 'green-7'
+}
+
+const toggleViewMode = () => {
+    viewMode.value = viewMode.value === 'overview' ? 'focus' : 'overview'
+    if (viewMode.value === 'overview') {
+        fetchMultiPlantSummary()
+    }
+}
+
+const selectPlantFromOverview = async (p: number) => {
+    await switchPlant(p)
 }
 
 const isWeightInTolerance = (step: any, actualWeight: number) => {
@@ -2086,10 +2310,12 @@ const activeFreeScanPhaseGroup = computed(() => {
         const aCode = String(s.action_code || '')
         if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
         if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
+        const rcLower = s.re_code.toLowerCase()
+        if (rcLower.includes('ro-water') || rcLower.includes('ro water')) return false
         const req = productionRequire(s)
         if (req <= 0) return false
         const wh = getStepWh(s)
-        return wh === 'SPP' || wh === 'FH'
+        return wh === 'SPP' || wh === 'FH' || aCode.startsWith('2') || aCode.startsWith('3')
     })
 
     if (phaseScanSteps.length === 0) return null
@@ -2618,7 +2844,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
         }
 
         if (data) {
-            if (data.status === 'Done' || data.done === 1 || data.done === true) {
+            if (data.status === 'Done') {
                 console.log(`[Standby] Batch ${batchId} is already Done in database. Clearing PLC memory.`);
                 try {
                     await $fetch(`${remoteApiBaseUrl}/plc/plant/${activePlantId.value}/clear-recipe`, {
@@ -2998,7 +3224,7 @@ const handleScan = (scannedText: string) => {
             s.phase_number === step.phase_number &&
             (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
             s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
-            (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH')
+            !s.re_code.toLowerCase().includes('ro-water')
         )
         if (!(isFree && hasScanSteps)) continue
         const aCode = String(step.action_code || '')
@@ -3033,7 +3259,7 @@ const handleScan = (scannedText: string) => {
                         (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
                         s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
                         normalize(s.re_code) === normalize(step.re_code) &&
-                        (getStepWh(s) === 'SPP' || getStepWh(s) === 'FH')
+                        !s.re_code.toLowerCase().includes('ro-water')
                     )
                     if (sameReInActivePhase) {
                         // Redirect: treat this scan as if it matched the active-phase step
@@ -4008,6 +4234,11 @@ onMounted(() => {
     _telemetryPollInterval = setInterval(_pollTelemetry, 350)
     _pollTelemetry()
 
+    // Multi-plant summary poll (for subheader badges & overview grid)
+    fetchMultiPlantSummary()
+    if (multiPlantPollInterval) clearInterval(multiPlantPollInterval)
+    multiPlantPollInterval = setInterval(fetchMultiPlantSummary, 4000)
+
 })
 
 onUnmounted(() => {
@@ -4017,6 +4248,7 @@ onUnmounted(() => {
     if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
     if (_telemetryPollInterval) { clearInterval(_telemetryPollInterval); _telemetryPollInterval = null }
     if (_stepSyncInterval) { clearInterval(_stepSyncInterval); _stepSyncInterval = null }
+    if (multiPlantPollInterval) { clearInterval(multiPlantPollInterval); multiPlantPollInterval = null }
     offMessage(handlePlcMessage)
     stopStampRefresh()
     disconnect()
@@ -4027,62 +4259,68 @@ onUnmounted(() => {
   <q-page class="q-pa-xs column no-wrap" style="height: calc(100vh - 105px) !important; min-height: calc(100vh - 105px) !important; max-height: calc(100vh - 105px) !important; overflow: hidden !important;">
 
     <!-- ═══ PAGE HEADER ═══ -->
-    <div class="bg-deep-purple-10 text-white q-pa-sm rounded-borders q-mb-sm shadow-2 row items-center justify-between no-wrap" style="flex-shrink: 0; min-height: 60px; z-index: 50; position: sticky; top: 0;">
+    <div class="bg-deep-purple-10 text-white q-px-sm q-py-xs rounded-borders q-mb-xs shadow-2 row items-center justify-between no-wrap subheader-toolbar" style="flex-shrink: 0; min-height: 52px; z-index: 50; position: sticky; top: 0; overflow-x: auto;">
        <!-- LEFT: Branding & Plant Selection -->
-       <div class="row items-center q-gutter-x-sm" style="flex-shrink: 0;">
-          <q-btn flat round dense icon="arrow_back" color="white" @click="goBack" class="no-print" />
-          <q-icon name="precision_manufacturing" size="28px" color="amber-3" />
-          <div class="text-h6 text-weight-bolder q-mr-sm" style="letter-spacing: 0.5px; line-height: 1.2;">Mixing-Control</div>
+       <div class="row items-center q-gutter-x-xs no-wrap" style="flex-shrink: 0;">
+          <q-btn flat round dense icon="arrow_back" color="white" @click="goBack" class="no-print" size="sm" />
+          <q-icon name="precision_manufacturing" size="22px" color="amber-3" />
+          <div class="text-subtitle1 text-weight-bolder q-mr-xs gt-xs" style="letter-spacing: 0.5px; line-height: 1.2; font-size: 14px;">Mixing-Control</div>
           
           <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
           
-          <div class="row items-center q-gutter-x-xs">
+          <div class="row items-center q-gutter-x-xs no-wrap">
                <q-btn v-for="p in [1, 2, 3]" :key="p"
                       :color="String(activePlantId) === String(p) ? 'white' : 'transparent'"
-                      :text-color="String(activePlantId) === String(p) ? 'deep-purple-10' : 'white'"
+                      :text-color="String(activePlantId) === String(p) ? (p === 1 ? 'blue-10' : (p === 2 ? 'teal-10' : 'deep-purple-10')) : 'white'"
                       :outline="String(activePlantId) !== String(p)"
                       dense
-                      :icon-right="String(activePlantId) === String(p) ? 'check_circle' : 'open_in_new'"
-                      :label="`Plant ${p}`"
-                      class="text-weight-bold"
-                      style="height: 28px; font-size: 12px; margin: 2px; border-radius: 6px;"
-                      @click="String(activePlantId) !== String(p) ? openInNewWindow(p) : null">
-                  <q-tooltip v-if="String(activePlantId) !== String(p)">Open Plant {{ p }} in a New Window</q-tooltip>
-                  <q-tooltip v-else>Active Window</q-tooltip>
+                      :class="['text-weight-bold', { 'pulse-alarm': multiPlantSummary[p]?.isQcWait }]"
+                      style="height: 28px; font-size: 11px; margin: 1px; border-radius: 6px; padding: 0 6px; border-color: rgba(255,255,255,0.5);"
+                      @click="switchPlant(p)">
+                  <q-icon :name="String(activePlantId) === String(p) ? 'check_circle' : (p === 1 ? 'looks_one' : (p === 2 ? 'looks_two' : 'looks_3'))" size="14px" class="q-mr-xs" :color="String(activePlantId) === String(p) ? (p === 1 ? 'blue-8' : (p === 2 ? 'teal-8' : 'deep-purple-8')) : 'white'" />
+                  <span>PLANT {{ p }}</span>
+                  <q-badge :color="getPlantBadgeColor(p)" class="q-ml-xs text-weight-bold" style="font-size: 9px; padding: 1px 3px;">
+                     {{ getPlantShortBadge(p) }}
+                  </q-badge>
+                  <q-tooltip>Switch to Plant {{ p }} ({{ multiPlantSummary[p]?.status || 'Standby' }})</q-tooltip>
+               </q-btn>
+
+               <!-- 🖥 Overview Grid Toggle Button -->
+               <q-btn :color="viewMode === 'overview' ? 'amber-8' : 'deep-purple-8'"
+                      :text-color="viewMode === 'overview' ? 'dark' : 'white'"
+                      unelevated dense icon="grid_view"
+                      :label="viewMode === 'overview' ? 'Focus' : '3-PLANT'"
+                      class="text-weight-bolder q-ml-xs shadow-1"
+                      style="height: 28px; font-size: 11px; border-radius: 6px; padding: 0 8px;"
+                      @click="toggleViewMode">
+                  <q-tooltip>ดูภาพรวมทั้ง 3 Plant พร้อมกันในหน้าเดียว (Overview Grid)</q-tooltip>
                </q-btn>
           </div>
        </div>
 
        <!-- CENTER: Controls & PLC Status -->
-       <div class="row items-center q-gutter-x-md" style="flex-shrink: 0;">
+       <div class="row items-center q-gutter-x-sm no-wrap" style="flex-shrink: 0;">
           
-          <!-- Command Center (Enhanced Touch-Friendly Desktop HMI) -->
-          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs" style="height: 44px; padding: 3px 6px;">
-             <q-btn unelevated dense icon="play_arrow" label="START" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
-             <q-btn unelevated dense icon="pause" label="PAUSE" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
-             <q-btn flat dense icon="skip_next" color="primary" class="q-px-xs" style="height: 36px;" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
+          <!-- Command Center (Compact Desktop HMI) -->
+          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs no-wrap" style="height: 38px; padding: 2px 4px;">
+             <q-btn unelevated dense icon="play_arrow" label="START" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="pause" label="PAUSE" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
+             <q-btn flat dense icon="skip_next" color="primary" class="q-px-xs" style="height: 30px;" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn unelevated dense icon="stop" label="ABORT" color="negative" text-color="white" class="text-weight-bolder q-px-sm" style="height: 36px; border-radius: 6px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="stop" label="ABORT" color="negative" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="developer_board" color="indigo-7" style="height: 36px;" @click="openPlcDataBlock">
-               <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 9px;">{{ plcCmdLog.length }}</q-badge>
+             <q-btn flat dense icon="developer_board" color="indigo-7" style="height: 30px;" size="sm" @click="openPlcDataBlock">
+               <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 8px;">{{ plcCmdLog.length }}</q-badge>
                <q-tooltip>View PLC Data Block (DB100)</q-tooltip>
              </q-btn>
-             <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="print" color="grey-8" style="height: 36px;" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
-             <q-separator vertical class="q-mx-xs" v-if="skuStepsByPhase.length > 0" />
-             <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" label="FINISH" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 36px; border-radius: 6px;" @click="() => completeAndReleaseBatch(false)">
+             <q-btn flat dense icon="print" color="grey-8" style="height: 30px;" size="sm" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
+             <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" label="FINISH" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="() => completeAndReleaseBatch(false)">
                <q-tooltip>Complete & Release Plant (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
              </q-btn>
-             <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
-             <q-btn flat dense icon="refresh" color="teal-8" style="height: 36px;" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
-             <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 36px;" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
-             <q-separator vertical class="q-mx-xs" />
-             <q-btn flat dense icon="delete_forever" color="red-9" style="height: 36px;" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
-             <q-separator vertical class="q-mx-xs" v-if="selectedBatchId" />
-             <!-- View Report: direct link to production report for current batch -->
-             <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-8" style="height: 36px;"
+             <q-btn flat dense icon="refresh" color="teal-8" style="height: 30px;" size="sm" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
+             <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 30px;" size="sm" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
+             <q-btn flat dense icon="delete_forever" color="red-9" style="height: 30px;" size="sm" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
+             <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-8" style="height: 30px;" size="sm"
                     @click="router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId || '' } })">
                <q-tooltip>View Production Report ({{ selectedBatchId }})</q-tooltip>
              </q-btn>
@@ -4091,98 +4329,212 @@ onUnmounted(() => {
           <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
 
           <!-- PLC Status Tags -->
-          <div class="column justify-center q-gutter-y-xs" style="min-width: 140px;">
-             <div class="row items-center q-gutter-x-xs">
-                 <q-badge :color="isPlcConnected ? 'green-5' : 'red-5'" text-color="dark" class="text-weight-bold shadow-1" style="padding: 4px 6px; font-size: 11px;">
-                    <q-icon :name="isPlcConnected ? 'wifi' : 'wifi_off'" size="12px" class="q-mr-xs" />
+          <div class="column justify-center q-gutter-y-xs no-wrap" style="min-width: 110px;">
+             <div class="row items-center q-gutter-x-xs no-wrap">
+                 <q-badge :color="isPlcConnected ? 'green-5' : 'red-5'" text-color="dark" class="text-weight-bold shadow-1" style="padding: 2px 4px; font-size: 10px;">
+                    <q-icon :name="isPlcConnected ? 'wifi' : 'wifi_off'" size="10px" class="q-mr-xs" />
                     {{ isPlcConnected ? 'ONLINE' : 'OFFLINE' }}
                  </q-badge>
-                 <q-badge color="cyan-3" text-color="deep-purple-10" class="text-weight-bold shadow-1" style="padding: 4px 6px; font-size: 11px;">
+                 <q-badge color="cyan-3" text-color="deep-purple-10" class="text-weight-bold shadow-1" style="padding: 2px 4px; font-size: 10px;">
                     State: {{ plantData?.PLC_State || 0 }}
                  </q-badge>
              </div>
-             <q-badge color="green-3" text-color="green-10" class="text-weight-bold shadow-1 ellipsis" style="padding: 4px 6px; font-size: 11px; max-width: 220px;">
-                <q-icon name="play_arrow" size="12px" class="q-mr-xs" />State: {{ plantData?.Current_Step || 0 }} &rarr; {{ plcStepDescriptions[(plantData?.PLC_Step_FC ?? plantData?.plc_step_fc) || 0] || plcStepDescriptions[plantData?.Current_Step] || 'Unknown' }}
+             <q-badge color="green-3" text-color="green-10" class="text-weight-bold shadow-1 ellipsis" style="padding: 2px 4px; font-size: 10px; max-width: 170px;">
+                <q-icon name="play_arrow" size="10px" class="q-mr-xs" />{{ plcStepDescriptions[(plantData?.PLC_Step_FC ?? plantData?.plc_step_fc) || 0] || plcStepDescriptions[plantData?.Current_Step] || 'Stand By' }}
              </q-badge>
           </div>
        </div>
 
-       <!-- RIGHT: Batch Info -->
-       <div class="row items-center q-gutter-x-sm" style="flex-shrink: 1; justify-content: flex-end; min-width: 280px;">
+       <!-- RIGHT: Batch Info & Operator -->
+       <div class="row items-center q-gutter-x-xs no-wrap" style="flex-shrink: 0;">
           <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
           <template v-if="batchInfo">
-             <div class="column q-gutter-y-xs text-right">
-                <div class="row justify-end q-gutter-x-xs">
-                   <q-badge color="white" text-color="deep-purple-9" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;">
-                      <q-icon name="factory" size="12px" class="q-mr-xs" />{{ batchInfo.plant || '-' }}
+             <div class="column q-gutter-y-xs text-right no-wrap">
+                <div class="row justify-end q-gutter-x-xs no-wrap">
+                   <q-badge color="white" text-color="deep-purple-9" class="text-weight-bold" style="padding: 2px 4px; font-size: 11px;">
+                      Plan: {{ batchInfo.plan_id }}
                    </q-badge>
-                   <q-badge color="white" text-color="deep-purple-9" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px; max-width: 180px;">
-                      <q-icon name="assignment" size="12px" class="q-mr-xs" />Plan: {{ batchInfo.plan_id }}
+                   <q-badge color="amber-4" text-color="grey-10" class="text-weight-bold" style="padding: 2px 4px; font-size: 11px;">
+                      {{ (batchInfo.batch_size || 0).toFixed(0) }} kg
                    </q-badge>
                 </div>
-                <div class="row justify-end q-gutter-x-xs">
-                   <q-badge color="amber-4" text-color="grey-10" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;">
-                      {{ (batchInfo.batch_size || 0).toFixed(1) }} kg
-                   </q-badge>
+                <div class="row justify-end q-gutter-x-xs no-wrap">
                    <q-badge
                      :color="handshakeStatus.noData ? 'grey-6' : (handshakeStatus.ok ? 'green-8' : 'red-8')"
                      text-color="white"
                      class="text-weight-bold cursor-pointer"
-                     style="padding: 4px 6px; font-size: 12px;"
+                     style="padding: 2px 4px; font-size: 10px;"
                      @click="handshakeDialog = true"
                    >
-                     <q-icon :name="handshakeStatus.noData ? 'sync_disabled' : (handshakeStatus.ok ? 'verified' : 'error')" size="12px" class="q-mr-xs" />
-                     {{ handshakeStatus.noData ? 'No Readback' : (handshakeStatus.ok ? 'PLC Verified' : 'PLC Mismatch!') }}
-                     <q-tooltip>Click to see PLC Handshake Details</q-tooltip>
+                     <q-icon :name="handshakeStatus.noData ? 'sync_disabled' : (handshakeStatus.ok ? 'verified' : 'error')" size="10px" class="q-mr-xs" />
+                     {{ handshakeStatus.noData ? 'No Sync' : (handshakeStatus.ok ? 'PLC OK' : 'Mismatch') }}
+                     <q-tooltip>PLC Handshake Details</q-tooltip>
                    </q-badge>
                 </div>
              </div>
           </template>
           <template v-else>
-             <div class="column q-gutter-y-xs text-right">
-                <q-badge color="deep-purple-7" text-color="white" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;" v-if="plcActivePlanId && plcActivePlanId !== '-'">
-                  <q-icon name="assignment" size="12px" class="q-mr-xs" />Plan: {{ plcActivePlanId }}
-                </q-badge>
-                <q-badge color="deep-purple-7" text-color="white" class="text-weight-bold" style="padding: 4px 6px; font-size: 12px;" v-if="hasPlcActiveBatch">
-                  <q-icon name="science" size="12px" class="q-mr-xs" />Batch: {{ plcActiveBatchId }}
-                </q-badge>
-                <div class="text-caption text-deep-purple-2 q-ml-sm" v-if="!hasPlcActiveBatch" style="font-size: 13px;">No Batch Selected</div>
+             <div class="column q-gutter-y-xs text-right no-wrap">
+                <div class="text-caption text-deep-purple-2" style="font-size: 11px;">No Batch Selected</div>
              </div>
           </template>
-       </div>
 
-       <!-- ── Pour/Cook Operator Row (inside header) ── -->
-       <q-separator vertical dark class="q-mx-sm" style="opacity: 0.3;" />
-       <div class="row items-center no-wrap q-gutter-xs">
-         <q-icon name="badge" color="teal-3" size="16px" />
-         <span class="mix-op-label" style="color:#b2dfdb;">Pour/Cook:</span>
-         <div class="mix-op-badge row items-center no-wrap q-gutter-xs" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3);">
-           <q-icon name="how_to_reg" color="teal-3" size="14px" />
-           <span class="mix-op-value" style="color:#e0f2f1;">{{ pourOperator?.full_name || user?.username || '-' }}</span>
-           <q-badge outline color="teal-3" style="font-size:10px;">@{{ pourOperator?.username || user?.username }}</q-badge>
-         </div>
-         <q-input
-           v-model="pourScanInput"
-           outlined dense dark
-           placeholder="Scan QR to change..."
-           @keyup.enter="resolveOperatorScan(pourScanInput, pourOperator, pourScanLoading, pourScanInput, true)"
-           :loading="pourScanLoading"
-           style="font-size:12px; width:180px;"
-         >
-           <template v-slot:prepend><q-icon name="qr_code_scanner" color="teal-3" size="xs" /></template>
-           <template v-slot:append>
-             <q-btn v-if="pourOperator?.username !== user?.username"
-               flat round dense icon="restart_alt" size="xs" color="teal-3"
-               @click="pourOperator = user.value ? { username: user.value.username, full_name: (user.value as any).full_name || user.value.username } : null">
-               <q-tooltip>Reset to login user</q-tooltip>
-             </q-btn>
-           </template>
-         </q-input>
+          <!-- ── Pour/Cook Operator Row ── -->
+          <q-separator vertical dark class="q-mx-xs" style="opacity: 0.3;" />
+          <div class="row items-center no-wrap q-gutter-xs">
+            <div class="mix-op-badge row items-center no-wrap q-gutter-xs" style="background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3); padding: 2px 6px;">
+              <q-icon name="person" color="teal-3" size="12px" />
+              <span class="mix-op-value ellipsis" style="color:#e0f2f1; font-size: 11px; max-width: 90px;">{{ pourOperator?.full_name || user?.username || '-' }}</span>
+            </div>
+            <q-input
+              v-model="pourScanInput"
+              outlined dense dark
+              placeholder="QR..."
+              @keyup.enter="resolveOperatorScan(pourScanInput, pourOperator, pourScanLoading, pourScanInput, true)"
+              :loading="pourScanLoading"
+              style="font-size:11px; width:95px;"
+            >
+              <template v-slot:prepend><q-icon name="qr_code_scanner" color="teal-3" size="xs" /></template>
+            </q-input>
+          </div>
        </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- 🖥 3-PLANT OVERVIEW GRID DASHBOARD MODE -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div v-if="viewMode === 'overview'" class="column no-wrap q-pa-sm" style="flex: 1; min-height: 0; overflow-y: auto; background: #0f172a; border-radius: 10px; border: 1px solid #334155;">
+      <!-- Overview Banner -->
+      <div class="row items-center justify-between q-pa-sm q-mb-sm rounded-borders shadow-1" style="background: rgba(30, 41, 59, 0.9); border: 1px solid #475569;">
+         <div class="row items-center q-gutter-x-sm">
+            <q-icon name="monitor" color="cyan-4" size="28px" />
+            <div>
+               <div class="text-subtitle1 text-weight-bolder text-white" style="letter-spacing: 0.5px;">🖥 3-PLANT OVERVIEW MONITOR DASHBOARD</div>
+               <div class="text-caption text-grey-4">Shop Floor Live View · All Plants Status Sync</div>
+            </div>
+         </div>
+         <div class="row items-center q-gutter-x-sm">
+            <q-badge color="positive" text-color="white" class="text-weight-bold q-pa-xs">
+               <q-icon name="wifi" size="12px" class="q-mr-xs" /> 3 Plants Connected
+            </q-badge>
+            <q-btn unelevated dense icon="refresh" color="teal-7" label="Refresh All" class="q-px-sm" @click="fetchMultiPlantSummary" />
+            <q-btn unelevated dense icon="dashboard_customize" color="amber-8" text-color="dark" label="กลับหน้าควบคุม (Focus Mode)" class="text-weight-bold q-px-md" @click="viewMode = 'focus'" />
+         </div>
+      </div>
+
+      <!-- 3 Columns Grid -->
+      <div class="row q-col-gutter-md" style="flex: 1;">
+         <div v-for="pid in [1, 2, 3]" :key="pid" class="col-12 col-md-4" style="display: flex; flex-direction: column;">
+            <q-card flat bordered class="shadow-3" :style="{
+               flex: '1',
+               display: 'flex',
+               flexDirection: 'column',
+               borderRadius: '12px',
+               overflow: 'hidden',
+               background: '#1e293b',
+               border: (multiPlantSummary[pid]?.isQcWait) ? '2px solid #ef4444' : (`2px solid ${getPlantAccent(pid).hex}`),
+               color: 'white'
+            }">
+               <!-- Plant Card Header -->
+               <div class="q-pa-sm row items-center justify-between" :style="{ background: getPlantAccent(pid).hex }">
+                  <div class="row items-center q-gutter-x-xs">
+                     <q-icon :name="pid === 1 ? 'looks_one' : (pid === 2 ? 'looks_two' : 'looks_3')" size="24px" color="white" />
+                     <span class="text-subtitle1 text-weight-bolder text-white">PLANT {{ pid }}</span>
+                  </div>
+                  <q-badge :color="getPlantBadgeColor(pid)" text-color="white" class="text-weight-bolder text-uppercase q-pa-xs" :class="{'pulse-alarm': multiPlantSummary[pid]?.isQcWait}" style="font-size: 12px; letter-spacing: 0.5px;">
+                     {{ multiPlantSummary[pid]?.status || 'STANDBY' }}
+                  </q-badge>
+               </div>
+
+               <!-- Plant Card Body -->
+               <q-card-section class="q-pa-md column q-gutter-y-sm" style="flex: 1; background: #0f172a;">
+                  <!-- Batch & SKU Info -->
+                  <div class="q-pa-sm rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.1);">
+                     <div class="row items-center justify-between q-mb-xs">
+                        <span class="text-caption text-grey-4 text-weight-bold">BATCH ID</span>
+                        <q-badge :color="multiPlantSummary[pid]?.batchId ? 'cyan-8' : 'grey-8'" text-color="white" class="text-weight-bold">
+                           {{ multiPlantSummary[pid]?.batchId || 'NO BATCH' }}
+                        </q-badge>
+                     </div>
+                     <div class="text-subtitle2 text-weight-bolder text-amber-3 ellipsis" style="font-size: 13px;">
+                        {{ multiPlantSummary[pid]?.skuName || (multiPlantSummary[pid]?.status === 'Standby' ? 'Ready for Next Batch' : '-') }}
+                     </div>
+                     <div class="row items-center justify-between text-caption text-grey-4 q-mt-xs" v-if="multiPlantSummary[pid]?.planId">
+                        <span>Plan: {{ multiPlantSummary[pid]?.planId }}</span>
+                        <span>Size: {{ multiPlantSummary[pid]?.batchSize }} kg</span>
+                     </div>
+                  </div>
+
+                  <!-- Step & Progress -->
+                  <div class="q-pa-sm rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.1);">
+                     <div class="row items-center justify-between q-mb-xs">
+                        <span class="text-caption text-grey-4 text-weight-bold">CURRENT STEP</span>
+                        <q-badge color="indigo-7" text-color="white" class="text-weight-bold">
+                           {{ multiPlantSummary[pid]?.currentPhase }} &rarr; {{ multiPlantSummary[pid]?.currentStepIndex }}/{{ multiPlantSummary[pid]?.totalSteps || 0 }}
+                        </q-badge>
+                     </div>
+                     <div class="text-body2 text-weight-bold text-teal-2 ellipsis" style="font-size: 13px;">
+                        {{ multiPlantSummary[pid]?.currentStepDesc || 'Standby Clean' }}
+                     </div>
+                     <q-linear-progress :value="(multiPlantSummary[pid]?.progressPercent || 0) / 100" color="teal-4" track-color="grey-8" class="q-mt-sm rounded-borders" style="height: 6px;" />
+                  </div>
+
+                  <!-- Realtime Gauges / Sensors -->
+                  <div class="row q-col-gutter-xs q-mt-xs">
+                     <div class="col-4">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 10px;">TEMP</div>
+                           <div class="text-weight-bolder text-amber-3" style="font-size: 15px;">
+                              {{ (plantsData[String(pid)]?.Mixing_Tank_Temperature ?? 0).toFixed(1) }}°C
+                           </div>
+                        </div>
+                     </div>
+                     <div class="col-4">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 10px;">WEIGHT</div>
+                           <div class="text-weight-bolder text-cyan-3" style="font-size: 15px;">
+                              {{ (plantsData[String(pid)]?.Mixing_Tank_Volume ?? 0).toFixed(1) }}kg
+                           </div>
+                        </div>
+                     </div>
+                     <div class="col-4">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 10px;">AGITATOR</div>
+                           <div class="text-weight-bolder text-green-3" style="font-size: 15px;">
+                              {{ (plantsData[String(pid)]?.MixingTank_Agitator_Speed ?? 0).toFixed(0) }} RPM
+                           </div>
+                        </div>
+                     </div>
+                  </div>
+
+                  <!-- Prompt / Alert Banner if QC Wait -->
+                  <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-sm rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 1px solid #ef4444;">
+                     <div class="text-weight-bold text-subtitle2"><q-icon name="warning" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
+                     <div class="text-caption">กรุณาตรวจสอบค่า Brix/pH และกดยืนยัน</div>
+                  </div>
+               </q-card-section>
+
+               <!-- Plant Card Actions -->
+               <q-card-actions align="center" class="q-pa-sm" style="background: #1e293b; border-top: 1px solid #334155;">
+                  <q-btn unelevated
+                         :color="getPlantAccent(pid).color"
+                         text-color="white"
+                         icon="search"
+                         :label="`ดูหน้าควบคุม PLANT ${pid}`"
+                         class="full-width text-weight-bold"
+                         style="height: 38px; border-radius: 8px;"
+                         @click="selectPlantFromOverview(pid)" />
+               </q-card-actions>
+            </q-card>
+         </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- 🎛 FOCUS MODE: EXISTING FULL-FEATURED MIXING CONTROL VIEW -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- ═══ PAGE LAYOUT ROW ═══ -->
-    <div class="row q-col-gutter-sm" style="flex: 1; min-height: 0;">
+    <div v-else class="row q-col-gutter-sm" style="flex: 1; min-height: 0;">
       <!-- ═══ MAIN PANE: PRODUCTION CONTROL ═══ -->
       <div class="col-12" style="display: flex; flex-direction: column; overflow: hidden; min-height: 0; height: 100%;">
 
@@ -5315,5 +5667,26 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 700;
   color: #00695c;
+}
+
+@keyframes pulse-alarm {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { transform: scale(1.06); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.pulse-alarm {
+  animation: pulse-alarm 1.5s infinite !important;
+}
+
+.subheader-toolbar::-webkit-scrollbar {
+  height: 3px;
+}
+.subheader-toolbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+.subheader-toolbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
 }
 </style>
