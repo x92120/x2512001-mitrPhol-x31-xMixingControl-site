@@ -49,7 +49,8 @@ from routers import (
     remote_server_router,
     plc_router,
     edge_router,
-    drive_health_router
+    drive_health_router,
+    shift_logbook_router
 )
 
 # =============================================================================
@@ -124,6 +125,7 @@ all_routers = [
     plc_router,
     edge_router,
     drive_health_router,
+    shift_logbook_router,
 ]
 
 for router in all_routers:

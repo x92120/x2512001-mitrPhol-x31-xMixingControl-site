@@ -1,7 +1,14 @@
 <script setup lang="ts">
-const { hasPermission, user, logout } = useAuth()
+import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { useAuth } from '~/composables/useAuth'
+import { useI18n } from '~/composables/useI18n'
+import { useQuasar } from 'quasar'
+
+const { hasPermission, user, logout, switchStationUser } = useAuth()
 const { t, toggleLocale, localeFlag, localeName } = useI18n()
 const $q = useQuasar()
+const appConfig = useAppConfig()
+const apiBase = appConfig.apiBaseUrl || 'http://192.168.121.23:8031'
 
 // Zoom control
 const ZOOM_KEY = 'app-zoom-level'
@@ -31,6 +38,96 @@ const zoomOptions = [
 ]
 
 watch(zoomLevel, applyZoom)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⏰ Auto Shift-Cutoff Watcher & QR Badge Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+const showShiftCutoffDialog = ref(false)
+const cutoffShiftName = ref('')
+const cutoffNextShiftName = ref('')
+const cutoffQrInput = ref('')
+const cutoffQrLoading = ref(false)
+const cutoffQrInputRef = ref<any>(null)
+let shiftCheckInterval: any = null
+let lastWarnedShiftCutoff = ''
+
+const checkShiftCutoff = () => {
+  if (!import.meta.client) return
+  const now = new Date()
+  const hours = now.getHours()
+  const minutes = now.getMinutes()
+  const seconds = now.getSeconds()
+
+  // Target shift cutoffs: 08:00, 16:00, 00:00 (24:00)
+  const isCutoffMorning = hours === 8 && minutes === 0 && seconds <= 40
+  const isCutoffAfternoon = hours === 16 && minutes === 0 && seconds <= 40
+  const isCutoffNight = hours === 0 && minutes === 0 && seconds <= 40
+
+  const isNearCutoff = (hours === 7 && minutes >= 55) || (hours === 15 && minutes >= 55) || (hours === 23 && minutes >= 55)
+
+  if (isNearCutoff && lastWarnedShiftCutoff !== `${hours}:${minutes}`) {
+    lastWarnedShiftCutoff = `${hours}:${minutes}`
+    $q.notify({
+      type: 'warning',
+      message: '⏰ อีก 5 นาทีจะหมดเวลากะการทำงาน กรุณาสรุปและส่งมอบ E-Logbook',
+      position: 'top',
+      timeout: 6000
+    })
+  }
+
+  if ((isCutoffMorning || isCutoffAfternoon || isCutoffNight) && !showShiftCutoffDialog.value) {
+    if (isCutoffMorning) {
+      cutoffShiftName.value = 'กะดึก (00:00 - 08:00)'
+      cutoffNextShiftName.value = 'กะเช้า (08:00 - 16:00)'
+    } else if (isCutoffAfternoon) {
+      cutoffShiftName.value = 'กะเช้า (08:00 - 16:00)'
+      cutoffNextShiftName.value = 'กะบ่าย (16:00 - 00:00)'
+    } else {
+      cutoffShiftName.value = 'กะบ่าย (16:00 - 00:00)'
+      cutoffNextShiftName.value = 'กะดึก (00:00 - 08:00)'
+    }
+    showShiftCutoffDialog.value = true
+    setTimeout(() => {
+      if (cutoffQrInputRef.value) cutoffQrInputRef.value.focus()
+    }, 400)
+  }
+}
+
+const handleCutoffQrScan = async () => {
+  const code = cutoffQrInput.value.trim()
+  if (!code) return
+  cutoffQrLoading.value = true
+  try {
+    const res = await $fetch<any>(`${apiBase}/auth/badge-login`, {
+      method: 'POST',
+      body: { badge_code: code }
+    })
+    if (res?.user) {
+      switchStationUser(res.user)
+      $q.notify({
+        type: 'positive',
+        message: `✅ เข้าสู่ระบบกะใหม่สำเร็จ: ยินดีต้อนรับคุณ ${res.user.full_name || res.user.username}`,
+        position: 'top'
+      })
+      showShiftCutoffDialog.value = false
+      cutoffQrInput.value = ''
+    }
+  } catch (err: any) {
+    $q.notify({
+      type: 'negative',
+      message: 'รหัส QR Badge ไม่ถูกต้อง: ' + (err.message || ''),
+      position: 'top'
+    })
+  } finally {
+    cutoffQrLoading.value = false
+  }
+}
+
+const goToShiftLogbook = () => {
+  showShiftCutoffDialog.value = false
+  navigateTo('/x78-ShiftLogbook')
+}
+
 onMounted(() => {
   const stored = localStorage.getItem(ZOOM_KEY)
   if (stored) {
@@ -38,6 +135,13 @@ onMounted(() => {
   } else {
     applyZoom()
   }
+
+  // Start shift check interval every 20s
+  shiftCheckInterval = setInterval(checkShiftCutoff, 20000)
+})
+
+onUnmounted(() => {
+  if (shiftCheckInterval) clearInterval(shiftCheckInterval)
 })
 
 const handleLogout = async () => {
@@ -157,6 +261,10 @@ const goToPlant = (plant: number) => {
             </q-item>
           </q-list>
         </q-btn-dropdown>
+        
+        <!-- 📋 E-Logbook & Shift Handover Tab -->
+        <q-route-tab to="/x78-ShiftLogbook" icon="assignment" label="E-Logbook" />
+
         <q-route-tab to="/x89-UserConfig" icon="manage_accounts" :label="t('nav.user')" v-if="hasPermission('admin')" />
         <q-route-tab to="/x100-PlantMonitor" icon="monitor" :label="t('nav.plantMonitor')" />
         <q-route-tab to="/x70-ProductionReport" icon="assessment" :label="t('nav.productionReport')" />
@@ -168,6 +276,68 @@ const goToPlant = (plant: number) => {
     <q-page-container>
       <NuxtPage />
     </q-page-container>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- ⏰ Auto Shift-Cutoff & Fast QR Badge Login Modal -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <q-dialog v-model="showShiftCutoffDialog" persistent>
+      <q-card style="min-width: 440px; border-radius: 18px; overflow: hidden; background: #0f172a; color: white; border: 2px solid #eab308; box-shadow: 0 10px 40px rgba(0,0,0,0.8);">
+        <q-card-section class="bg-amber-9 text-dark text-center q-py-md">
+          <q-icon name="alarm_on" size="48px" class="q-mb-xs" />
+          <div class="text-h5 text-weight-bolder">หมดเวลากะการทำงาน (Shift Cutoff)</div>
+          <div class="text-caption text-weight-bold opacity-90 q-mt-xs">
+            สิ้นสุดรอบ: {{ cutoffShiftName }} ➔ เริ่มรอบ: {{ cutoffNextShiftName }}
+          </div>
+        </q-card-section>
+
+        <q-card-section class="q-pa-lg text-center">
+          <div class="text-body2 text-grey-3 q-mb-md">
+            กรุณาทำการส่งมอบงานใน <strong>E-Logbook</strong> หรือให้ Operator กะใหม่สแกน <strong>QR Badge</strong> เพื่อเริ่มงานกะถัดไป
+          </div>
+
+          <!-- QR Badge Fast Scan Box -->
+          <div class="badge-scan-box q-pa-md q-mb-lg text-left" style="background: rgba(126, 87, 194, 0.2); border: 2px solid #a855f7; border-radius: 12px;">
+            <div class="row items-center justify-between q-mb-xs">
+              <span class="text-subtitle2 text-weight-bold text-purple-2">⚡ สแกน QR Badge กะใหม่ทันที</span>
+              <q-badge color="deep-purple-6">Ready to Scan</q-badge>
+            </div>
+            <q-input
+              ref="cutoffQrInputRef"
+              v-model="cutoffQrInput"
+              outlined dense dark
+              placeholder="Waiting for RFID/QR Scan..."
+              bg-color="grey-10"
+              class="q-mt-xs"
+              :loading="cutoffQrLoading"
+              @keyup.enter="handleCutoffQrScan"
+            >
+              <template v-slot:prepend><q-icon name="qr_code_scanner" color="purple-3" /></template>
+            </q-input>
+          </div>
+
+          <div class="row q-gutter-sm">
+            <q-btn
+              class="col"
+              unelevated
+              color="amber-8"
+              text-color="dark"
+              icon="menu_book"
+              label="เปิด E-Logbook ส่งมอบงาน"
+              @click="goToShiftLogbook"
+            />
+            <q-btn
+              class="col-auto"
+              flat
+              color="red-4"
+              icon="logout"
+              label="Logout"
+              @click="handleLogout"
+            />
+          </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
+
   </q-layout>
 </template>
 

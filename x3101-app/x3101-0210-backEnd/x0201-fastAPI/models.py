@@ -5,7 +5,7 @@ All database tables and read-only views for the xMixing system.
 """
 from sqlalchemy import (  # type: ignore[import-untyped]
     Column, Integer, SmallInteger, String, Enum, TIMESTAMP, text, DateTime,
-    JSON, Float, ForeignKey, Date, Boolean, func,
+    JSON, Float, ForeignKey, Date, Boolean, func, Text,
 )
 from sqlalchemy.orm import relationship  # type: ignore[import-untyped]
 from database import Base  # type: ignore[import-untyped]
@@ -629,3 +629,85 @@ class VSkuComplete(Base):
     created_at = Column(TIMESTAMP)
     update_by = Column(String(50))
     updated_at = Column(TIMESTAMP)
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 📋 E-Logbook & Shift Handover Models
+# ═════════════════════════════════════════════════════════════════════════════
+
+class ShiftTypeEnum(str, enum.Enum):
+    Morning = "Morning"      # 08:00 - 16:00
+    Afternoon = "Afternoon"  # 16:00 - 00:00
+    Night = "Night"          # 00:00 - 08:00
+
+class HandoverStatusEnum(str, enum.Enum):
+    Draft = "Draft"
+    Submitted = "Submitted"
+    Acknowledged = "Acknowledged"
+
+class ShiftHandover(Base):
+    __tablename__ = "shift_handovers"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    plant = Column(Integer, nullable=False, default=1, index=True)
+    shift_type = Column(String(50), nullable=False, default="Morning", index=True)
+    shift_date = Column(Date, nullable=False, index=True)
+    
+    outgoing_operator_id = Column(Integer, nullable=True)
+    outgoing_operator_name = Column(String(100), nullable=True)
+    incoming_operator_id = Column(Integer, nullable=True)
+    incoming_operator_name = Column(String(100), nullable=True)
+    
+    status = Column(String(50), nullable=False, default="Draft")  # Draft, Submitted, Acknowledged
+    
+    # JSON summaries
+    production_kpis = Column(JSON, nullable=True)  # { total_batches: 5, total_volume_kg: 25000, oee_pct: 88.5, downtime_mins: 15 }
+    checklist = Column(JSON, nullable=True)        # { tank_cleaned: true, area_5s: true, safety_normal: true, waste_disposed: true }
+    
+    outgoing_notes = Column(Text if 'Text' in globals() else String(2000), nullable=True)
+    incoming_notes = Column(Text if 'Text' in globals() else String(2000), nullable=True)
+    
+    submitted_at = Column(DateTime, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), onupdate=func.now())
+
+    # Relationships
+    issues = relationship("ShiftIssue", back_populates="handover", cascade="all, delete-orphan")
+    material_alerts = relationship("ShiftMaterialAlert", back_populates="handover", cascade="all, delete-orphan")
+
+
+class ShiftIssue(Base):
+    __tablename__ = "shift_issues"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shift_handover_id = Column(Integer, ForeignKey("shift_handovers.id", ondelete="CASCADE"), nullable=True)
+    plant = Column(Integer, nullable=False, default=1)
+    machine_tag = Column(String(100), nullable=False) # e.g. "Mixer 1", "Steam Valve A", "Holding Tank 2"
+    title = Column(String(200), nullable=False)
+    description = Column(String(1000), nullable=True)
+    severity = Column(String(50), default="Medium")  # Low, Medium, High, Critical
+    status = Column(String(50), default="Pending")    # Pending, In_Progress, Resolved, Deferred
+    
+    reported_by = Column(String(100), nullable=True)
+    assigned_to = Column(String(100), nullable=True)
+    resolution_notes = Column(String(1000), nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    resolved_at = Column(DateTime, nullable=True)
+
+    handover = relationship("ShiftHandover", back_populates="issues")
+
+
+class ShiftMaterialAlert(Base):
+    __tablename__ = "shift_material_alerts"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shift_handover_id = Column(Integer, ForeignKey("shift_handovers.id", ondelete="CASCADE"), nullable=True)
+    ingredient_name = Column(String(200), nullable=False)
+    mat_sap_code = Column(String(50), nullable=True)
+    current_stock = Column(Float, default=0.0)
+    min_threshold = Column(Float, default=0.0)
+    unit = Column(String(20), default="kg")
+    alert_note = Column(String(500), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+
+    handover = relationship("ShiftHandover", back_populates="material_alerts")
