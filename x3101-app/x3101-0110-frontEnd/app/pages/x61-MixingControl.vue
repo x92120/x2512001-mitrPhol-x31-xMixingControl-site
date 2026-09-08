@@ -1727,7 +1727,12 @@ const fetchMultiPlantSummary = async () => {
         const curHighShear = pLive.HighShare_Speed ?? 0
 
         // If this is the currently active plant and we have loaded batch locally, use local truth
-        if (Number(activePlantId.value) === pid && selectedBatchId.value) {
+        // Local in-memory batch state ONLY applies to the plant that actually loaded it
+        const isLocalBatch = selectedBatchId.value &&
+            batchInfo.value &&
+            String(batchInfo.value.plant || '').replace(/\D/g, '') === String(pid)
+
+        if (isLocalBatch) {
             const total = skuSteps.value.length
             const curIdx = currentStepIndex.value
             const step = skuSteps.value[curIdx]
@@ -1835,25 +1840,42 @@ const fetchMultiPlantSummary = async () => {
                 let scanCountText = ''
                 let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
 
-                const curPhaseNo = curStepObj.phase_no
-                if (curPhaseNo) {
-                    const phaseSteps = steps.filter((s: any) => s.phase_no === curPhaseNo)
-                    const phaseScanSteps = phaseSteps.filter((s: any) => {
-                        const aCode = String(s.action_code || '')
-                        return (aCode.startsWith('2') || aCode.startsWith('3')) && s.re_code && !String(s.re_code).toLowerCase().includes('ro-water') && (Number(s.target_weight || s.require || 0) > 0)
-                    })
-
-                    if (phaseScanSteps.length > 0) {
+                // ── Check if API provided live Free-Scan restore progress ──
+                if (res?.free_scan_progress?.items && res.free_scan_progress.items.length > 0) {
+                    const pending = res.free_scan_progress.items.filter((it: any) => it.status !== 2)
+                    if (pending.length > 0) {
                         isScanWait = true
-                        scanCountText = isThai.value ? `(รอสแกน ${phaseScanSteps.length} รายการ)` : `(Pending ${phaseScanSteps.length} items)`
-                        pendingInds = phaseScanSteps.map((s: any) => ({
-                            re_code: s.re_code,
-                            name: s.description || s.action_name || s.re_code,
-                            weight: Number(s.target_weight || s.require || 0),
-                            wh: s.phase_id || 'SPP'
+                        const scanned = (res.free_scan_progress.total_items || 0) - pending.length
+                        scanCountText = isThai.value ? `(สแกนแล้ว ${scanned}/${res.free_scan_progress.total_items} ถุง)` : `(Scanned ${scanned}/${res.free_scan_progress.total_items} bags)`
+                        pendingInds = pending.map((it: any) => ({
+                            re_code: it.re_code,
+                            name: it.re_code,
+                            weight: Number(it.require || 0),
+                            wh: it.wh || 'SPP'
                         }))
                     }
-                } else if (curStepObj) {
+                } else {
+                    const curPhaseNo = curStepObj.phase_no
+                    if (curPhaseNo) {
+                        const phaseSteps = steps.filter((s: any) => s.phase_no === curPhaseNo)
+                        const phaseScanSteps = phaseSteps.filter((s: any) => {
+                            const aCode = String(s.action_code || '')
+                            return (aCode.startsWith('2') || aCode.startsWith('3')) && s.re_code && !String(s.re_code).toLowerCase().includes('ro-water') && (Number(s.target_weight || s.require || 0) > 0)
+                        })
+
+                        if (phaseScanSteps.length > 0) {
+                            isScanWait = true
+                            scanCountText = isThai.value ? `(รอสแกน ${phaseScanSteps.length} รายการ)` : `(Pending ${phaseScanSteps.length} items)`
+                            pendingInds = phaseScanSteps.map((s: any) => ({
+                                re_code: s.re_code,
+                                name: s.description || s.action_name || s.re_code,
+                                weight: Number(s.target_weight || s.require || 0),
+                                wh: s.phase_id || 'SPP'
+                            }))
+                        }
+                    }
+                }
+                if (!isScanWait && curStepObj) {
                     const aCode = String(curStepObj.action_code || '')
                     if ((aCode.startsWith('2') || aCode.startsWith('3')) && curStepObj.re_code && !String(curStepObj.re_code).toLowerCase().includes('ro-water')) {
                         isScanWait = true
