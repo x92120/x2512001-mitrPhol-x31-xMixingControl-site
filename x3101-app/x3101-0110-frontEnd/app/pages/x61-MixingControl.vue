@@ -1934,9 +1934,7 @@ const directPlantQcConfirm = async (pid: number) => {
 }
 
 const setScanTargetPlant = async (pid: number) => {
-    if (Number(activePlantId.value) !== pid) {
-        await switchPlant(pid)
-    }
+    activePlantId.value = String(pid)
     $q.notify({
         type: 'positive',
         icon: 'qr_code_scanner',
@@ -3219,7 +3217,7 @@ const restoreBatchFromPlc = async (batchId: string) => {
         } else {
             console.warn('[Restore] ⚠️ Could not determine current step from any source. Defaulting to step 0.')
         }
-        $q.notify({ type: 'info', message: `Restored active batch ${batchId} from PLC.`, position: 'top', icon: 'settings_backup_restore' })
+        console.log(`[PLC Restore] Restored active batch ${batchId} for plant ${activePlantId.value}`)
     } catch (e) {
         console.warn('Failed to restore batch from PLC:', e)
     } finally {

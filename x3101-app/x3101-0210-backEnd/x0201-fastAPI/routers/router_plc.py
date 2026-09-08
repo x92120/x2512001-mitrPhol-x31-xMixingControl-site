@@ -1,3 +1,5 @@
+import time
+import json
 """
 PLC Router — Recipe Data for S7-1200
 =====================================
@@ -477,12 +479,26 @@ def get_plant_telemetry_live(plant_id: str = Path(..., description="Plant ID: 1,
     _telem_cache[pid] = result
     return result
 
+_recipe_status_cache = {}
+
 @router.get("/plant/{plant_id}/recipe-status")
 def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
     """
     Read the Recipe (Target) and Actual Results directly from the PLC via snap7 based on plant_id.
     Also returns free_scan_progress: pending FH/SPP prebatch items for server-crash restore.
+    High-performance 2.5s TTL cache to prevent S7 bus contention across multi-plant pollers.
     """
+    global _recipe_status_cache
+    now = time.time()
+    try:
+        pid = int(plant_id)
+    except Exception:
+        pid = 1
+
+    cached = _recipe_status_cache.get(pid)
+    if cached and (now - cached.get("ts", 0)) < 2.5 and cached.get("data"):
+        return cached["data"]
+
     try:
         from plc_service import get_db_number
         from sqlalchemy import text as sa_text
@@ -525,13 +541,18 @@ def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
                 logger.warning(f"[FreeScan restore] batch {batch_id}: {fs_err}")
         # ────────────────────────────────────────────────────────────────────
 
-        return {
+        res_data = {
             "success": True,
             "target": target,
             "actual": actual,
             "free_scan_progress": free_scan_progress
         }
+        _recipe_status_cache[pid] = {"ts": now, "data": res_data}
+        return res_data
     except Exception as e:
+        if cached and cached.get("data"):
+            logger.warning(f"[RecipeStatus Fallback] Returning cached data for plant {pid} due to transient error: {e}")
+            return cached["data"]
         logger.error(f"Failed to read recipe status from PLC: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
