@@ -1651,6 +1651,14 @@ interface PlantOverviewInfo {
     currentStepDesc: string
     status: 'Running' | 'Standby' | 'QC Wait' | 'Paused' | 'Complete'
     isQcWait: boolean
+    isScanWait: boolean
+    scanCountText: string
+    pendingIngredients: Array<{
+        re_code: string
+        name: string
+        weight: number
+        wh?: string
+    }>
     isAlarm: boolean
     temp: number
     weight: number
@@ -1660,9 +1668,9 @@ interface PlantOverviewInfo {
 }
 
 const multiPlantSummary = ref<Record<number, PlantOverviewInfo>>({
-    1: { plantId: 1, name: 'Mixing 1', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
-    2: { plantId: 2, name: 'Mixing 2', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
-    3: { plantId: 3, name: 'Mixing 3', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 }
+    1: { plantId: 1, name: 'Mixing 1', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
+    2: { plantId: 2, name: 'Mixing 2', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
+    3: { plantId: 3, name: 'Mixing 3', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 }
 })
 
 let multiPlantPollInterval: any = null
@@ -1684,9 +1692,42 @@ const fetchMultiPlantSummary = async () => {
             const total = skuSteps.value.length
             const curIdx = currentStepIndex.value
             const step = skuSteps.value[curIdx]
-            const desc = step?.description || step?.action_name || (curIdx >= total ? 'Complete' : 'Processing')
+            let desc = step?.description || step?.action_name || (curIdx >= total ? 'Complete' : 'Processing')
+            if (desc === 'Processing' && step?.re_code) {
+                desc = `${step.action_name || 'ละลาย/เติม'} ${step.re_code}`
+            }
             const isQc = String(desc).toLowerCase().includes('qc') || String(step?.action_code) === '40010'
             const percent = total > 0 ? Math.min(100, Math.round(((curIdx + 1) / total) * 100)) : 0
+
+            // ── Extract Live Scanning Ingredients for Active Plant ──
+            let isScanWait = false
+            let scanCountText = ''
+            let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
+
+            const freeScan = activeFreeScanPhaseGroup.value
+            if (freeScan && freeScan.pending && freeScan.pending.length > 0) {
+                isScanWait = true
+                scanCountText = `(สแกนแล้ว ${freeScan.scanned}/${freeScan.total} ถุง)`
+                pendingInds = freeScan.pending.map((s: any) => ({
+                    re_code: s.re_code,
+                    name: s.description || s.action_name || s.re_code,
+                    weight: productionRequire(s),
+                    wh: getStepWh(s)
+                }))
+            } else if (step) {
+                const aCode = String(step.action_code || '')
+                const isManualScan = (aCode.startsWith('2') || aCode.startsWith('3')) && step.re_code && !step.re_code.toLowerCase().includes('ro-water') && productionRequire(step) > 0
+                if (isManualScan) {
+                    isScanWait = true
+                    scanCountText = `(รอสแกน 1 ถุง)`
+                    pendingInds = [{
+                        re_code: step.re_code,
+                        name: step.description || step.action_name || step.re_code,
+                        weight: productionRequire(step),
+                        wh: getStepWh(step)
+                    }]
+                }
+            }
 
             multiPlantSummary.value[pid] = {
                 plantId: pid,
@@ -1702,6 +1743,9 @@ const fetchMultiPlantSummary = async () => {
                 currentStepDesc: desc,
                 status: isQc ? 'QC Wait' : (batchRunning.value ? 'Running' : 'Paused'),
                 isQcWait: isQc,
+                isScanWait: isScanWait,
+                scanCountText: scanCountText,
+                pendingIngredients: pendingInds,
                 isAlarm: false,
                 temp: curTemp,
                 weight: curWeight,
@@ -1712,7 +1756,7 @@ const fetchMultiPlantSummary = async () => {
             continue
         }
 
-        // For other plants, query remote status
+        // For other plants, query remote recipe status
         try {
             const res = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/recipe-status`, { timeout: 3000 }).catch(() => null)
             if (res?.success && res.target?.batch_id && res.target.batch_id !== '-' && res.target.batch_id !== '0') {
@@ -1722,9 +1766,49 @@ const fetchMultiPlantSummary = async () => {
                 const total = steps.length
                 const curIdx = Number(res.target.current_step || res.actual?.current_step || 1)
                 const curStepObj = steps[Math.max(0, curIdx - 1)] || {}
-                const desc = curStepObj.description || curStepObj.action_name || `Step ${curIdx}`
+                let desc = curStepObj.description || curStepObj.action_name || `Step ${curIdx}`
+                if (curStepObj.re_code && (!desc || desc.startsWith('Step'))) {
+                    desc = `${curStepObj.action_name || 'เติม'} ${curStepObj.re_code}`
+                }
                 const isQc = String(desc).toLowerCase().includes('qc') || String(curStepObj.action_code) === '40010'
                 const percent = total > 0 ? Math.min(100, Math.round((curIdx / total) * 100)) : 0
+
+                // ── Extract Scanning Ingredients for Remote Plant ──
+                let isScanWait = false
+                let scanCountText = ''
+                let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
+
+                const curPhaseNo = curStepObj.phase_no
+                if (curPhaseNo) {
+                    const phaseSteps = steps.filter((s: any) => s.phase_no === curPhaseNo)
+                    const phaseScanSteps = phaseSteps.filter((s: any) => {
+                        const aCode = String(s.action_code || '')
+                        return (aCode.startsWith('2') || aCode.startsWith('3')) && s.re_code && !String(s.re_code).toLowerCase().includes('ro-water') && (Number(s.target_weight || s.require || 0) > 0)
+                    })
+
+                    if (phaseScanSteps.length > 0) {
+                        isScanWait = true
+                        scanCountText = `(รอสแกน ${phaseScanSteps.length} รายการ)`
+                        pendingInds = phaseScanSteps.map((s: any) => ({
+                            re_code: s.re_code,
+                            name: s.description || s.action_name || s.re_code,
+                            weight: Number(s.target_weight || s.require || 0),
+                            wh: s.phase_id || 'SPP'
+                        }))
+                    }
+                } else if (curStepObj) {
+                    const aCode = String(curStepObj.action_code || '')
+                    if ((aCode.startsWith('2') || aCode.startsWith('3')) && curStepObj.re_code && !String(curStepObj.re_code).toLowerCase().includes('ro-water')) {
+                        isScanWait = true
+                        scanCountText = `(รอสแกน 1 รายการ)`
+                        pendingInds = [{
+                            re_code: curStepObj.re_code,
+                            name: curStepObj.description || curStepObj.action_name || curStepObj.re_code,
+                            weight: Number(curStepObj.target_weight || curStepObj.require || 0),
+                            wh: curStepObj.phase_id || 'SPP'
+                        }]
+                    }
+                }
 
                 multiPlantSummary.value[pid] = {
                     plantId: pid,
@@ -1740,6 +1824,9 @@ const fetchMultiPlantSummary = async () => {
                     currentStepDesc: desc,
                     status: isQc ? 'QC Wait' : 'Running',
                     isQcWait: isQc,
+                    isScanWait: isScanWait,
+                    scanCountText: scanCountText,
+                    pendingIngredients: pendingInds,
                     isAlarm: false,
                     temp: curTemp,
                     weight: curWeight,
@@ -1762,6 +1849,9 @@ const fetchMultiPlantSummary = async () => {
                     currentStepDesc: 'Standby / Clean',
                     status: 'Standby',
                     isQcWait: false,
+                    isScanWait: false,
+                    scanCountText: '',
+                    pendingIngredients: [],
                     isAlarm: false,
                     temp: curTemp,
                     weight: curWeight,
@@ -1771,7 +1861,7 @@ const fetchMultiPlantSummary = async () => {
                 }
             }
         } catch {
-            // retain previous
+            // Keep previous values on transient network error
         }
     }
 }
@@ -4394,7 +4484,7 @@ onUnmounted(() => {
           <!-- Active Scan Target Badge (Zero-Confusion Indicator) -->
           <div class="row items-center bg-dark text-white q-px-sm rounded-borders shadow-2 q-gutter-x-xs no-wrap cursor-pointer"
                :style="{ border: `2px solid ${getPlantAccent(Number(activePlantId)).hex}`, height: '38px' }"
-               @click="viewMode = 'overview'">
+               @click="viewMode = viewMode === 'overview' ? 'focus' : 'overview'">
              <q-icon name="qr_code_scanner" :color="getPlantAccent(Number(activePlantId)).color" size="18px" />
              <div class="column justify-center" style="line-height: 1.1;">
                 <div class="text-caption text-grey-4" style="font-size: 9px; font-weight: 700;">SCAN TARGET</div>
@@ -4405,8 +4495,15 @@ onUnmounted(() => {
              <q-tooltip>เป้าหมายการยิงบาร์โค้ดขณะนี้คือ Plant {{ activePlantId }} (คลิกเพื่อสลับภาพรวม)</q-tooltip>
           </div>
 
-          <!-- Command Center (Color-Coded Plant Identity & Explicit Safety Labels) -->
-          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs no-wrap"
+          <!-- In Overview Mode: Clean Multi-Plant Status Badge -->
+          <div v-if="viewMode === 'overview'" class="row items-center bg-dark text-white q-px-sm rounded-borders shadow-2 q-gutter-x-xs no-wrap" style="height: 38px; border: 1px solid #334155;">
+             <q-icon name="dashboard_customize" color="amber-4" size="16px" />
+             <span class="text-weight-bold text-caption text-amber-2" style="font-size: 11px;">โหมด 3-PLANT OVERVIEW · ใช้ปุ่มควบคุมในแต่ละการ์ด</span>
+             <q-btn unelevated dense icon="filter_center_focus" color="amber-8" text-color="dark" :label="`FOCUS P${activePlantId}`" class="text-weight-bolder q-px-xs q-ml-xs" style="height: 26px; font-size: 10px;" @click="viewMode = 'focus'" />
+          </div>
+
+          <!-- In Focus Mode: Command Center (Color-Coded Plant Identity & Explicit Safety Labels) -->
+          <div v-else class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs no-wrap"
                :style="{ height: '38px', padding: '2px 4px', borderLeft: `4px solid ${getPlantAccent(Number(activePlantId)).hex}` }">
              <q-btn unelevated dense icon="play_arrow" :label="`START P${activePlantId}`" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('START')"><q-tooltip>Start Batch for Plant {{ activePlantId }}</q-tooltip></q-btn>
              <q-btn unelevated dense icon="pause" :label="`PAUSE P${activePlantId}`" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch for Plant {{ activePlantId }}</q-tooltip></q-btn>
@@ -4415,7 +4512,6 @@ onUnmounted(() => {
              <q-btn unelevated dense icon="stop" :label="`ABORT P${activePlantId}`" color="negative" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort Plant {{ activePlantId }}</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="developer_board" color="indigo-7" style="height: 30px;" size="sm" @click="openPlcDataBlock">
-               <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 8px;">{{ plcCmdLog.length }}</q-badge>
                <q-tooltip>View PLC Data Block (DB100 - Plant {{ activePlantId }})</q-tooltip>
              </q-btn>
              <q-btn flat dense icon="print" color="grey-8" style="height: 30px;" size="sm" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF (Plant {{ activePlantId }})</q-tooltip></q-btn>
@@ -4614,6 +4710,39 @@ onUnmounted(() => {
                            <div class="text-weight-bolder text-green-3" style="font-size: 13px;">
                               {{ (plantsData[String(pid)]?.MixingTank_Agitator_Speed ?? 0).toFixed(0) }} RPM
                            </div>
+                        </div>
+                     </div>
+                  </div>
+
+                  <!-- ⚡ INGREDIENT SCAN REQUIRED HUD (IND BARCODES) -->
+                  <div v-if="multiPlantSummary[pid]?.isScanWait && (multiPlantSummary[pid]?.pendingIngredients?.length || 0) > 0"
+                       class="q-pa-xs rounded-borders shadow-3 pulse-scan-box q-mt-xs"
+                       style="background: rgba(245, 158, 11, 0.18); border: 2px solid #f59e0b;">
+                     <div class="row items-center justify-between no-wrap q-mb-xs">
+                        <div class="row items-center q-gutter-x-xs no-wrap">
+                           <q-icon name="qr_code_scanner" color="amber-3" size="16px" />
+                           <span class="text-weight-bolder text-amber-3" style="font-size: 11px;">⚡ สแกน IND: {{ multiPlantSummary[pid]?.scanCountText }}</span>
+                        </div>
+                        <q-badge color="amber-8" text-color="dark" class="text-weight-bolder" style="font-size: 10px;">
+                           {{ multiPlantSummary[pid]?.pendingIngredients?.length }} ถุงรอสแกน
+                        </q-badge>
+                     </div>
+
+                     <!-- List of exact ingredient pills to scan -->
+                     <div class="row q-gutter-xs" style="max-height: 95px; overflow-y: auto;">
+                        <div v-for="(ind, iIdx) in multiPlantSummary[pid]?.pendingIngredients" :key="iIdx"
+                             class="q-px-xs q-py-none rounded-borders row items-center no-wrap cursor-pointer shadow-1"
+                             :style="{
+                                background: '#1e293b',
+                                border: '1px solid #f59e0b',
+                                fontSize: '11px',
+                                padding: '2px 6px'
+                             }"
+                             @click="setScanTargetPlant(pid)">
+                           <q-icon name="inventory_2" color="amber-4" size="12px" class="q-mr-xs" />
+                           <span class="text-weight-bold text-amber-3 ellipsis" style="max-width: 140px;">{{ ind.re_code || ind.name }}</span>
+                           <span class="text-white q-ml-xs text-weight-bolder" style="font-size: 10px;">({{ (ind.weight || 0).toFixed(2) }} kg)</span>
+                           <q-tooltip>คลิกเพื่อตั้งเป้าหมายสแกนไปยัง Plant {{ pid }}: {{ ind.re_code }} ({{ (ind.weight || 0).toFixed(2) }} kg)</q-tooltip>
                         </div>
                      </div>
                   </div>
