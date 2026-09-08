@@ -1776,11 +1776,84 @@ const fetchMultiPlantSummary = async () => {
     }
 }
 
-// ── Color & Identity Helpers ──
+// ── Color & Identity Helpers (Plant-Specific Safety Themes) ──
 const getPlantAccent = (p: number) => {
-    if (p === 1) return { color: 'blue-8', hex: '#1976D2', light: '#E3F2FD', dark: '#0D47A1' }
-    if (p === 2) return { color: 'teal-8', hex: '#00897B', light: '#E0F2F1', dark: '#004D40' }
-    return { color: 'deep-purple-8', hex: '#7E57C2', light: '#EDE7F6', dark: '#311B92' }
+    if (p === 1) return { color: 'blue-8', hex: '#1976D2', light: '#E3F2FD', dark: '#0D47A1', badge: 'bg-blue-9', border: '#2563eb', label: 'Sapphire Blue' }
+    if (p === 2) return { color: 'teal-8', hex: '#00897B', light: '#E0F2F1', dark: '#004D40', badge: 'bg-teal-8', border: '#0d9488', label: 'Emerald Teal' }
+    if (p === 3) return { color: 'deep-purple-7', hex: '#5E35B1', light: '#EDE7F6', dark: '#311B92', badge: 'bg-deep-purple-8', border: '#7c3aed', label: 'Royal Purple' }
+    return { color: 'amber-8', hex: '#F59E0B', light: '#FEF3C7', dark: '#78350F', badge: 'bg-amber-9', border: '#d97706', label: 'Amber Gold' }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🚀 Multi-Plant Direct Actions & Barcode Auto-Routing
+// ─────────────────────────────────────────────────────────────────────────────
+const sendDirectPlantCommand = async (pid: number, cmd: 'START' | 'PAUSE' | 'NEXT_STEP' | 'ABORT') => {
+    const pStr = String(pid)
+    console.log(`[Direct Plant Action] Sending ${cmd} to Plant ${pid}`)
+    
+    if (cmd === 'ABORT') {
+        $q.dialog({
+            title: `🚨 ยืนยัน ABORT (หยุดฉุกเฉิน) PLANT ${pid}`,
+            message: `คุณกำลังจะสั่ง ABORT ถังผสม Plant ${pid} (Batch: ${multiPlantSummary.value[pid]?.batchId || 'N/A'}) แน่ใจหรือไม่?`,
+            cancel: true,
+            persistent: true,
+            ok: { label: `ยืนยัน ABORT PLANT ${pid}`, color: 'negative', unelevated: true }
+        }).onOk(async () => {
+            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'ABORT' })
+            $q.notify({ type: 'negative', icon: 'stop', message: `🚨 สั่งหยุดฉุกเฉิน Plant ${pid} เรียบร้อย`, position: 'top' })
+            fetchMultiPlantSummary()
+        })
+        return
+    }
+
+    if (cmd === 'PAUSE') {
+        publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'PAUSE' })
+        $q.notify({ type: 'warning', icon: 'pause', message: `⏸ สั่ง Pause การทำงาน Plant ${pid}`, position: 'top' })
+        fetchMultiPlantSummary()
+        return
+    }
+
+    if (cmd === 'START') {
+        if (Number(activePlantId.value) === pid) {
+            await sendCommand('START')
+        } else {
+            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'START' })
+            $q.notify({ type: 'positive', icon: 'play_arrow', message: `▶ สั่ง START Plant ${pid}`, position: 'top' })
+        }
+        fetchMultiPlantSummary()
+        return
+    }
+
+    if (cmd === 'NEXT_STEP') {
+        if (Number(activePlantId.value) === pid) {
+            await sendCommand('NEXT_STEP')
+        } else {
+            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'NEXT_STEP' })
+            $q.notify({ type: 'info', icon: 'skip_next', message: `⏭ สั่ง Force Next Step Plant ${pid}`, position: 'top' })
+        }
+        fetchMultiPlantSummary()
+        return
+    }
+}
+
+const directPlantQcConfirm = async (pid: number) => {
+    if (Number(activePlantId.value) !== pid) {
+        await switchPlant(pid)
+    }
+    qcDialog.value = true
+}
+
+const setScanTargetPlant = async (pid: number) => {
+    if (Number(activePlantId.value) !== pid) {
+        await switchPlant(pid)
+    }
+    $q.notify({
+        type: 'positive',
+        icon: 'qr_code_scanner',
+        message: `🎯 ตั้งเป้าหมายการยิงบาร์โค้ดเป็น PLANT ${pid} เรียบร้อย`,
+        position: 'top',
+        timeout: 1500
+    })
 }
 
 const getPlantShortBadge = (p: number) => {
@@ -3177,6 +3250,23 @@ const isFreeScanPhase = (phaseNumber: any) => {
 }
 
 const handleScan = (scannedText: string) => {
+    if (!scannedText) return
+
+    // ── 🎯 Barcode Auto-Routing: Switch Plant QR Code (e.g. PLANT-1, PLANT-2, PLANT-3, P1, P2) ──
+    const plantMatch = scannedText.trim().match(/^PLANT[-_ ]?([1-3])$/i) || scannedText.trim().match(/^P([1-3])$/i)
+    if (plantMatch) {
+        const targetP = parseInt(plantMatch[1], 10)
+        console.log(`[Barcode Auto-Routing] Plant QR detected: Auto-switching to Plant ${targetP}`)
+        switchPlant(targetP)
+        $q.notify({
+            type: 'positive',
+            icon: 'swap_horiz',
+            message: `🎯 Barcode Auto-Switch: สลับเป้าหมายไปยัง PLANT ${targetP} เรียบร้อย`,
+            position: 'top',
+            timeout: 2500
+        })
+        return
+    }
     // ── Parse QR JSON — strip newlines/CR that scanners may inject mid-data ──
     const cleanText = scannedText.replace(/[\r\n]/g, '').trim()
     let qrData: any = null
@@ -4298,28 +4388,43 @@ onUnmounted(() => {
           </div>
        </div>
 
-       <!-- CENTER: Controls & PLC Status -->
+       <!-- CENTER: Controls, Scan Indicator & PLC Status -->
        <div class="row items-center q-gutter-x-sm no-wrap" style="flex-shrink: 0;">
           
-          <!-- Command Center (Compact Desktop HMI) -->
-          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs no-wrap" style="height: 38px; padding: 2px 4px;">
-             <q-btn unelevated dense icon="play_arrow" label="START" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('START')"><q-tooltip>Start Batch</q-tooltip></q-btn>
-             <q-btn unelevated dense icon="pause" label="PAUSE" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch</q-tooltip></q-btn>
-             <q-btn flat dense icon="skip_next" color="primary" class="q-px-xs" style="height: 30px;" @click="sendCommand('NEXT_STEP')"><q-tooltip>Force Next Step</q-tooltip></q-btn>
+          <!-- Active Scan Target Badge (Zero-Confusion Indicator) -->
+          <div class="row items-center bg-dark text-white q-px-sm rounded-borders shadow-2 q-gutter-x-xs no-wrap cursor-pointer"
+               :style="{ border: `2px solid ${getPlantAccent(Number(activePlantId)).hex}`, height: '38px' }"
+               @click="viewMode = 'overview'">
+             <q-icon name="qr_code_scanner" :color="getPlantAccent(Number(activePlantId)).color" size="18px" />
+             <div class="column justify-center" style="line-height: 1.1;">
+                <div class="text-caption text-grey-4" style="font-size: 9px; font-weight: 700;">SCAN TARGET</div>
+                <div class="text-weight-bolder text-uppercase" :style="{ color: getPlantAccent(Number(activePlantId)).hex, fontSize: '11px' }">
+                   PLANT {{ activePlantId }}
+                </div>
+             </div>
+             <q-tooltip>เป้าหมายการยิงบาร์โค้ดขณะนี้คือ Plant {{ activePlantId }} (คลิกเพื่อสลับภาพรวม)</q-tooltip>
+          </div>
+
+          <!-- Command Center (Color-Coded Plant Identity & Explicit Safety Labels) -->
+          <div class="row items-center bg-white q-pa-xs rounded-borders shadow-2 q-gutter-x-xs no-wrap"
+               :style="{ height: '38px', padding: '2px 4px', borderLeft: `4px solid ${getPlantAccent(Number(activePlantId)).hex}` }">
+             <q-btn unelevated dense icon="play_arrow" :label="`START P${activePlantId}`" :color="batchRunning ? 'grey-4' : 'positive'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('START')"><q-tooltip>Start Batch for Plant {{ activePlantId }}</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="pause" :label="`PAUSE P${activePlantId}`" :color="!batchRunning ? 'grey-4' : 'warning'" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('PAUSE')"><q-tooltip>Pause Batch for Plant {{ activePlantId }}</q-tooltip></q-btn>
+             <q-btn flat dense icon="skip_next" :color="getPlantAccent(Number(activePlantId)).color" class="q-px-xs text-weight-bold" style="height: 30px; font-size: 10px;" @click="sendCommand('NEXT_STEP')"><span>NEXT</span><q-tooltip>Force Next Step (Plant {{ activePlantId }})</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
-             <q-btn unelevated dense icon="stop" label="ABORT" color="negative" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort</q-tooltip></q-btn>
+             <q-btn unelevated dense icon="stop" :label="`ABORT P${activePlantId}`" color="negative" text-color="white" class="text-weight-bolder q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="sendCommand('ABORT')"><q-tooltip>Emergency Stop / Abort Plant {{ activePlantId }}</q-tooltip></q-btn>
              <q-separator vertical class="q-mx-xs" />
              <q-btn flat dense icon="developer_board" color="indigo-7" style="height: 30px;" size="sm" @click="openPlcDataBlock">
                <q-badge v-if="plcCmdLog.length > 0" color="indigo-9" floating style="font-size: 8px;">{{ plcCmdLog.length }}</q-badge>
-               <q-tooltip>View PLC Data Block (DB100)</q-tooltip>
+               <q-tooltip>View PLC Data Block (DB100 - Plant {{ activePlantId }})</q-tooltip>
              </q-btn>
-             <q-btn flat dense icon="print" color="grey-8" style="height: 30px;" size="sm" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF</q-tooltip></q-btn>
-             <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" label="FINISH" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="() => completeAndReleaseBatch(false)">
-               <q-tooltip>Complete & Release Plant (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
+             <q-btn flat dense icon="print" color="grey-8" style="height: 30px;" size="sm" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF (Plant {{ activePlantId }})</q-tooltip></q-btn>
+             <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" :label="`FINISH P${activePlantId}`" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="() => completeAndReleaseBatch(false)">
+               <q-tooltip>Complete & Release Plant {{ activePlantId }} (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
              </q-btn>
-             <q-btn flat dense icon="refresh" color="teal-8" style="height: 30px;" size="sm" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC</q-tooltip></q-btn>
-             <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 30px;" size="sm" @click="softResetBatch"><q-tooltip>Reset Batch (Soft Reset & Clear PLC)</q-tooltip></q-btn>
-             <q-btn flat dense icon="delete_forever" color="red-9" style="height: 30px;" size="sm" @click="killBatch"><q-tooltip>Kill Batch (Clear to 0)</q-tooltip></q-btn>
+             <q-btn flat dense icon="refresh" color="teal-8" style="height: 30px;" size="sm" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC (Plant {{ activePlantId }})</q-tooltip></q-btn>
+             <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 30px;" size="sm" @click="softResetBatch"><q-tooltip>Reset Batch (Plant {{ activePlantId }})</q-tooltip></q-btn>
+             <q-btn flat dense icon="delete_forever" color="red-9" style="height: 30px;" size="sm" @click="killBatch"><q-tooltip>Kill Batch (Plant {{ activePlantId }})</q-tooltip></q-btn>
              <q-btn v-if="selectedBatchId" flat dense icon="assessment" color="cyan-8" style="height: 30px;" size="sm"
                     @click="router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId || '' } })">
                <q-tooltip>View Production Report ({{ selectedBatchId }})</q-tooltip>
@@ -4401,106 +4506,112 @@ onUnmounted(() => {
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- 🖥 3-PLANT OVERVIEW GRID DASHBOARD MODE -->
+    <!-- 🖥 3-PLANT MULTI-DECK CONTROL CENTER & OVERVIEW DASHBOARD -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <div v-if="viewMode === 'overview'" class="column no-wrap q-pa-sm" style="flex: 1; min-height: 0; overflow-y: auto; background: #0f172a; border-radius: 10px; border: 1px solid #334155;">
-      <!-- Overview Banner -->
-      <div class="row items-center justify-between q-pa-sm q-mb-sm rounded-borders shadow-1" style="background: rgba(30, 41, 59, 0.9); border: 1px solid #475569;">
+    <div v-if="viewMode === 'overview'" class="column no-wrap q-pa-sm" style="flex: 1; min-height: 0; overflow-y: auto; background: #0b0f19; border-radius: 10px; border: 1px solid #1e293b;">
+      <!-- Overview Header Banner -->
+      <div class="row items-center justify-between q-pa-sm q-mb-sm rounded-borders shadow-2" style="background: linear-gradient(90deg, #1e1b4b 0%, #0f172a 100%); border: 1px solid #334155;">
          <div class="row items-center q-gutter-x-sm">
-            <q-icon name="monitor" color="cyan-4" size="28px" />
+            <q-icon name="dashboard_customize" color="amber-4" size="28px" />
             <div>
-               <div class="text-subtitle1 text-weight-bolder text-white" style="letter-spacing: 0.5px;">🖥 3-PLANT OVERVIEW MONITOR DASHBOARD</div>
-               <div class="text-caption text-grey-4">Shop Floor Live View · All Plants Status Sync</div>
+               <div class="text-subtitle1 text-weight-bolder text-white" style="letter-spacing: 0.5px;">🖥 3-PLANT MULTI-DECK COMMAND CENTER</div>
+               <div class="text-caption text-grey-4">Shop Floor Multi-Deck Live View · ควบคุมและติดตาม 3 Plant พร้อมกันในหน้าจอเดียว</div>
             </div>
          </div>
          <div class="row items-center q-gutter-x-sm">
             <q-badge color="positive" text-color="white" class="text-weight-bold q-pa-xs">
-               <q-icon name="wifi" size="12px" class="q-mr-xs" /> 3 Plants Connected
+               <q-icon name="wifi" size="12px" class="q-mr-xs" /> 3 Plants Synchronized
             </q-badge>
             <q-btn unelevated dense icon="refresh" color="teal-7" label="Refresh All" class="q-px-sm" @click="fetchMultiPlantSummary" />
-            <q-btn unelevated dense icon="dashboard_customize" color="amber-8" text-color="dark" label="กลับหน้าควบคุม (Focus Mode)" class="text-weight-bold q-px-md" @click="viewMode = 'focus'" />
+            <q-btn unelevated dense icon="filter_center_focus" color="amber-8" text-color="dark" :label="`ไปที่ Focus View (Plant ${activePlantId})`" class="text-weight-bold q-px-md shadow-2" @click="viewMode = 'focus'" />
          </div>
       </div>
 
-      <!-- 3 Columns Grid -->
+      <!-- 3 Columns Multi-Deck Cards -->
       <div class="row q-col-gutter-md" style="flex: 1;">
          <div v-for="pid in [1, 2, 3]" :key="pid" class="col-12 col-md-4" style="display: flex; flex-direction: column;">
-            <q-card flat bordered class="shadow-3" :style="{
+            <q-card flat bordered class="shadow-4" :style="{
                flex: '1',
                display: 'flex',
                flexDirection: 'column',
                borderRadius: '12px',
                overflow: 'hidden',
-               background: '#1e293b',
-               border: (multiPlantSummary[pid]?.isQcWait) ? '2px solid #ef4444' : (`2px solid ${getPlantAccent(pid).hex}`),
+               background: '#131c2e',
+               border: (multiPlantSummary[pid]?.isQcWait) ? '2px solid #ef4444' : (String(activePlantId) === String(pid) ? `2px solid ${getPlantAccent(pid).hex}` : '1px solid #334155'),
+               boxShadow: String(activePlantId) === String(pid) ? `0 0 15px ${getPlantAccent(pid).hex}40` : 'none',
                color: 'white'
             }">
                <!-- Plant Card Header -->
                <div class="q-pa-sm row items-center justify-between" :style="{ background: getPlantAccent(pid).hex }">
                   <div class="row items-center q-gutter-x-xs">
-                     <q-icon :name="pid === 1 ? 'looks_one' : (pid === 2 ? 'looks_two' : 'looks_3')" size="24px" color="white" />
+                     <q-icon :name="pid === 1 ? 'looks_one' : (pid === 2 ? 'looks_two' : 'looks_3')" size="22px" color="white" />
                      <span class="text-subtitle1 text-weight-bolder text-white">PLANT {{ pid }}</span>
+                     <q-badge v-if="String(activePlantId) === String(pid)" color="amber-4" text-color="dark" class="text-weight-bolder q-ml-xs" style="font-size: 9px; padding: 2px 4px;">
+                        🎯 ACTIVE SCAN TARGET
+                     </q-badge>
                   </div>
-                  <q-badge :color="getPlantBadgeColor(pid)" text-color="white" class="text-weight-bolder text-uppercase q-pa-xs" :class="{'pulse-alarm': multiPlantSummary[pid]?.isQcWait}" style="font-size: 12px; letter-spacing: 0.5px;">
-                     {{ multiPlantSummary[pid]?.status || 'STANDBY' }}
-                  </q-badge>
+                  <div class="row items-center q-gutter-x-xs">
+                     <q-badge :color="getPlantBadgeColor(pid)" text-color="white" class="text-weight-bolder text-uppercase q-pa-xs" :class="{'pulse-alarm': multiPlantSummary[pid]?.isQcWait}" style="font-size: 11px; letter-spacing: 0.5px;">
+                        {{ multiPlantSummary[pid]?.status || 'STANDBY' }}
+                     </q-badge>
+                  </div>
                </div>
 
                <!-- Plant Card Body -->
-               <q-card-section class="q-pa-md column q-gutter-y-sm" style="flex: 1; background: #0f172a;">
+               <q-card-section class="q-pa-sm column q-gutter-y-xs" style="flex: 1; background: #0f172a;">
                   <!-- Batch & SKU Info -->
-                  <div class="q-pa-sm rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.1);">
+                  <div class="q-pa-xs rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.08);">
                      <div class="row items-center justify-between q-mb-xs">
-                        <span class="text-caption text-grey-4 text-weight-bold">BATCH ID</span>
-                        <q-badge :color="multiPlantSummary[pid]?.batchId ? 'cyan-8' : 'grey-8'" text-color="white" class="text-weight-bold">
+                        <span class="text-caption text-grey-4 text-weight-bold" style="font-size: 10px;">BATCH ID</span>
+                        <q-badge :color="multiPlantSummary[pid]?.batchId ? 'cyan-8' : 'grey-8'" text-color="white" class="text-weight-bold" style="font-size: 10px;">
                            {{ multiPlantSummary[pid]?.batchId || 'NO BATCH' }}
                         </q-badge>
                      </div>
-                     <div class="text-subtitle2 text-weight-bolder text-amber-3 ellipsis" style="font-size: 13px;">
-                        {{ multiPlantSummary[pid]?.skuName || (multiPlantSummary[pid]?.status === 'Standby' ? 'Ready for Next Batch' : '-') }}
+                     <div class="text-subtitle2 text-weight-bolder text-amber-3 ellipsis" style="font-size: 12px;">
+                        {{ multiPlantSummary[pid]?.skuName || (multiPlantSummary[pid]?.status === 'Standby' ? 'พร้อมสำหรับ Batch ใหม่ (Standby)' : '-') }}
                      </div>
-                     <div class="row items-center justify-between text-caption text-grey-4 q-mt-xs" v-if="multiPlantSummary[pid]?.planId">
+                     <div class="row items-center justify-between text-caption text-grey-4 q-mt-xs" style="font-size: 10px;" v-if="multiPlantSummary[pid]?.planId">
                         <span>Plan: {{ multiPlantSummary[pid]?.planId }}</span>
                         <span>Size: {{ multiPlantSummary[pid]?.batchSize }} kg</span>
                      </div>
                   </div>
 
                   <!-- Step & Progress -->
-                  <div class="q-pa-sm rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.1);">
+                  <div class="q-pa-xs rounded-borders" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(255,255,255,0.08);">
                      <div class="row items-center justify-between q-mb-xs">
-                        <span class="text-caption text-grey-4 text-weight-bold">CURRENT STEP</span>
-                        <q-badge color="indigo-7" text-color="white" class="text-weight-bold">
+                        <span class="text-caption text-grey-4 text-weight-bold" style="font-size: 10px;">CURRENT STEP</span>
+                        <q-badge color="indigo-7" text-color="white" class="text-weight-bold" style="font-size: 10px;">
                            {{ multiPlantSummary[pid]?.currentPhase }} &rarr; {{ multiPlantSummary[pid]?.currentStepIndex }}/{{ multiPlantSummary[pid]?.totalSteps || 0 }}
                         </q-badge>
                      </div>
-                     <div class="text-body2 text-weight-bold text-teal-2 ellipsis" style="font-size: 13px;">
+                     <div class="text-body2 text-weight-bold text-teal-2 ellipsis" style="font-size: 12px;">
                         {{ multiPlantSummary[pid]?.currentStepDesc || 'Standby Clean' }}
                      </div>
-                     <q-linear-progress :value="(multiPlantSummary[pid]?.progressPercent || 0) / 100" color="teal-4" track-color="grey-8" class="q-mt-sm rounded-borders" style="height: 6px;" />
+                     <q-linear-progress :value="(multiPlantSummary[pid]?.progressPercent || 0) / 100" color="teal-4" track-color="grey-8" class="q-mt-xs rounded-borders" style="height: 5px;" />
                   </div>
 
                   <!-- Realtime Gauges / Sensors -->
-                  <div class="row q-col-gutter-xs q-mt-xs">
+                  <div class="row q-col-gutter-xs">
                      <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
-                           <div class="text-caption text-grey-4" style="font-size: 10px;">TEMP</div>
-                           <div class="text-weight-bolder text-amber-3" style="font-size: 15px;">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.9); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 9px;">TEMP</div>
+                           <div class="text-weight-bolder text-amber-3" style="font-size: 13px;">
                               {{ (plantsData[String(pid)]?.Mixing_Tank_Temperature ?? 0).toFixed(1) }}°C
                            </div>
                         </div>
                      </div>
                      <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
-                           <div class="text-caption text-grey-4" style="font-size: 10px;">WEIGHT</div>
-                           <div class="text-weight-bolder text-cyan-3" style="font-size: 15px;">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.9); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 9px;">WEIGHT</div>
+                           <div class="text-weight-bolder text-cyan-3" style="font-size: 13px;">
                               {{ (plantsData[String(pid)]?.Mixing_Tank_Volume ?? 0).toFixed(1) }}kg
                            </div>
                         </div>
                      </div>
                      <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.8); border: 1px solid #334155;">
-                           <div class="text-caption text-grey-4" style="font-size: 10px;">AGITATOR</div>
-                           <div class="text-weight-bolder text-green-3" style="font-size: 15px;">
+                        <div class="q-pa-xs rounded-borders text-center" style="background: rgba(15, 23, 42, 0.9); border: 1px solid #334155;">
+                           <div class="text-caption text-grey-4" style="font-size: 9px;">AGITATOR</div>
+                           <div class="text-weight-bolder text-green-3" style="font-size: 13px;">
                               {{ (plantsData[String(pid)]?.MixingTank_Agitator_Speed ?? 0).toFixed(0) }} RPM
                            </div>
                         </div>
@@ -4508,21 +4619,49 @@ onUnmounted(() => {
                   </div>
 
                   <!-- Prompt / Alert Banner if QC Wait -->
-                  <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-sm rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 1px solid #ef4444;">
-                     <div class="text-weight-bold text-subtitle2"><q-icon name="warning" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
-                     <div class="text-caption">กรุณาตรวจสอบค่า Brix/pH และกดยืนยัน</div>
+                  <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-xs rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 1px solid #ef4444;">
+                     <div class="text-weight-bold text-caption"><q-icon name="warning" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
+                     <q-btn unelevated dense color="white" text-color="red-10" icon="fact_check" :label="`อนุมัติ QC (Plant ${pid})`" class="text-weight-bolder q-mt-xs full-width" style="font-size: 11px; height: 26px;" @click="directPlantQcConfirm(pid)" />
+                  </div>
+
+                  <!-- DIRECT MINI-HMI QUICK ACTIONS (Multi-Plant Operation Deck) -->
+                  <div class="q-pa-xs rounded-borders q-mt-xs" style="background: rgba(15, 23, 42, 0.9); border: 1px solid #334155;">
+                     <div class="text-caption text-grey-4 q-mb-xs text-weight-bold" style="font-size: 9px;">DIRECT DECK ACTIONS (PLANT {{ pid }}):</div>
+                     <div class="row q-gutter-x-xs no-wrap">
+                        <q-btn unelevated dense icon="play_arrow" :label="`START`" color="positive" text-color="white" class="col text-weight-bold" style="height: 28px; font-size: 10px; border-radius: 4px;" @click="sendDirectPlantCommand(pid, 'START')">
+                           <q-tooltip>Start Batch (Plant {{ pid }})</q-tooltip>
+                        </q-btn>
+                        <q-btn unelevated dense icon="pause" :label="`PAUSE`" color="warning" text-color="white" class="col text-weight-bold" style="height: 28px; font-size: 10px; border-radius: 4px;" @click="sendDirectPlantCommand(pid, 'PAUSE')">
+                           <q-tooltip>Pause (Plant {{ pid }})</q-tooltip>
+                        </q-btn>
+                        <q-btn unelevated dense icon="skip_next" :label="`NEXT`" color="primary" text-color="white" class="col text-weight-bold" style="height: 28px; font-size: 10px; border-radius: 4px;" @click="sendDirectPlantCommand(pid, 'NEXT_STEP')">
+                           <q-tooltip>Force Next Step (Plant {{ pid }})</q-tooltip>
+                        </q-btn>
+                        <q-btn unelevated dense icon="stop" :label="`ABORT`" color="negative" text-color="white" class="col text-weight-bold" style="height: 28px; font-size: 10px; border-radius: 4px;" @click="sendDirectPlantCommand(pid, 'ABORT')">
+                           <q-tooltip>Emergency Stop / Abort (Plant {{ pid }})</q-tooltip>
+                        </q-btn>
+                     </div>
                   </div>
                </q-card-section>
 
-               <!-- Plant Card Actions -->
-               <q-card-actions align="center" class="q-pa-sm" style="background: #1e293b; border-top: 1px solid #334155;">
-                  <q-btn unelevated
+               <!-- Plant Card Actions Footer -->
+               <q-card-actions align="between" class="q-pa-xs" style="background: #1e293b; border-top: 1px solid #334155;">
+                  <q-btn unelevated dense
+                         :color="String(activePlantId) === String(pid) ? 'amber-8' : 'grey-8'"
+                         :text-color="String(activePlantId) === String(pid) ? 'dark' : 'white'"
+                         icon="qr_code_scanner"
+                         :label="String(activePlantId) === String(pid) ? `🎯 Scan Target` : `เล็ง Scan P${pid}`"
+                         class="text-weight-bold"
+                         style="height: 32px; font-size: 10px; border-radius: 6px; padding: 0 8px;"
+                         @click="setScanTargetPlant(pid)" />
+
+                  <q-btn unelevated dense
                          :color="getPlantAccent(pid).color"
                          text-color="white"
-                         icon="search"
-                         :label="`ดูหน้าควบคุม PLANT ${pid}`"
-                         class="full-width text-weight-bold"
-                         style="height: 38px; border-radius: 8px;"
+                         icon="fullscreen"
+                         :label="`Focus Plant ${pid}`"
+                         class="text-weight-bolder"
+                         style="height: 32px; font-size: 11px; border-radius: 6px; padding: 0 12px;"
                          @click="selectPlantFromOverview(pid)" />
                </q-card-actions>
             </q-card>
