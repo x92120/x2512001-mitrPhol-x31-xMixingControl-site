@@ -281,14 +281,26 @@ const handshakeStatus = computed(() => {
     return { ok: fields.every(f => f.match), fields, noData: false }
 })
 
-const activePlantId = computed(() => {
-    let plantStr = '1';
-    if (batchInfo.value && batchInfo.value.plant) {
-        plantStr = String(batchInfo.value.plant).replace(/\D/g, '') || '1'
-    } else if (route.query.plant) {
-        plantStr = (route.query.plant as string)?.replace(/\D/g, '') || '1'
+const explicitPlantTarget = ref<number | null>(null)
+
+const activePlantId = computed({
+    get() {
+        if (explicitPlantTarget.value !== null) {
+            return String(explicitPlantTarget.value)
+        }
+        if (route.query.plant) {
+            const p = (route.query.plant as string)?.replace(/\D/g, '')
+            if (p) return String(Number(p) || 1)
+        }
+        if (batchInfo.value && batchInfo.value.plant) {
+            const p = String(batchInfo.value.plant).replace(/\D/g, '')
+            if (p) return String(Number(p) || 1)
+        }
+        return '1'
+    },
+    set(val: string | number) {
+        explicitPlantTarget.value = Number(val) || 1
     }
-    return String(Number(plantStr))
 })
 const plantData = computed(() => (plantsData.value[activePlantId.value] || {}) as any)
 
@@ -1615,7 +1627,8 @@ const goBack = () => {
 }
 
 const switchPlant = async (plantId: number) => {
-    activePlantId.value = plantId
+    explicitPlantTarget.value = plantId
+    activePlantId.value = String(plantId)
     viewMode.value = 'focus'
     
     // If the currently loaded batch belongs to a different plant, clear it
@@ -1996,14 +2009,22 @@ const directPlantQcConfirm = async (pid: number) => {
 }
 
 const setScanTargetPlant = async (pid: number) => {
+    explicitPlantTarget.value = pid
     activePlantId.value = String(pid)
+    
+    // Update router query so state persists and top badges stay reactive
+    const { ...newQuery } = route.query
+    newQuery.plant = String(pid)
+    await router.replace({ query: newQuery })
+    
     $q.notify({
         type: 'positive',
         icon: 'qr_code_scanner',
-        message: `🎯 ตั้งเป้าหมายการยิงบาร์โค้ดเป็น PLANT ${pid} เรียบร้อย`,
+        message: isThai.value ? `🎯 ตั้งเป้าหมายการยิงบาร์โค้ดเป็น PLANT ${pid} เรียบร้อย` : `🎯 Barcode scan target set to PLANT ${pid}`,
         position: 'top',
         timeout: 1500
     })
+}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2162,6 +2183,8 @@ const toggleViewMode = () => {
 }
 
 const selectPlantFromOverview = async (p: number) => {
+    explicitPlantTarget.value = p
+    activePlantId.value = String(p)
     await switchPlant(p)
 }
 
