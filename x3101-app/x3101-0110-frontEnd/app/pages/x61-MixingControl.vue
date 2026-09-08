@@ -1730,7 +1730,7 @@ const fetchMultiPlantSummary = async () => {
         // Local in-memory batch state ONLY applies to the plant that actually loaded it
         const isLocalBatch = selectedBatchId.value &&
             batchInfo.value &&
-            String(batchInfo.value.plant || '').replace(/\D/g, '') === String(pid)
+            Number(String(batchInfo.value.plant || '').replace(/\D/g, '')) === pid
 
         if (isLocalBatch) {
             const total = skuSteps.value.length
@@ -1820,7 +1820,7 @@ const fetchMultiPlantSummary = async () => {
 
         // For other plants, query remote recipe status
         try {
-            const res = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/recipe-status`, { timeout: 3000 }).catch(() => null)
+            const res = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/recipe-status`, { timeout: 10000 }).catch(() => null)
             if (res?.success && res.target?.batch_id && res.target.batch_id !== '-' && res.target.batch_id !== '0') {
                 const bId = res.target.batch_id
                 const sku = res.target.sku_name || res.target.sku_id || ''
