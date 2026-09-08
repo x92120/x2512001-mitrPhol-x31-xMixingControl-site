@@ -1667,6 +1667,13 @@ interface PlantOverviewInfo {
     agitator: number
     spAgitator: number
     highShear: number
+    spHighShear: number
+    brix: number
+    spBrix: string | number
+    ph: number
+    spPh: string | number
+    timer: number
+    spTimer: number
     progressPercent: number
 }
 
@@ -1735,6 +1742,10 @@ const fetchMultiPlantSummary = async () => {
             const curSpTemp = Number(step?.temperature || 0)
             const curSpWeight = Number(step?.target_weight || productionRequire(step) || 0)
             const curSpAgitator = Number(step?.agitator_rpm || 0)
+            const curSpHighShear = Number(step?.high_shear_rpm || 0)
+            const curSpBrix = step?.brix_sp || ''
+            const curSpPh = step?.ph_sp || ''
+            const curSpTimer = Number(step?.step_time || 0)
 
             multiPlantSummary.value[pid] = {
                 plantId: pid,
@@ -1761,6 +1772,13 @@ const fetchMultiPlantSummary = async () => {
                 agitator: curAgitator,
                 spAgitator: curSpAgitator,
                 highShear: curHighShear,
+                spHighShear: curSpHighShear,
+                brix: Number(pLive.Brix_Actual ?? pLive.brix_actual ?? actualBrix.value ?? 0),
+                spBrix: curSpBrix,
+                ph: Number(pLive.PH_Actual ?? pLive.ph_actual ?? actualPh.value ?? 0),
+                spPh: curSpPh,
+                timer: Number(pLive.Step_Timer ?? pLive.step_timer ?? 0),
+                spTimer: curSpTimer,
                 progressPercent: percent
             }
             continue
@@ -1823,6 +1841,10 @@ const fetchMultiPlantSummary = async () => {
                 const remoteSpTemp = Number(curStepObj?.temp_sp || curStepObj?.temperature || 0)
                 const remoteSpWeight = Number(curStepObj?.target_weight || curStepObj?.require || 0)
                 const remoteSpAgitator = Number(curStepObj?.agitator_sp || curStepObj?.agitator_rpm || 0)
+                const remoteSpHighShear = Number(curStepObj?.highshear_sp || curStepObj?.high_shear_rpm || 0)
+                const remoteSpBrix = curStepObj?.brix_sp || ''
+                const remoteSpPh = curStepObj?.ph_sp || ''
+                const remoteSpTimer = Number(curStepObj?.step_time || 0)
 
                 multiPlantSummary.value[pid] = {
                     plantId: pid,
@@ -1849,6 +1871,13 @@ const fetchMultiPlantSummary = async () => {
                     agitator: curAgitator,
                     spAgitator: remoteSpAgitator,
                     highShear: curHighShear,
+                    spHighShear: remoteSpHighShear,
+                    brix: Number(pLive.Brix_Actual ?? pLive.brix_actual ?? 0),
+                    spBrix: remoteSpBrix,
+                    ph: Number(pLive.PH_Actual ?? pLive.ph_actual ?? 0),
+                    spPh: remoteSpPh,
+                    timer: Number(pLive.Step_Timer ?? pLive.step_timer ?? 0),
+                    spTimer: remoteSpTimer,
                     progressPercent: percent
                 }
             } else {
@@ -1997,6 +2026,80 @@ const getPlantWeightColor = (pid: number) => {
     return {
         color: isOk ? '#4ade80' : '#ef4444',
         border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantHighShearColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = Number(summary?.spHighShear || 0)
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.HighShare_Speed ?? pLive.highshear_act ?? summary?.highShear ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= (sp * 0.88)
+    return {
+        color: isOk ? '#4ade80' : '#f59e0b',
+        border: isOk ? '1px solid #22c55e' : '1px solid #f59e0b',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantBrixColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const spRaw = summary?.spBrix
+    const spNum = parseFloat(String(spRaw || '0'))
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Brix_Actual ?? pLive.brix_actual ?? summary?.brix ?? (Number(activePlantId.value) === pid ? actualBrix.value : 0) ?? 0)
+
+    if (!spRaw || spRaw === '-' || spNum <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act > 0 && Math.abs(act - spNum) <= 0.5
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantPhColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const spRaw = summary?.spPh
+    const spNum = parseFloat(String(spRaw || '0'))
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.PH_Actual ?? pLive.ph_actual ?? summary?.ph ?? (Number(activePlantId.value) === pid ? actualPh.value : 0) ?? 0)
+
+    if (!spRaw || spRaw === '-' || spNum <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act > 0 && Math.abs(act - spNum) <= 0.3
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantTimerColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = Number(summary?.spTimer || 0)
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Step_Timer ?? pLive.step_timer ?? summary?.timer ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= sp
+    return {
+        color: isOk ? '#4ade80' : (act > 0 ? '#38bdf8' : '#ef4444'),
+        border: isOk ? '1px solid #22c55e' : '1px solid #38bdf8',
         isOk,
         hasSp: true
     }
@@ -4761,64 +4864,150 @@ onUnmounted(() => {
                      <q-linear-progress :value="(multiPlantSummary[pid]?.progressPercent || 0) / 100" color="teal-4" track-color="grey-8" class="q-mt-xs rounded-borders" style="height: 5px;" />
                   </div>
 
-                  <!-- Realtime Gauges / Sensors (Act vs Set Point with Live Tolerance Colors) -->
-                  <div class="row q-col-gutter-xs">
-                     <!-- 1. TEMPERATURE -->
-                     <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center"
-                             :style="{
-                                background: 'rgba(15, 23, 42, 0.95)',
-                                border: getPlantTempColor(pid).border,
-                                transition: 'all 0.3s ease'
-                             }">
-                           <div class="row items-center justify-between no-wrap q-px-xs" style="line-height: 1;">
-                              <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 9px;">TEMP</span>
-                              <span class="text-caption text-grey-5" style="font-size: 9px;">SP: {{ (multiPlantSummary[pid]?.spTemp || 0) > 0 ? multiPlantSummary[pid]?.spTemp + '°' : '-' }}</span>
+                  <!-- Realtime Gauges / Sensors Matrix (Act vs Set Point & Live Tolerance Colors) -->
+                  <div class="column q-gutter-y-xs">
+                     <!-- ROW 1: CORE PROCESS (TEMP, WEIGHT, AGITATOR, TIMER) -->
+                     <div class="row q-col-gutter-xs">
+                        <!-- 1. TEMPERATURE -->
+                        <div class="col-3">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantTempColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">TEMP</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">{{ (multiPlantSummary[pid]?.spTemp || 0) > 0 ? multiPlantSummary[pid]?.spTemp + '°' : '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '12px', color: getPlantTempColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.Mixing_Tank_Temperature ?? 0).toFixed(1) }}°C</span>
+                                 <q-icon v-if="getPlantTempColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
                            </div>
-                           <div class="text-weight-bolder row items-center justify-center q-mt-xs no-wrap"
-                                :style="{ fontSize: '13px', color: getPlantTempColor(pid).color }">
-                              <span>{{ (plantsData[String(pid)]?.Mixing_Tank_Temperature ?? 0).toFixed(1) }}°C</span>
-                              <q-icon v-if="getPlantTempColor(pid).isOk" name="check_circle" size="12px" color="green-4" class="q-ml-xs" />
+                        </div>
+
+                        <!-- 2. WEIGHT / VOLUME -->
+                        <div class="col-3">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantWeightColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">WEIGHT</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">{{ (multiPlantSummary[pid]?.spWeight || 0) > 0 ? (multiPlantSummary[pid]?.spWeight || 0).toFixed(0) + 'k' : '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '12px', color: getPlantWeightColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.Mixing_Tank_Volume ?? 0).toFixed(1) }}kg</span>
+                                 <q-icon v-if="getPlantWeightColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
+                           </div>
+                        </div>
+
+                        <!-- 3. AGITATOR -->
+                        <div class="col-3">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantAgitatorColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">AGITATOR</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">{{ (multiPlantSummary[pid]?.spAgitator || 0) > 0 ? multiPlantSummary[pid]?.spAgitator : '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '12px', color: getPlantAgitatorColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.MixingTank_Agitator_Speed ?? 0).toFixed(0) }} RPM</span>
+                                 <q-icon v-if="getPlantAgitatorColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
+                           </div>
+                        </div>
+
+                        <!-- 4. TIMER -->
+                        <div class="col-3">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantTimerColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">TIMER</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">{{ (multiPlantSummary[pid]?.spTimer || 0) > 0 ? multiPlantSummary[pid]?.spTimer + 's' : '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '12px', color: getPlantTimerColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.Step_Timer ?? multiPlantSummary[pid]?.timer ?? 0) }}s</span>
+                                 <q-icon v-if="getPlantTimerColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
                            </div>
                         </div>
                      </div>
 
-                     <!-- 2. WEIGHT / VOLUME -->
-                     <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center"
-                             :style="{
-                                background: 'rgba(15, 23, 42, 0.95)',
-                                border: getPlantWeightColor(pid).border,
-                                transition: 'all 0.3s ease'
-                             }">
-                           <div class="row items-center justify-between no-wrap q-px-xs" style="line-height: 1;">
-                              <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 9px;">WEIGHT</span>
-                              <span class="text-caption text-grey-5" style="font-size: 9px;">SP: {{ (multiPlantSummary[pid]?.spWeight || 0) > 0 ? (multiPlantSummary[pid]?.spWeight || 0).toFixed(0) + 'k' : '-' }}</span>
-                           </div>
-                           <div class="text-weight-bolder row items-center justify-center q-mt-xs no-wrap"
-                                :style="{ fontSize: '13px', color: getPlantWeightColor(pid).color }">
-                              <span>{{ (plantsData[String(pid)]?.Mixing_Tank_Volume ?? 0).toFixed(1) }}kg</span>
-                              <q-icon v-if="getPlantWeightColor(pid).isOk" name="check_circle" size="12px" color="green-4" class="q-ml-xs" />
+                     <!-- ROW 2: QC & EXTENDED (HIGHSHEAR, BRIX, pH) -->
+                     <div class="row q-col-gutter-xs">
+                        <!-- 5. HIGH SHEAR -->
+                        <div class="col-4">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantHighShearColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">HIGHSHEAR</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">{{ (multiPlantSummary[pid]?.spHighShear || 0) > 0 ? multiPlantSummary[pid]?.spHighShear : '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '11.5px', color: getPlantHighShearColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.HighShare_Speed ?? multiPlantSummary[pid]?.highShear ?? 0).toFixed(0) }} RPM</span>
+                                 <q-icon v-if="getPlantHighShearColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
                            </div>
                         </div>
-                     </div>
 
-                     <!-- 3. AGITATOR -->
-                     <div class="col-4">
-                        <div class="q-pa-xs rounded-borders text-center"
-                             :style="{
-                                background: 'rgba(15, 23, 42, 0.95)',
-                                border: getPlantAgitatorColor(pid).border,
-                                transition: 'all 0.3s ease'
-                             }">
-                           <div class="row items-center justify-between no-wrap q-px-xs" style="line-height: 1;">
-                              <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 9px;">AGITATOR</span>
-                              <span class="text-caption text-grey-5" style="font-size: 9px;">SP: {{ (multiPlantSummary[pid]?.spAgitator || 0) > 0 ? multiPlantSummary[pid]?.spAgitator : '-' }}</span>
+                        <!-- 6. BRIX -->
+                        <div class="col-4">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantBrixColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">BRIX</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">SP: {{ multiPlantSummary[pid]?.spBrix || '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '11.5px', color: getPlantBrixColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.Brix_Actual ?? multiPlantSummary[pid]?.brix ?? 0).toFixed(1) }}°Bx</span>
+                                 <q-icon v-if="getPlantBrixColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
                            </div>
-                           <div class="text-weight-bolder row items-center justify-center q-mt-xs no-wrap"
-                                :style="{ fontSize: '13px', color: getPlantAgitatorColor(pid).color }">
-                              <span>{{ (plantsData[String(pid)]?.MixingTank_Agitator_Speed ?? 0).toFixed(0) }} RPM</span>
-                              <q-icon v-if="getPlantAgitatorColor(pid).isOk" name="check_circle" size="12px" color="green-4" class="q-ml-xs" />
+                        </div>
+
+                        <!-- 7. pH -->
+                        <div class="col-4">
+                           <div class="q-pa-xs rounded-borders text-center"
+                                :style="{
+                                   background: 'rgba(15, 23, 42, 0.95)',
+                                   border: getPlantPhColor(pid).border,
+                                   padding: '2px 3px'
+                                }">
+                              <div class="row items-center justify-between no-wrap" style="line-height: 1;">
+                                 <span class="text-caption text-grey-4 text-weight-bolder" style="font-size: 8.5px;">pH</span>
+                                 <span class="text-caption text-grey-5" style="font-size: 8px;">SP: {{ multiPlantSummary[pid]?.spPh || '-' }}</span>
+                              </div>
+                              <div class="text-weight-bolder row items-center justify-center no-wrap"
+                                   :style="{ fontSize: '11.5px', color: getPlantPhColor(pid).color, marginTop: '2px' }">
+                                 <span>{{ (plantsData[String(pid)]?.PH_Actual ?? multiPlantSummary[pid]?.ph ?? 0).toFixed(2) }}</span>
+                                 <q-icon v-if="getPlantPhColor(pid).isOk" name="check_circle" size="10px" color="green-4" class="q-ml-xs" />
+                              </div>
                            </div>
                         </div>
                      </div>
