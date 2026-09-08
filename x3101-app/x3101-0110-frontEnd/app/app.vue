@@ -5,7 +5,7 @@ import { useI18n } from '~/composables/useI18n'
 import { useQuasar } from 'quasar'
 
 const { hasPermission, user, logout, switchStationUser } = useAuth()
-const { t, toggleLocale, localeFlag, localeName } = useI18n()
+const { t, toggleLocale, localeFlag, localeName, isThai } = useI18n()
 const $q = useQuasar()
 const appConfig = useAppConfig()
 const apiBase = appConfig.apiBaseUrl || 'http://192.168.121.23:8031'
@@ -69,7 +69,7 @@ const checkShiftCutoff = () => {
     lastWarnedShiftCutoff = `${hours}:${minutes}`
     $q.notify({
       type: 'warning',
-      message: '⏰ อีก 5 นาทีจะหมดเวลากะการทำงาน กรุณาสรุปและส่งมอบ E-Logbook',
+      message: isThai.value ? '⏰ อีก 5 นาทีจะหมดเวลากะการทำงาน กรุณาสรุปและส่งมอบ E-Logbook' : '⏰ Shift ends in 5 minutes. Please complete and submit the E-Logbook handover.',
       position: 'top',
       timeout: 6000
     })
@@ -77,14 +77,14 @@ const checkShiftCutoff = () => {
 
   if ((isCutoffMorning || isCutoffAfternoon || isCutoffNight) && !showShiftCutoffDialog.value) {
     if (isCutoffMorning) {
-      cutoffShiftName.value = 'กะดึก (00:00 - 08:00)'
-      cutoffNextShiftName.value = 'กะเช้า (08:00 - 16:00)'
+      cutoffShiftName.value = isThai.value ? 'กะดึก (00:00 - 08:00)' : 'Night Shift (00:00 - 08:00)'
+      cutoffNextShiftName.value = isThai.value ? 'กะเช้า (08:00 - 16:00)' : 'Morning Shift (08:00 - 16:00)'
     } else if (isCutoffAfternoon) {
-      cutoffShiftName.value = 'กะเช้า (08:00 - 16:00)'
-      cutoffNextShiftName.value = 'กะบ่าย (16:00 - 00:00)'
+      cutoffShiftName.value = isThai.value ? 'กะเช้า (08:00 - 16:00)' : 'Morning Shift (08:00 - 16:00)'
+      cutoffNextShiftName.value = isThai.value ? 'กะบ่าย (16:00 - 00:00)' : 'Afternoon Shift (16:00 - 00:00)'
     } else {
-      cutoffShiftName.value = 'กะบ่าย (16:00 - 00:00)'
-      cutoffNextShiftName.value = 'กะดึก (00:00 - 08:00)'
+      cutoffShiftName.value = isThai.value ? 'กะบ่าย (16:00 - 00:00)' : 'Afternoon Shift (16:00 - 00:00)'
+      cutoffNextShiftName.value = isThai.value ? 'กะดึก (00:00 - 08:00)' : 'Night Shift (00:00 - 08:00)'
     }
     showShiftCutoffDialog.value = true
     setTimeout(() => {
@@ -106,7 +106,7 @@ const handleCutoffQrScan = async () => {
       switchStationUser(res.user)
       $q.notify({
         type: 'positive',
-        message: `✅ เข้าสู่ระบบกะใหม่สำเร็จ: ยินดีต้อนรับคุณ ${res.user.full_name || res.user.username}`,
+        message: isThai.value ? `✅ เข้าสู่ระบบกะใหม่สำเร็จ: ยินดีต้อนรับคุณ ${res.user.full_name || res.user.username}` : `✅ Shift login successful: Welcome ${res.user.full_name || res.user.username}`,
         position: 'top'
       })
       showShiftCutoffDialog.value = false
@@ -115,7 +115,7 @@ const handleCutoffQrScan = async () => {
   } catch (err: any) {
     $q.notify({
       type: 'negative',
-      message: 'รหัส QR Badge ไม่ถูกต้อง: ' + (err.message || ''),
+      message: (isThai.value ? 'รหัส QR Badge ไม่ถูกต้อง: ' : 'Invalid QR Badge: ') + (err.message || ''),
       position: 'top'
     })
   } finally {
@@ -284,21 +284,21 @@ const goToPlant = (plant: number) => {
       <q-card style="min-width: 440px; border-radius: 18px; overflow: hidden; background: #0f172a; color: white; border: 2px solid #eab308; box-shadow: 0 10px 40px rgba(0,0,0,0.8);">
         <q-card-section class="bg-amber-9 text-dark text-center q-py-md">
           <q-icon name="alarm_on" size="48px" class="q-mb-xs" />
-          <div class="text-h5 text-weight-bolder">หมดเวลากะการทำงาน (Shift Cutoff)</div>
+          <div class="text-h5 text-weight-bolder">{{ isThai ? "หมดเวลากะการทำงาน (Shift Cutoff)" : "Shift Cutoff Reached" }}</div>
           <div class="text-caption text-weight-bold opacity-90 q-mt-xs">
-            สิ้นสุดรอบ: {{ cutoffShiftName }} ➔ เริ่มรอบ: {{ cutoffNextShiftName }}
+            {{ isThai ? "สิ้นสุดรอบ:" : "Ended:" }} {{ cutoffShiftName }} ➔ {{ isThai ? "เริ่มรอบ:" : "Starting:" }} {{ cutoffNextShiftName }}
           </div>
         </q-card-section>
 
         <q-card-section class="q-pa-lg text-center">
           <div class="text-body2 text-grey-3 q-mb-md">
-            กรุณาทำการส่งมอบงานใน <strong>E-Logbook</strong> หรือให้ Operator กะใหม่สแกน <strong>QR Badge</strong> เพื่อเริ่มงานกะถัดไป
+            {{ isThai ? "กรุณาทำการส่งมอบงานใน E-Logbook หรือให้ Operator กะใหม่สแกน QR Badge เพื่อเริ่มงานกะถัดไป" : "Please hand over duties in E-Logbook or have the next shift operator scan their QR Badge to begin." }}
           </div>
 
           <!-- QR Badge Fast Scan Box -->
           <div class="badge-scan-box q-pa-md q-mb-lg text-left" style="background: rgba(126, 87, 194, 0.2); border: 2px solid #a855f7; border-radius: 12px;">
             <div class="row items-center justify-between q-mb-xs">
-              <span class="text-subtitle2 text-weight-bold text-purple-2">⚡ สแกน QR Badge กะใหม่ทันที</span>
+              <span class="text-subtitle2 text-weight-bold text-purple-2">{{ isThai ? "⚡ สแกน QR Badge กะใหม่ทันที" : "⚡ Scan Next Shift QR Badge" }}</span>
               <q-badge color="deep-purple-6">Ready to Scan</q-badge>
             </div>
             <q-input
@@ -322,7 +322,7 @@ const goToPlant = (plant: number) => {
               color="amber-8"
               text-color="dark"
               icon="menu_book"
-              label="เปิด E-Logbook ส่งมอบงาน"
+              :label="isThai ? 'เปิด E-Logbook ส่งมอบงาน' : 'Open E-Logbook Handover'"
               @click="goToShiftLogbook"
             />
             <q-btn

@@ -11,7 +11,7 @@
             E-Logbook & Shift Handover
           </div>
           <div class="text-caption text-grey-5" style="font-size: 11px;">
-            สมุดบันทึกส่งมอบงานประจำกะดิจิทัล
+            {{ isThai ? "สมุดบันทึกส่งมอบงานประจำกะดิจิทัล" : "Digital Shift Handover & Operational Logbook" }}
           </div>
         </div>
       </div>
@@ -46,9 +46,9 @@
         <q-btn-toggle
           v-model="selectedShift"
           :options="[
-            {label:'🌅 เช้า', value:'Morning'},
-            {label:'🌇 บ่าย', value:'Afternoon'},
-            {label:'🌙 ดึก', value:'Night'}
+            {label: isThai ? '🌅 เช้า' : '🌅 Morning', value:'Morning'},
+            {label: isThai ? '🌇 บ่าย' : '🌇 Afternoon', value:'Afternoon'},
+            {label: isThai ? '🌙 ดึก' : '🌙 Night', value:'Night'}
           ]"
           dense unelevated rounded
           color="blue-grey-9" text-color="grey-4"
@@ -640,11 +640,13 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { useAuth } from '~/composables/useAuth'
+import { useI18n } from '~/composables/useI18n'
 
 const $q = useQuasar()
 const appConfig = useAppConfig()
 const apiBase = appConfig.apiBaseUrl || 'http://192.168.121.23:8031'
 const { user: currentUser } = useAuth()
+const { t, locale, isThai } = useI18n()
 
 // State
 const selectedPlant = ref<number>(1)

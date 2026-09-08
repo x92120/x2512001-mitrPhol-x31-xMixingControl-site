@@ -46,6 +46,22 @@ const plcStepDescriptions: Record<number, string> = {
 // phaseType: 1=A1010, 2=A1020, 3=D1010, 4=D1030, 5=x1010, 6=x1020, 7=x1030, 8=x1040
 
 // ── Universal Phase Type Resolver (Phase Number has 100% Top Priority) ───────
+
+// ── Bilingual Step & Action Resolver ──
+const formatActionText = (actionName: string, reCode: string) => {
+  const code = reCode || ''
+  const name = actionName || ''
+  if (!isThai.value) {
+    if (name.includes('ละลาย') || name.includes('เติม')) return `Dissolve / Add ${code}`.trim()
+    if (name.includes('กลั้ว')) return `Rinse vessel with RO water`
+    if (name.includes('ต้ม') || name.includes('Pasteur')) return `Pasteurize / Heat ${code}`.trim()
+    if (name.includes('ลด') || name.includes('Cool')) return `Cooling ${code}`.trim()
+    if (name.includes('โอน') || name.includes('Transfer')) return `Transfer to Storage Tank ${code}`.trim()
+    return `${name} ${code}`.trim()
+  }
+  return `${name || 'ละลาย/เติม'} ${code}`.trim()
+}
+
 const resolvePhaseType = (step: any): number => {
     if (!step) return 0
     // If phase_type_code is explicitly 1-8 from DB, use it directly
@@ -196,7 +212,7 @@ async function resolveOperatorScan(
                 osc.frequency.value = 880; g.gain.value = 0.3
                 osc.start(); osc.stop(ctx.currentTime + 0.12)
             } catch {}
-            $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ ${isPrimary ? '🫗 เท' : '🍳 ต้ม'}: ${found.full_name || found.username}`, position: 'top-right', timeout: 1800 })
+            $q.notify({ type: 'positive', icon: 'how_to_reg', message: `✅ ${isPrimary ? (isThai.value ? '🫗 ผู้ปฏิบัติงานเท (Pour)' : '🫗 Pour Operator') : (isThai.value ? '🍳 ผู้ปฏิบัติงานต้ม (Cook)' : '🍳 Cook Operator')}: ${found.full_name || found.username}`, position: 'top-right', timeout: 1800 })
         } else {
             // error alarm
             try {
@@ -229,7 +245,7 @@ watch(cookScanInput, (v) => {
     _cookDbx = setTimeout(() => { if (cookScanInput.value.trim()) resolveOperatorScan(cookScanInput.value, cookOperator, cookScanLoading, cookScanInput, false) }, 150)
 })
 const $q = useQuasar()
-const { t, locale } = useI18n()
+const { t, locale, isThai } = useI18n()
 
 // ── State ──
 const selectedBatchId = ref<string | null>(null)
@@ -1081,7 +1097,7 @@ const reRunPasteurize = async () => {
         $q.notify({
             type: 'negative',
             icon: 'error',
-            message: 'ไม่พบสเต็ป Pasteurize ในสูตรนี้',
+            message: isThai.value ? 'ไม่พบสเต็ป Pasteurize ในสูตรนี้' : 'No Pasteurization step found in recipe',
             position: 'center'
         })
     }
@@ -1620,7 +1636,7 @@ const switchPlant = async (plantId: number) => {
     $q.notify({
         type: 'info',
         icon: 'swap_horiz',
-        message: `สลับไปยัง Plant ${plantId} เรียบร้อย`,
+        message: isThai.value ? `สลับไปยัง Plant ${plantId} เรียบร้อย` : `Switched to Plant ${plantId}`,
         position: 'top',
         timeout: 1000
     })
@@ -1704,7 +1720,7 @@ const fetchMultiPlantSummary = async () => {
             const step = skuSteps.value[curIdx]
             let desc = step?.description || step?.action_name || (curIdx >= total ? 'Complete' : 'Processing')
             if (desc === 'Processing' && step?.re_code) {
-                desc = `${step.action_name || 'ละลาย/เติม'} ${step.re_code}`
+                desc = formatActionText(step.action_name, step.re_code)
             }
             const isQc = String(desc).toLowerCase().includes('qc') || String(step?.action_code) === '40010'
             const percent = total > 0 ? Math.min(100, Math.round(((curIdx + 1) / total) * 100)) : 0
@@ -1717,7 +1733,7 @@ const fetchMultiPlantSummary = async () => {
             const freeScan = activeFreeScanPhaseGroup.value
             if (freeScan && freeScan.pending && freeScan.pending.length > 0) {
                 isScanWait = true
-                scanCountText = `(สแกนแล้ว ${freeScan.scanned}/${freeScan.total} ถุง)`
+                scanCountText = isThai.value ? `(สแกนแล้ว ${freeScan.scanned}/${freeScan.total} ถุง)` : `(Scanned ${freeScan.scanned}/${freeScan.total} bags)`
                 pendingInds = freeScan.pending.map((s: any) => ({
                     re_code: s.re_code,
                     name: s.description || s.action_name || s.re_code,
@@ -1729,7 +1745,7 @@ const fetchMultiPlantSummary = async () => {
                 const isManualScan = (aCode.startsWith('2') || aCode.startsWith('3')) && step.re_code && !step.re_code.toLowerCase().includes('ro-water') && productionRequire(step) > 0
                 if (isManualScan) {
                     isScanWait = true
-                    scanCountText = `(รอสแกน 1 ถุง)`
+                    scanCountText = isThai.value ? `(รอสแกน 1 ถุง)` : `(Pending 1 bag)`
                     pendingInds = [{
                         re_code: step.re_code,
                         name: step.description || step.action_name || step.re_code,
@@ -1796,7 +1812,7 @@ const fetchMultiPlantSummary = async () => {
                 const curStepObj = steps[Math.max(0, curIdx - 1)] || {}
                 let desc = curStepObj.description || curStepObj.action_name || `Step ${curIdx}`
                 if (curStepObj.re_code && (!desc || desc.startsWith('Step'))) {
-                    desc = `${curStepObj.action_name || 'เติม'} ${curStepObj.re_code}`
+                    desc = formatActionText(curStepObj.action_name, curStepObj.re_code)
                 }
                 const isQc = String(desc).toLowerCase().includes('qc') || String(curStepObj.action_code) === '40010'
                 const percent = total > 0 ? Math.min(100, Math.round((curIdx / total) * 100)) : 0
@@ -1816,7 +1832,7 @@ const fetchMultiPlantSummary = async () => {
 
                     if (phaseScanSteps.length > 0) {
                         isScanWait = true
-                        scanCountText = `(รอสแกน ${phaseScanSteps.length} รายการ)`
+                        scanCountText = isThai.value ? `(รอสแกน ${phaseScanSteps.length} รายการ)` : `(Pending ${phaseScanSteps.length} items)`
                         pendingInds = phaseScanSteps.map((s: any) => ({
                             re_code: s.re_code,
                             name: s.description || s.action_name || s.re_code,
@@ -1828,7 +1844,7 @@ const fetchMultiPlantSummary = async () => {
                     const aCode = String(curStepObj.action_code || '')
                     if ((aCode.startsWith('2') || aCode.startsWith('3')) && curStepObj.re_code && !String(curStepObj.re_code).toLowerCase().includes('ro-water')) {
                         isScanWait = true
-                        scanCountText = `(รอสแกน 1 รายการ)`
+                        scanCountText = isThai.value ? `(รอสแกน 1 รายการ)` : `(Pending 1 item)`
                         pendingInds = [{
                             re_code: curStepObj.re_code,
                             name: curStepObj.description || curStepObj.action_name || curStepObj.re_code,
@@ -1944,7 +1960,7 @@ const sendDirectPlantCommand = async (pid: number, cmd: 'START' | 'PAUSE' | 'NEX
 
     if (cmd === 'PAUSE') {
         publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'PAUSE' })
-        $q.notify({ type: 'warning', icon: 'pause', message: `⏸ สั่ง Pause การทำงาน Plant ${pid}`, position: 'top' })
+        $q.notify({ type: 'warning', icon: 'pause', message: isThai.value ? `⏸ สั่ง Pause การทำงาน Plant ${pid}` : `⏸ Paused Plant ${pid}`, position: 'top' })
         fetchMultiPlantSummary()
         return
     }
@@ -1954,7 +1970,7 @@ const sendDirectPlantCommand = async (pid: number, cmd: 'START' | 'PAUSE' | 'NEX
             await sendCommand('START')
         } else {
             publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'START' })
-            $q.notify({ type: 'positive', icon: 'play_arrow', message: `▶ สั่ง START Plant ${pid}`, position: 'top' })
+            $q.notify({ type: 'positive', icon: 'play_arrow', message: isThai.value ? `▶ สั่ง START Plant ${pid}` : `▶ Started Plant ${pid}`, position: 'top' })
         }
         fetchMultiPlantSummary()
         return
@@ -1965,7 +1981,7 @@ const sendDirectPlantCommand = async (pid: number, cmd: 'START' | 'PAUSE' | 'NEX
             await sendCommand('NEXT_STEP')
         } else {
             publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'NEXT_STEP' })
-            $q.notify({ type: 'info', icon: 'skip_next', message: `⏭ สั่ง Force Next Step Plant ${pid}`, position: 'top' })
+            $q.notify({ type: 'info', icon: 'skip_next', message: isThai.value ? `⏭ สั่ง Force Next Step Plant ${pid}` : `⏭ Next step sent for Plant ${pid}`, position: 'top' })
         }
         fetchMultiPlantSummary()
         return
@@ -2592,7 +2608,7 @@ const confirmStepFromRow = async (step: any, skipToleranceCheck: boolean = false
         $q.notify({
             type: 'positive',
             icon: 'celebration',
-            message: '🎉 BATCH COMPLETE — บันทึกจบแบทช์และรีเซ็ตหน้าจอสำเร็จ!',
+            message: isThai.value ? '🎉 BATCH COMPLETE — บันทึกจบแบทช์และรีเซ็ตหน้าจอสำเร็จ!' : '🎉 BATCH COMPLETE — Batch recorded and plant released!',
             position: 'center',
             timeout: 4000
         })
@@ -3529,7 +3545,7 @@ const handleScan = (scannedText: string) => {
         $q.notify({
             type: 'positive',
             icon: 'swap_horiz',
-            message: `🎯 Barcode Auto-Switch: สลับเป้าหมายไปยัง PLANT ${targetP} เรียบร้อย`,
+            message: isThai.value ? `🎯 Barcode Auto-Switch: สลับเป้าหมายไปยัง PLANT ${targetP} เรียบร้อย` : `🎯 Barcode Auto-Switch: Switched scan target to PLANT ${targetP}`,
             position: 'top',
             timeout: 2500
         })
@@ -3997,7 +4013,7 @@ const handleScan = (scannedText: string) => {
         triggerFaultAlarm(
             barcodeId,
             expectedMsg,
-            { re_code: `บาร์โค้ดไม่ตรงกับสูตรหรือขั้นตอนปัจจุบัน (${barcodeId})` }
+            { re_code: isThai.value ? `บาร์โค้ดไม่ตรงกับสูตรหรือขั้นตอนปัจจุบัน (${barcodeId})` : `Barcode does not match current recipe or step (${barcodeId})` }
         )
     }
 }
@@ -4273,7 +4289,7 @@ watch([() => plantData.value?.Current_Step, () => plantData.value?.PLC_Step_FC, 
         $q.notify({
             type: 'positive',
             icon: 'verified',
-            message: `🎉 PLC สเต็ป 28 (Transfer Complete) — เคลียร์กระดานและจบแบทช์สำเร็จ!`,
+            message: isThai.value ? `🎉 PLC สเต็ป 28 (Transfer Complete) — เคลียร์กระดานและจบแบทช์สำเร็จ!` : `🎉 PLC Step 28 (Transfer Complete) — Batch finalized successfully!`,
             position: 'center',
             timeout: 3500
         })
@@ -4352,7 +4368,7 @@ watch([actualTankTemp, () => currentStepIndex.value], () => {
                 $q.notify({
                     type: 'positive',
                     icon: isHeating ? 'local_fire_department' : 'ac_unit',
-                    message: `✅ อุณหภูมิถึงเป้าหมาย (${currentT.toFixed(1)}°C / ${tempSP}°C) — ข้ามไปสเต็ปถัดไปอัตโนมัติ`,
+                    message: isThai.value ? `✅ อุณหภูมิถึงเป้าหมาย (${currentT.toFixed(1)}°C / ${tempSP}°C) — ข้ามไปสเต็ปถัดไปอัตโนมัติ` : `✅ Target temperature reached (${currentT.toFixed(1)}°C / ${tempSP}°C) — Auto-advancing to next step`,
                     position: 'top',
                     timeout: 2000
                 })
@@ -4651,7 +4667,7 @@ onUnmounted(() => {
                       class="text-weight-bolder q-ml-xs shadow-1"
                       style="height: 28px; font-size: 11px; border-radius: 6px; padding: 0 8px;"
                       @click="toggleViewMode">
-                  <q-tooltip>ดูภาพรวมทั้ง 3 Plant พร้อมกันในหน้าเดียว (Overview Grid)</q-tooltip>
+                  <q-tooltip>{{ isThai ? 'ดูภาพรวมทั้ง 3 Plant พร้อมกันในหน้าเดียว (Overview Grid)' : 'View all 3 Plants simultaneously on one screen (Overview Grid)' }}</q-tooltip>
                </q-btn>
           </div>
        </div>
@@ -4670,13 +4686,13 @@ onUnmounted(() => {
                    PLANT {{ activePlantId }}
                 </div>
              </div>
-             <q-tooltip>เป้าหมายการยิงบาร์โค้ดขณะนี้คือ Plant {{ activePlantId }} (คลิกเพื่อสลับภาพรวม)</q-tooltip>
+             <q-tooltip>{{ isThai ? 'เป้าหมายการยิงบาร์โค้ดขณะนี้คือ Plant ' + activePlantId + ' (คลิกเพื่อสลับภาพรวม)' : 'Current barcode scanner target is Plant ' + activePlantId + ' (Click to switch)' }}</q-tooltip>
           </div>
 
           <!-- In Overview Mode: Clean Multi-Plant Status Badge -->
           <div v-if="viewMode === 'overview'" class="row items-center bg-dark text-white q-px-sm rounded-borders shadow-2 q-gutter-x-xs no-wrap" style="height: 38px; border: 1px solid #334155;">
              <q-icon name="dashboard_customize" color="amber-4" size="16px" />
-             <span class="text-weight-bold text-caption text-amber-2" style="font-size: 11px;">โหมด 3-PLANT OVERVIEW · ใช้ปุ่มควบคุมในแต่ละการ์ด</span>
+             <span class="text-weight-bold text-caption text-amber-2" style="font-size: 11px;">{{ isThai ? "โหมด 3-PLANT OVERVIEW · ใช้ปุ่มควบคุมในแต่ละการ์ด" : "3-PLANT OVERVIEW MODE · Use direct controls in each card" }}</span>
              <q-btn unelevated dense icon="filter_center_focus" color="amber-8" text-color="dark" :label="`FOCUS P${activePlantId}`" class="text-weight-bolder q-px-xs q-ml-xs" style="height: 26px; font-size: 10px;" @click="viewMode = 'focus'" />
           </div>
 
@@ -4694,7 +4710,7 @@ onUnmounted(() => {
              </q-btn>
              <q-btn flat dense icon="print" color="grey-8" style="height: 30px;" size="sm" @click="printProduction" v-if="skuStepsByPhase.length > 0" class="no-print"><q-tooltip>Print Production PDF (Plant {{ activePlantId }})</q-tooltip></q-btn>
              <q-btn v-if="selectedBatchId" unelevated dense icon="task_alt" :label="`FINISH P${activePlantId}`" color="teal-7" text-color="white" class="text-weight-bold q-px-xs" style="height: 30px; font-size: 11px; border-radius: 5px;" @click="() => completeAndReleaseBatch(false)">
-               <q-tooltip>Complete & Release Plant {{ activePlantId }} (จบงาน & เคลียร์หน้าจอ)</q-tooltip>
+               <q-tooltip>{{ isThai ? 'Complete & Release Plant ' + activePlantId + ' (จบงาน & เคลียร์หน้าจอ)' : 'Complete & Release Plant ' + activePlantId + ' (Finish & Clear Memory)' }}</q-tooltip>
              </q-btn>
              <q-btn flat dense icon="refresh" color="teal-8" style="height: 30px;" size="sm" @click="refreshFromDB1511"><q-tooltip>Refresh Batch from PLC (Plant {{ activePlantId }})</q-tooltip></q-btn>
              <q-btn flat dense icon="settings_backup_restore" color="orange-9" style="height: 30px;" size="sm" @click="softResetBatch"><q-tooltip>Reset Batch (Plant {{ activePlantId }})</q-tooltip></q-btn>
@@ -4789,7 +4805,7 @@ onUnmounted(() => {
             <q-icon name="dashboard_customize" color="amber-4" size="28px" />
             <div>
                <div class="text-subtitle1 text-weight-bolder text-white" style="letter-spacing: 0.5px;">🖥 3-PLANT MULTI-DECK COMMAND CENTER</div>
-               <div class="text-caption text-grey-4">Shop Floor Multi-Deck Live View · ควบคุมและติดตาม 3 Plant พร้อมกันในหน้าจอเดียว</div>
+               <div class="text-caption text-grey-4">{{ isThai ? "Shop Floor Multi-Deck Live View · ควบคุมและติดตาม 3 Plant พร้อมกันในหน้าจอเดียว" : "Shop Floor Multi-Deck Live View · Monitor & Control 3 Plants Simultaneously" }}</div>
             </div>
          </div>
          <div class="row items-center q-gutter-x-sm">
@@ -4797,7 +4813,7 @@ onUnmounted(() => {
                <q-icon name="wifi" size="12px" class="q-mr-xs" /> 3 Plants Synchronized
             </q-badge>
             <q-btn unelevated dense icon="refresh" color="teal-7" label="Refresh All" class="q-px-sm" @click="fetchMultiPlantSummary" />
-            <q-btn unelevated dense icon="filter_center_focus" color="amber-8" text-color="dark" :label="`ไปที่ Focus View (Plant ${activePlantId})`" class="text-weight-bold q-px-md shadow-2" @click="viewMode = 'focus'" />
+            <q-btn unelevated dense icon="filter_center_focus" color="amber-8" text-color="dark" :label="isThai ? `ไปที่ FOCUS VIEW (Plant ${activePlantId})` : `Go to FOCUS VIEW (Plant ${activePlantId})`" class="text-weight-bold q-px-md shadow-2" @click="viewMode = 'focus'" />
          </div>
       </div>
 
@@ -4842,7 +4858,7 @@ onUnmounted(() => {
                         </q-badge>
                      </div>
                      <div class="text-subtitle2 text-weight-bolder text-amber-3 ellipsis" style="font-size: 12px;">
-                        {{ multiPlantSummary[pid]?.skuName || (multiPlantSummary[pid]?.status === 'Standby' ? 'พร้อมสำหรับ Batch ใหม่ (Standby)' : '-') }}
+                        {{ multiPlantSummary[pid]?.skuName || (multiPlantSummary[pid]?.status === 'Standby' ? (isThai ? 'พร้อมสำหรับ Batch ใหม่ (Standby)' : 'Ready for Next Batch (Standby)') : '-') }}
                      </div>
                      <div class="row items-center justify-between text-caption text-grey-4 q-mt-xs" style="font-size: 10px;" v-if="multiPlantSummary[pid]?.planId">
                         <span>Plan: {{ multiPlantSummary[pid]?.planId }}</span>
@@ -5020,10 +5036,10 @@ onUnmounted(() => {
                      <div class="row items-center justify-between no-wrap q-mb-xs">
                         <div class="row items-center q-gutter-x-xs no-wrap">
                            <q-icon name="qr_code_scanner" color="amber-3" size="16px" />
-                           <span class="text-weight-bolder text-amber-3" style="font-size: 11px;">⚡ สแกน IND: {{ multiPlantSummary[pid]?.scanCountText }}</span>
+                           <span class="text-weight-bolder text-amber-3" style="font-size: 11px;">⚡ {{ isThai ? "สแกน IND:" : "Scan IND:" }} {{ multiPlantSummary[pid]?.scanCountText }}</span>
                         </div>
                         <q-badge color="amber-8" text-color="dark" class="text-weight-bolder" style="font-size: 10px;">
-                           {{ multiPlantSummary[pid]?.pendingIngredients?.length }} ถุงรอสแกน
+                           {{ multiPlantSummary[pid]?.pendingIngredients?.length }} {{ isThai ? 'ถุงรอสแกน' : 'bags pending' }}
                         </q-badge>
                      </div>
 
@@ -5041,7 +5057,7 @@ onUnmounted(() => {
                            <q-icon name="inventory_2" color="amber-4" size="12px" class="q-mr-xs" />
                            <span class="text-weight-bold text-amber-3 ellipsis" style="max-width: 140px;">{{ ind.re_code || ind.name }}</span>
                            <span class="text-white q-ml-xs text-weight-bolder" style="font-size: 10px;">({{ (ind.weight || 0).toFixed(2) }} kg)</span>
-                           <q-tooltip>คลิกเพื่อตั้งเป้าหมายสแกนไปยัง Plant {{ pid }}: {{ ind.re_code }} ({{ (ind.weight || 0).toFixed(2) }} kg)</q-tooltip>
+                           <q-tooltip>{{ isThai ? 'คลิกเพื่อตั้งเป้าหมายสแกนไปยัง Plant ' + pid + ': ' + ind.re_code + ' (' + (ind.weight || 0).toFixed(2) + ' กก.)' : 'Click to aim scanner to Plant ' + pid + ': ' + ind.re_code + ' (' + (ind.weight || 0).toFixed(2) + ' kg)' }}</q-tooltip>
                         </div>
                      </div>
                   </div>
@@ -5049,7 +5065,7 @@ onUnmounted(() => {
                   <!-- Prompt / Alert Banner if QC Wait -->
                   <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-xs rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 1px solid #ef4444;">
                      <div class="text-weight-bold text-caption"><q-icon name="warning" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
-                     <q-btn unelevated dense color="white" text-color="red-10" icon="fact_check" :label="`อนุมัติ QC (Plant ${pid})`" class="text-weight-bolder q-mt-xs full-width" style="font-size: 11px; height: 26px;" @click="directPlantQcConfirm(pid)" />
+                     <q-btn unelevated dense color="white" text-color="red-10" icon="fact_check" :label="(isThai ? 'อนุมัติ QC (Plant ' : 'Approve QC (Plant ') + pid + ')'" class="text-weight-bolder q-mt-xs full-width" style="font-size: 11px; height: 26px;" @click="directPlantQcConfirm(pid)" />
                   </div>
 
                   <!-- DIRECT MINI-HMI QUICK ACTIONS (Multi-Plant Operation Deck) -->
@@ -5078,7 +5094,7 @@ onUnmounted(() => {
                          :color="String(activePlantId) === String(pid) ? 'amber-8' : 'grey-8'"
                          :text-color="String(activePlantId) === String(pid) ? 'dark' : 'white'"
                          icon="qr_code_scanner"
-                         :label="String(activePlantId) === String(pid) ? `🎯 Scan Target` : `เล็ง Scan P${pid}`"
+                         :label="String(activePlantId) === String(pid) ? (isThai ? '🎯 เป้าหมายสแกน' : '🎯 Scan Target') : (isThai ? 'เล็ง Scan P' + pid : 'Aim Scan P' + pid)"
                          class="text-weight-bold"
                          style="height: 32px; font-size: 10px; border-radius: 6px; padding: 0 8px;"
                          @click="setScanTargetPlant(pid)" />
@@ -5245,11 +5261,11 @@ onUnmounted(() => {
                   <div class="column">
                     <div class="row items-center q-gutter-x-xs">
                       <span class="text-weight-bolder" style="font-size: 14px;">
-                        {{ activeFreeScanPhaseGroup.isCompleted ? '🎉 สแกนครบทุกถุงใน Phase นี้เรียบร้อยแล้ว!' : `⚡ ZERO-CLICK SCANNER : สแกนครบแล้ว ${activeFreeScanPhaseGroup.scanned}/${activeFreeScanPhaseGroup.total} ถุง` }}
+                        {{ activeFreeScanPhaseGroup.isCompleted ? (isThai ? '🎉 สแกนครบทุกถุงใน Phase นี้เรียบร้อยแล้ว!' : '🎉 All bags in this phase completed!') : (isThai ? `⚡ ZERO-CLICK SCANNER : สแกนครบแล้ว ${activeFreeScanPhaseGroup.scanned}/${activeFreeScanPhaseGroup.total} ถุง` : `⚡ ZERO-CLICK SCANNER : Scanned ${activeFreeScanPhaseGroup.scanned}/${activeFreeScanPhaseGroup.total} bags`) }}
                       </span>
                     </div>
                     <div v-if="!activeFreeScanPhaseGroup.isCompleted" class="row items-center q-gutter-x-xs q-mt-xs" style="font-size: 12px;">
-                      <span class="text-amber-2 text-weight-bold">ถุงที่รอสแกน:</span>
+                      <span class="text-amber-2 text-weight-bold">{{ isThai ? "ถุงที่รอสแกน:" : "Pending bags to scan:" }}</span>
                       <div class="row items-center q-gutter-x-xs" style="flex-wrap: wrap;">
                         <q-badge v-for="ing in activeFreeScanPhaseGroup.pending" :key="ing.id" color="amber-9" text-color="black" class="q-px-xs text-weight-bolder shadow-1" style="font-size: 12px;">
                           {{ ing.re_code }} ({{ productionRequire(ing).toFixed(3) }} kg)
@@ -5527,8 +5543,8 @@ onUnmounted(() => {
         </q-card-section>
         <q-card-section class="q-pa-lg text-center">
           <q-icon name="qr_code" size="4rem" color="blue-8" class="q-mb-md"/>
-          <p class="text-weight-bold text-blue-9 q-mb-xs">⚡ สแกนเนอร์จะ Auto-Confirm ให้อัตโนมัติทันที</p>
-          <p class="text-caption text-grey-7 q-mb-md">ไม่ต้องกดปุ่ม Confirm — สแกนเนอร์จะส่งข้อมูลให้ทันที</p>
+          <p class="text-weight-bold text-blue-9 q-mb-xs">{{ isThai ? "⚡ สแกนเนอร์จะ Auto-Confirm ให้อัตโนมัติทันที" : "⚡ Scanner will auto-confirm immediately" }}</p>
+          <p class="text-caption text-grey-7 q-mb-md">{{ isThai ? "ไม่ต้องกดปุ่ม Confirm — สแกนเนอร์จะส่งข้อมูลให้ทันที" : "No need to click Confirm — barcode scanner sends data instantly" }}</p>
           <!-- Single input — scanner fills this via handleGlobalKeydown, no hidden ghost input needed -->
           <q-input
             v-model="qrScanBuffer"
@@ -5578,7 +5594,7 @@ onUnmounted(() => {
 
         <q-card-actions align="between" class="bg-grey-1 q-pa-md">
           <q-btn unelevated label="Re-Pasteurize" color="deep-orange-9" icon="local_fire_department" @click="reRunPasteurize">
-            <q-tooltip class="bg-dark text-body2">สั่งให้ PLC วิ่งกลับไปต้มฆ่าเชื้อซ้ำอีก 1 รอบ</q-tooltip>
+            <q-tooltip class="bg-dark text-body2">{{ isThai ? "สั่งให้ PLC วิ่งกลับไปต้มฆ่าเชื้อซ้ำอีก 1 รอบ" : "Order PLC to re-run pasteurization loop" }}</q-tooltip>
           </q-btn>
           <div class="row q-gutter-sm items-center">
             <q-btn flat label="Pause" color="grey-8" @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }" />
