@@ -2025,7 +2025,6 @@ const setScanTargetPlant = async (pid: number) => {
         timeout: 1500
     })
 }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🎨 Multi-Plant Realtime Sensor Status & Tolerance Colors (Act vs Set Point)
