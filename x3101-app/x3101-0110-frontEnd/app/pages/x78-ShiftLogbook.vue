@@ -642,10 +642,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { useAuth } from '~/composables/useAuth'
 import { useI18n } from '~/composables/useI18n'
+import { appConfig } from '~/appConfig/config'
 
 const $q = useQuasar()
-const appConfig = useAppConfig()
-const apiBase = appConfig.apiBaseUrl || 'http://192.168.121.23:8031'
+const apiBase = appConfig.apiBaseUrl
 const { user: currentUser } = useAuth()
 const { t, locale, isThai } = useI18n()
 
@@ -690,11 +690,15 @@ const currentShiftInfo = ref<any>(null)
 
 const currentShiftLabel = computed(() => {
   if (isViewingToday.value) {
-    if (isThai.value) {
-      return (currentShiftInfo.value?.shift_label_th || currentShiftInfo.value?.shift_label || 'กำลังโหลดกะ...')
-    } else {
-      return (currentShiftInfo.value?.shift_label_en || currentShiftInfo.value?.shift_label || 'Loading Shift...')
+    if (currentShiftInfo.value) {
+      if (isThai.value) {
+        return (currentShiftInfo.value?.shift_label_th || currentShiftInfo.value?.shift_label || selectedShift.value)
+      } else {
+        return (currentShiftInfo.value?.shift_label_en || currentShiftInfo.value?.shift_label || selectedShift.value)
+      }
     }
+    const opt = shiftOptions.value.find((o: any) => o.value === selectedShift.value)
+    return opt ? opt.label : (isThai.value ? '🌅 เช้า (06:00 - 14:00)' : '🌅 Morning (06:00 - 14:00)')
   } else {
     const opt = shiftOptions.value.find((o: any) => o.value === selectedShift.value)
     return opt ? opt.label : selectedShift.value
@@ -833,8 +837,13 @@ const getIssueStatusColor = (st: string) => {
 // Fetch Current Shift Info (Real-time live shift for today)
 const fetchCurrentShiftInfo = async () => {
   try {
-    const res = await $fetch<any>(`${apiBase}/shift-logbook/current-shift`)
-    currentShiftInfo.value = res
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/current-shift-info`)
+    if (res) {
+      currentShiftInfo.value = res
+      if (isViewingToday.value && res.shift_type) {
+        selectedShift.value = res.shift_type
+      }
+    }
   } catch (err) {
     console.error('Failed to fetch current shift info:', err)
   }
@@ -845,11 +854,12 @@ const loadShiftData = async () => {
   loadingData.value = true
   try {
     const params = new URLSearchParams({
+      plant: String(selectedPlant.value),
       plant_id: String(selectedPlant.value),
       shift_type: selectedShift.value,
       shift_date: selectedDate.value
     })
-    const res = await $fetch<any>(`${apiBase}/shift-logbook/summary?${params.toString()}`)
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/kpi-summary?${params.toString()}`)
     if (res) {
       shiftData.value = res
       shiftKpis.value = res.kpis || {}
