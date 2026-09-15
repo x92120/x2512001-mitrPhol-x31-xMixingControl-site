@@ -57,15 +57,69 @@ const checkShiftCutoff = () => {
   const hours = now.getHours()
   const minutes = now.getMinutes()
   const seconds = now.getSeconds()
+  const day = now.getDay() // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
 
-  // Target shift cutoffs: 08:00, 16:00, 00:00 (24:00)
-  const isCutoffMorning = hours === 8 && minutes === 0 && seconds <= 40
-  const isCutoffAfternoon = hours === 16 && minutes === 0 && seconds <= 40
-  const isCutoffNight = hours === 0 && minutes === 0 && seconds <= 40
+  // Schedule Rules:
+  // Mon - Thu (day: 1, 2, 3, 4): 3 shifts -> Cutoffs at 06:00, 14:00, 22:00
+  // Fri - Sun (day: 5, 6, 0): 2 shifts -> Cutoffs at 06:00, 18:00
 
-  const isNearCutoff = (hours === 7 && minutes >= 55) || (hours === 15 && minutes >= 55) || (hours === 23 && minutes >= 55)
+  const isWeekday = day >= 1 && day <= 4
 
-  if (isNearCutoff && lastWarnedShiftCutoff !== `${hours}:${minutes}`) {
+  let isCutoffTriggered = false
+  let isNearCutoffTriggered = false
+  let endedShiftLabel = ''
+  let nextShiftLabel = ''
+
+  if (isWeekday) {
+    // 3 Shifts Schedule (Mon - Thu)
+    // Cutoff 1: 06:00 (Night -> Morning)
+    if (hours === 6 && minutes === 0 && seconds <= 40) {
+      isCutoffTriggered = true
+      endedShiftLabel = isThai.value ? 'กะดึก (22:00 - 06:00)' : 'Night Shift (22:00 - 06:00)'
+      nextShiftLabel = isThai.value ? 'กะเช้า (06:00 - 14:00)' : 'Morning Shift (06:00 - 14:00)'
+    }
+    // Cutoff 2: 14:00 (Morning -> Afternoon)
+    else if (hours === 14 && minutes === 0 && seconds <= 40) {
+      isCutoffTriggered = true
+      endedShiftLabel = isThai.value ? 'กะเช้า (06:00 - 14:00)' : 'Morning Shift (06:00 - 14:00)'
+      nextShiftLabel = isThai.value ? 'กะบ่าย (14:00 - 22:00)' : 'Afternoon Shift (14:00 - 22:00)'
+    }
+    // Cutoff 3: 22:00 (Afternoon -> Night)
+    else if (hours === 22 && minutes === 0 && seconds <= 40) {
+      isCutoffTriggered = true
+      endedShiftLabel = isThai.value ? 'กะบ่าย (14:00 - 22:00)' : 'Afternoon Shift (14:00 - 22:00)'
+      nextShiftLabel = isThai.value ? 'กะดึก (22:00 - 06:00)' : 'Night Shift (22:00 - 06:00)'
+    }
+
+    // 5-minute warnings: 05:55, 13:55, 21:55
+    if ((hours === 5 && minutes >= 55) || (hours === 13 && minutes >= 55) || (hours === 21 && minutes >= 55)) {
+      isNearCutoffTriggered = true
+    }
+  } else {
+    // 2 Shifts Schedule (Fri - Sun: day 5, 6, 0)
+    // Cutoff 1: 06:00 (Night -> Morning)
+    if (hours === 6 && minutes === 0 && seconds <= 40) {
+      isCutoffTriggered = true
+      endedShiftLabel = day === 5
+        ? (isThai.value ? 'กะดึก (22:00 - 06:00)' : 'Night Shift (22:00 - 06:00)') // Thu night ended
+        : (isThai.value ? 'กะดึก (18:00 - 06:00)' : 'Night Shift (18:00 - 06:00)')
+      nextShiftLabel = isThai.value ? 'กะเช้า (06:00 - 18:00)' : 'Morning Shift (06:00 - 18:00)'
+    }
+    // Cutoff 2: 18:00 (Morning -> Night)
+    else if (hours === 18 && minutes === 0 && seconds <= 40) {
+      isCutoffTriggered = true
+      endedShiftLabel = isThai.value ? 'กะเช้า (06:00 - 18:00)' : 'Morning Shift (06:00 - 18:00)'
+      nextShiftLabel = isThai.value ? 'กะดึก (18:00 - 06:00)' : 'Night Shift (18:00 - 06:00)'
+    }
+
+    // 5-minute warnings: 05:55, 17:55
+    if ((hours === 5 && minutes >= 55) || (hours === 17 && minutes >= 55)) {
+      isNearCutoffTriggered = true
+    }
+  }
+
+  // 5-minute warning notification
+  if (isNearCutoffTriggered && lastWarnedShiftCutoff !== `${hours}:${minutes}`) {
     lastWarnedShiftCutoff = `${hours}:${minutes}`
     $q.notify({
       type: 'warning',
@@ -75,17 +129,10 @@ const checkShiftCutoff = () => {
     })
   }
 
-  if ((isCutoffMorning || isCutoffAfternoon || isCutoffNight) && !showShiftCutoffDialog.value) {
-    if (isCutoffMorning) {
-      cutoffShiftName.value = isThai.value ? 'กะดึก (00:00 - 08:00)' : 'Night Shift (00:00 - 08:00)'
-      cutoffNextShiftName.value = isThai.value ? 'กะเช้า (08:00 - 16:00)' : 'Morning Shift (08:00 - 16:00)'
-    } else if (isCutoffAfternoon) {
-      cutoffShiftName.value = isThai.value ? 'กะเช้า (08:00 - 16:00)' : 'Morning Shift (08:00 - 16:00)'
-      cutoffNextShiftName.value = isThai.value ? 'กะบ่าย (16:00 - 00:00)' : 'Afternoon Shift (16:00 - 00:00)'
-    } else {
-      cutoffShiftName.value = isThai.value ? 'กะบ่าย (16:00 - 00:00)' : 'Afternoon Shift (16:00 - 00:00)'
-      cutoffNextShiftName.value = isThai.value ? 'กะดึก (00:00 - 08:00)' : 'Night Shift (00:00 - 08:00)'
-    }
+  // Show Shift Cutoff Dialog
+  if (isCutoffTriggered && !showShiftCutoffDialog.value) {
+    cutoffShiftName.value = endedShiftLabel
+    cutoffNextShiftName.value = nextShiftLabel
     showShiftCutoffDialog.value = true
     setTimeout(() => {
       if (cutoffQrInputRef.value) cutoffQrInputRef.value.focus()

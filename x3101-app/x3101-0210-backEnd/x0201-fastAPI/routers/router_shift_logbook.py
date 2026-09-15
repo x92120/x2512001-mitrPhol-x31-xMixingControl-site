@@ -81,31 +81,67 @@ class EmailReportRequest(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_current_shift_info():
-    """Determine the current shift based on current time (ICT / UTC+7)."""
+    """
+    Determine the current shift based on current time (ICT / UTC+7).
+    Schedule:
+      - Mon - Thu: 3 shifts (06:00-14:00 Morning, 14:00-22:00 Afternoon, 22:00-06:00 Night)
+      - Fri - Sun: 2 shifts (06:00-18:00 Morning, 18:00-06:00 Night)
+    """
     now = datetime.now()
     current_time = now.time()
+    today_date = now.date()
     
-    # Morning: 08:00:00 - 15:59:59
-    # Afternoon: 16:00:00 - 23:59:59
-    # Night: 00:00:00 - 07:59:59
-    if time(8, 0) <= current_time < time(16, 0):
-        shift_name = "Morning"
-        shift_label = "กะเช้า (08:00 - 16:00)"
-        shift_start = datetime.combine(now.date(), time(8, 0))
-        shift_end = datetime.combine(now.date(), time(16, 0))
-        shift_date = now.date()
-    elif time(16, 0) <= current_time <= time(23, 59, 59):
-        shift_name = "Afternoon"
-        shift_label = "กะบ่าย (16:00 - 00:00)"
-        shift_start = datetime.combine(now.date(), time(16, 0))
-        shift_end = datetime.combine(now.date() + timedelta(days=1), time(0, 0))
-        shift_date = now.date()
-    else:
+    # Shifts start at 06:00. If current time is between 00:00 and 05:59:59,
+    # the shift belongs to the previous day's night shift.
+    if current_time < time(6, 0):
+        operational_date = today_date - timedelta(days=1)
+        op_weekday = operational_date.weekday()  # 0=Mon, ..., 3=Thu, 4=Fri, 5=Sat, 6=Sun
         shift_name = "Night"
-        shift_label = "กะดึก (00:00 - 08:00)"
-        shift_start = datetime.combine(now.date(), time(0, 0))
-        shift_end = datetime.combine(now.date(), time(8, 0))
-        shift_date = now.date()
+        shift_date = operational_date
+        shift_end = datetime.combine(today_date, time(6, 0))
+        
+        if op_weekday < 4:  # Mon - Thu night shift (22:00 - 06:00)
+            shift_label = "กะดึก (22:00 - 06:00)"
+            shift_start = datetime.combine(operational_date, time(22, 0))
+            is_weekend_schedule = False
+        else:  # Fri - Sun night shift (18:00 - 06:00)
+            shift_label = "กะดึก (18:00 - 06:00)"
+            shift_start = datetime.combine(operational_date, time(18, 0))
+            is_weekend_schedule = True
+    else:
+        operational_date = today_date
+        op_weekday = operational_date.weekday()
+        shift_date = operational_date
+        
+        if op_weekday < 4:  # Monday - Thursday (3 shifts)
+            is_weekend_schedule = False
+            if time(6, 0) <= current_time < time(14, 0):
+                shift_name = "Morning"
+                shift_label = "กะเช้า (06:00 - 14:00)"
+                shift_start = datetime.combine(today_date, time(6, 0))
+                shift_end = datetime.combine(today_date, time(14, 0))
+            elif time(14, 0) <= current_time < time(22, 0):
+                shift_name = "Afternoon"
+                shift_label = "กะบ่าย (14:00 - 22:00)"
+                shift_start = datetime.combine(today_date, time(14, 0))
+                shift_end = datetime.combine(today_date, time(22, 0))
+            else:  # 22:00 - 23:59:59
+                shift_name = "Night"
+                shift_label = "กะดึก (22:00 - 06:00)"
+                shift_start = datetime.combine(today_date, time(22, 0))
+                shift_end = datetime.combine(today_date + timedelta(days=1), time(6, 0))
+        else:  # Friday - Sunday (2 shifts)
+            is_weekend_schedule = True
+            if time(6, 0) <= current_time < time(18, 0):
+                shift_name = "Morning"
+                shift_label = "กะเช้า (06:00 - 18:00)"
+                shift_start = datetime.combine(today_date, time(6, 0))
+                shift_end = datetime.combine(today_date, time(18, 0))
+            else:  # 18:00 - 23:59:59
+                shift_name = "Night"
+                shift_label = "กะดึก (18:00 - 06:00)"
+                shift_start = datetime.combine(today_date, time(18, 0))
+                shift_end = datetime.combine(today_date + timedelta(days=1), time(6, 0))
         
     seconds_remaining = max(0, int((shift_end - now).total_seconds()))
     
@@ -118,26 +154,43 @@ def get_current_shift_info():
         "shift_end": shift_end.strftime("%Y-%m-%d %H:%M:%S"),
         "seconds_remaining": seconds_remaining,
         "minutes_remaining": seconds_remaining // 60,
-        "is_cutoff_near": seconds_remaining <= 300  # Within 5 minutes
+        "is_cutoff_near": seconds_remaining <= 300,  # Within 5 minutes
+        "is_weekend_schedule": is_weekend_schedule,
+        "day_of_week": now.strftime("%A")
     }
 
 
 def get_shift_time_range(shift_date_str: str, shift_type: str):
-    """Get start and end datetime for a specific date and shift type."""
+    """
+    Get start and end datetime for a specific date and shift type based on schedule:
+    - Mon - Thu: Morning (06-14), Afternoon (14-22), Night (22-06)
+    - Fri - Sun: Morning (06-18), Night (18-06)
+    """
     try:
         s_date = datetime.strptime(shift_date_str, "%Y-%m-%d").date()
     except Exception:
         s_date = date.today()
 
-    if shift_type == "Morning":
-        start_dt = datetime.combine(s_date, time(8, 0, 0))
-        end_dt = datetime.combine(s_date, time(16, 0, 0))
-    elif shift_type == "Afternoon":
-        start_dt = datetime.combine(s_date, time(16, 0, 0))
-        end_dt = datetime.combine(s_date + timedelta(days=1), time(0, 0, 0))
-    else:  # Night
-        start_dt = datetime.combine(s_date, time(0, 0, 0))
-        end_dt = datetime.combine(s_date, time(8, 0, 0))
+    weekday = s_date.weekday()  # 0=Mon, ..., 3=Thu, 4=Fri, 5=Sat, 6=Sun
+    
+    if weekday < 4:  # Monday - Thursday (3 Shifts)
+        if shift_type == "Morning":
+            start_dt = datetime.combine(s_date, time(6, 0, 0))
+            end_dt = datetime.combine(s_date, time(14, 0, 0))
+        elif shift_type == "Afternoon":
+            start_dt = datetime.combine(s_date, time(14, 0, 0))
+            end_dt = datetime.combine(s_date, time(22, 0, 0))
+        else:  # Night
+            start_dt = datetime.combine(s_date, time(22, 0, 0))
+            end_dt = datetime.combine(s_date + timedelta(days=1), time(6, 0, 0))
+    else:  # Friday - Sunday (2 Shifts)
+        if shift_type == "Morning" or shift_type == "Afternoon":
+            # If user selected Afternoon for a weekend date, treat as daytime shift (06:00 - 18:00)
+            start_dt = datetime.combine(s_date, time(6, 0, 0))
+            end_dt = datetime.combine(s_date, time(18, 0, 0))
+        else:  # Night
+            start_dt = datetime.combine(s_date, time(18, 0, 0))
+            end_dt = datetime.combine(s_date + timedelta(days=1), time(6, 0, 0))
 
     return start_dt, end_dt
 
@@ -150,6 +203,38 @@ def get_shift_time_range(shift_date_str: str, shift_type: str):
 def endpoint_current_shift():
     """Get active shift info, remaining time, and shift cutoff indicator."""
     return get_current_shift_info()
+
+
+@router.get("/shifts-for-date")
+def get_shifts_for_date(shift_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD")):
+    """Get list of applicable shifts for a specific date (Mon-Thu: 3 shifts, Fri-Sun: 2 shifts)."""
+    try:
+        s_date = datetime.strptime(shift_date, "%Y-%m-%d").date() if shift_date else date.today()
+    except Exception:
+        s_date = date.today()
+        
+    weekday = s_date.weekday()
+    if weekday < 4:  # Mon - Thu (3 shifts)
+        return {
+            "date": s_date.isoformat(),
+            "weekday": s_date.strftime("%A"),
+            "schedule_type": "3_shifts",
+            "shifts": [
+                {"value": "Morning", "label_th": "🌅 เช้า (06:00 - 14:00)", "label_en": "🌅 Morning (06:00 - 14:00)", "time_range": "06:00 - 14:00"},
+                {"value": "Afternoon", "label_th": "🌇 บ่าย (14:00 - 22:00)", "label_en": "🌇 Afternoon (14:00 - 22:00)", "time_range": "14:00 - 22:00"},
+                {"value": "Night", "label_th": "🌙 ดึก (22:00 - 06:00)", "label_en": "🌙 Night (22:00 - 06:00)", "time_range": "22:00 - 06:00"}
+            ]
+        }
+    else:  # Fri - Sun (2 shifts)
+        return {
+            "date": s_date.isoformat(),
+            "weekday": s_date.strftime("%A"),
+            "schedule_type": "2_shifts",
+            "shifts": [
+                {"value": "Morning", "label_th": "🌅 เช้า (06:00 - 18:00)", "label_en": "🌅 Morning (06:00 - 18:00)", "time_range": "06:00 - 18:00"},
+                {"value": "Night", "label_th": "🌙 ดึก (18:00 - 06:00)", "label_en": "🌙 Night (18:00 - 06:00)", "time_range": "18:00 - 06:00"}
+            ]
+        }
 
 
 @router.get("/kpi-summary")
@@ -189,9 +274,8 @@ def get_shift_kpi_summary(
     target_volume_kg = sum(float(b.batch_size or 0) for b in batches_query)
 
     # Basic OEE estimation based on batch cycle efficiency
-    # If standard batch is ~45 mins, 8 hr shift capacity is ~10 batches
-    shift_hours = 8.0
-    ideal_capacity_batches = 10
+    shift_hours = max(1.0, (end_dt - start_dt).total_seconds() / 3600.0)
+    ideal_capacity_batches = max(1, int(shift_hours * 1.25))
     availability = min(1.0, max(0.6, (shift_hours - 0.5) / shift_hours)) # default ~93%
     performance = min(1.0, len(completed_batches) / max(1, ideal_capacity_batches)) if total_batches > 0 else 0.85
     quality = 0.99  # Assuming 99% good quality

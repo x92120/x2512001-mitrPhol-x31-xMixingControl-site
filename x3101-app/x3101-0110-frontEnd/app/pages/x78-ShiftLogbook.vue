@@ -42,14 +42,10 @@
 
       <!-- Shift Type Selector -->
       <div class="row items-center q-gutter-x-xs">
-        <span class="text-caption text-grey-4 text-weight-bold">กะ:</span>
+        <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'กะ:' : 'SHIFT:' }}</span>
         <q-btn-toggle
           v-model="selectedShift"
-          :options="[
-            {label: isThai ? '🌅 เช้า' : '🌅 Morning', value:'Morning'},
-            {label: isThai ? '🌇 บ่าย' : '🌇 Afternoon', value:'Afternoon'},
-            {label: isThai ? '🌙 ดึก' : '🌙 Night', value:'Night'}
-          ]"
+          :options="shiftOptions"
           dense unelevated rounded
           color="blue-grey-9" text-color="grey-4"
           toggle-color="amber-9" toggle-text-color="white"
@@ -653,6 +649,38 @@ const selectedPlant = ref<number>(1)
 const selectedShift = ref<string>('Morning')
 const selectedDate = ref<string>(new Date().toISOString().split('T')[0])
 const activeTab = ref<string>('kpis')
+
+const isSelectedDateWeekend = computed(() => {
+  if (!selectedDate.value) return false
+  const parts = selectedDate.value.split('-').map(Number)
+  if (parts.length < 3) return false
+  const dt = new Date(parts[0], parts[1] - 1, parts[2])
+  const day = dt.getDay() // 0=Sun, 5=Fri, 6=Sat
+  return day === 5 || day === 6 || day === 0
+})
+
+const shiftOptions = computed(() => {
+  if (isSelectedDateWeekend.value) {
+    // 2 Shifts on Friday - Sunday (06:00-18:00, 18:00-06:00)
+    return [
+      { label: isThai.value ? '🌅 เช้า (06:00 - 18:00)' : '🌅 Morning (06:00 - 18:00)', value: 'Morning' },
+      { label: isThai.value ? '🌙 ดึก (18:00 - 06:00)' : '🌙 Night (18:00 - 06:00)', value: 'Night' }
+    ]
+  } else {
+    // 3 Shifts on Monday - Thursday (06:00-14:00, 14:00-22:00, 22:00-06:00)
+    return [
+      { label: isThai.value ? '🌅 เช้า (06:00 - 14:00)' : '🌅 Morning (06:00 - 14:00)', value: 'Morning' },
+      { label: isThai.value ? '🌇 บ่าย (14:00 - 22:00)' : '🌇 Afternoon (14:00 - 22:00)', value: 'Afternoon' },
+      { label: isThai.value ? '🌙 ดึก (22:00 - 06:00)' : '🌙 Night (22:00 - 06:00)', value: 'Night' }
+    ]
+  }
+})
+
+watch(selectedDate, () => {
+  if (isSelectedDateWeekend.value && selectedShift.value === 'Afternoon') {
+    selectedShift.value = 'Morning'
+  }
+})
 
 const currentShiftInfo = ref<any>(null)
 const shiftData = ref<any>(null)
