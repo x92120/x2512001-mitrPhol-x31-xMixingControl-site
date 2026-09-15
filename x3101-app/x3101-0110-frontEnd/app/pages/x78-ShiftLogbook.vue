@@ -1062,17 +1062,28 @@ const dispatchEmailReport = async () => {
       recipients: emailRecipients.value,
       notes: emailCustomNotes.value
     }
-    await $fetch<any>(`${apiBase}/shift-logbook/send-email-summary`, {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/send-email-summary`, {
       method: 'POST',
       body: payload
     })
     showEmailDialog.value = false
-    $q.notify({
-      type: 'positive',
-      message: isThai.value ? 'ส่งรายงานกะผ่าน Email เรียบร้อยแล้ว' : 'Shift summary email dispatched successfully!',
-      position: 'top',
-      timeout: 4000
-    })
+    if (res && res.is_simulation) {
+      $q.notify({
+        type: 'warning',
+        message: isThai.value
+          ? '⚠️ ระบบทำงานในโหมดจำลอง (Simulation Mode) เนื่องจากยังไม่ได้ระบุ SMTP ใน .env ของเครื่องเซิร์ฟเวอร์'
+          : '⚠️ Generated in Simulation Mode (SMTP credentials not configured in server .env)',
+        position: 'top',
+        timeout: 6000
+      })
+    } else {
+      $q.notify({
+        type: 'positive',
+        message: isThai.value ? 'ส่งรายงานกะผ่าน Email เรียบร้อยแล้ว' : 'Shift summary email dispatched successfully!',
+        position: 'top',
+        timeout: 4000
+      })
+    }
   } catch (err) {
     console.error('Failed to send email:', err)
     $q.notify({
@@ -1085,7 +1096,16 @@ const dispatchEmailReport = async () => {
   }
 }
 
-// QR Badge & Manual Sign Handlers
+// QR Badge & Manual Sign Handlers (Zero-Click Auto Scan support)
+let _badgeHandoverDebounce: any = null
+watch(badgeInputHandover, (val) => {
+  if (!val) return
+  if (_badgeHandoverDebounce) clearTimeout(_badgeHandoverDebounce)
+  _badgeHandoverDebounce = setTimeout(() => {
+    if (badgeInputHandover.value.trim()) handleBadgeAcknowledge()
+  }, 150)
+})
+
 const handleBadgeAcknowledge = async () => {
   const code = badgeInputHandover.value.trim()
   if (!code) return

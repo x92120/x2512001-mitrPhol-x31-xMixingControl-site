@@ -136,18 +136,48 @@ const checkShiftCutoff = () => {
     showShiftCutoffDialog.value = true
     setTimeout(() => {
       if (cutoffQrInputRef.value) cutoffQrInputRef.value.focus()
-    }, 400)
+    }, 300)
+  }
+}
+
+// Zero-Click auto-scan debounce watcher (150ms for hardware USB/Bluetooth RFID/QR scanner)
+let _cutoffDebounce: any = null
+watch(cutoffQrInput, (val) => {
+  if (!val) return
+  if (_cutoffDebounce) clearTimeout(_cutoffDebounce)
+  _cutoffDebounce = setTimeout(() => {
+    if (cutoffQrInput.value.trim()) handleCutoffQrScan()
+  }, 150)
+})
+
+watch(showShiftCutoffDialog, (isOpen) => {
+  if (isOpen) {
+    cutoffQrInput.value = ''
+    setTimeout(() => {
+      if (cutoffQrInputRef.value) cutoffQrInputRef.value.focus()
+    }, 300)
+  }
+})
+
+// Global window keypress listener for Zero-Click Scanner when Cutoff Dialog is active
+const handleGlobalScanKey = (e: KeyboardEvent) => {
+  if (!showShiftCutoffDialog.value) return
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+  // If user scanned while focus was on background, auto-focus scanner input
+  if (cutoffQrInputRef.value) {
+    cutoffQrInputRef.value.focus()
   }
 }
 
 const handleCutoffQrScan = async () => {
-  const code = cutoffQrInput.value.trim()
-  if (!code) return
+  const rawCode = cutoffQrInput.value.trim()
+  if (!rawCode) return
   cutoffQrLoading.value = true
+  const badge_code = rawCode.startsWith('@') ? rawCode.substring(1).trim() : rawCode
   try {
     const res = await $fetch<any>(`${apiBase}/auth/badge-login`, {
       method: 'POST',
-      body: { badge_code: code }
+      body: { badge_code, username: badge_code }
     })
     if (res?.user) {
       switchStationUser(res.user)
@@ -185,20 +215,29 @@ onMounted(() => {
 
   // Start shift check interval every 20s
   shiftCheckInterval = setInterval(checkShiftCutoff, 20000)
+
+  // Attach global zero-click scan listener
+  if (import.meta.client) {
+    window.addEventListener('keydown', handleGlobalScanKey)
+  }
 })
 
 onUnmounted(() => {
   if (shiftCheckInterval) clearInterval(shiftCheckInterval)
+  if (import.meta.client) {
+    window.removeEventListener('keydown', handleGlobalScanKey)
+  }
 })
 
 const handleLogout = async () => {
+  showShiftCutoffDialog.value = false
   await logout()
   $q.notify({
     type: 'info',
     message: t('nav.loggedOut'),
     position: 'top',
   })
-  navigateTo('/')
+  navigateTo('/x80-UserLogin')
 }
 
 const printScreen = () => {
