@@ -1,27 +1,27 @@
 <template>
-  <q-page class="shift-page bg-dark-page text-white" style="min-height: 100vh; padding-bottom: 40px;">
+  <q-page class="shift-page bg-grey-2" style="min-height: 100vh; padding-bottom: 40px;">
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- 🔝 Top Bar / Header -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <div class="top-nav q-px-lg q-py-sm row items-center no-wrap shadow-3" style="background: #111827; border-bottom: 1px solid rgba(255,255,255,0.08); gap: 12px; flex-wrap: wrap;">
+    <div class="top-nav bg-white q-px-lg q-py-sm row items-center no-wrap shadow-1" style="border-bottom: 1px solid #e8e0f0; gap: 12px; flex-wrap: wrap;">
       <div class="row items-center q-gutter-x-sm">
-        <q-icon name="assignment" size="28px" color="amber-4" />
+        <q-icon name="assignment" size="28px" color="primary" />
         <div>
-          <div class="text-subtitle1 text-weight-bolder text-white" style="letter-spacing: -0.3px; line-height: 1.2;">
-            E-Logbook & Shift Handover
+          <div class="text-subtitle1 text-weight-bold text-grey-9" style="letter-spacing: -0.3px; line-height: 1.2;">
+            {{ isThai ? "E-Logbook & ส่งมอบกะ" : "E-Logbook & Shift Handover" }}
           </div>
-          <div class="text-caption text-grey-5" style="font-size: 11px;">
+          <div class="text-caption text-grey-6" style="font-size: 11px;">
             {{ isThai ? "สมุดบันทึกส่งมอบงานประจำกะดิจิทัล" : "Digital Shift Handover & Operational Logbook" }}
           </div>
         </div>
       </div>
 
       <!-- Current Active / Viewing Shift Badge -->
-      <q-chip dense color="deep-purple-9" text-color="deep-purple-2" class="q-ml-sm text-weight-bold" icon="schedule">
-        <span v-if="isViewingToday" class="text-caption text-purple-3 q-mr-xs">{{ isThai ? 'กะปัจจุบัน:' : 'LIVE:' }}</span>
-        <span v-else class="text-caption text-amber-3 q-mr-xs">{{ isThai ? 'กะของวันที่:' : 'VIEWING:' }}</span>
+      <q-chip dense :color="isViewingToday ? 'purple-1' : 'blue-1'" :text-color="isViewingToday ? 'purple-9' : 'blue-9'" class="q-ml-sm text-weight-bold" icon="schedule">
+        <span v-if="isViewingToday" class="text-caption text-purple-9 q-mr-xs">{{ isThai ? 'กะปัจจุบัน:' : 'LIVE:' }}</span>
+        <span v-else class="text-caption text-blue-9 q-mr-xs">{{ isThai ? 'กะของวันที่:' : 'VIEWING:' }}</span>
         {{ currentShiftLabel }}
-        <span class="q-ml-xs text-amber-3" v-if="isViewingToday && currentShiftInfo?.minutes_remaining">
+        <span class="q-ml-xs text-deep-purple text-weight-bolder" v-if="isViewingToday && currentShiftInfo?.minutes_remaining">
           ({{ isThai ? 'เหลือ ' + currentShiftInfo.minutes_remaining + ' น.' : currentShiftInfo.minutes_remaining + 'm left' }})
         </span>
       </q-chip>
@@ -30,12 +30,12 @@
 
       <!-- Plant Selector -->
       <div class="row items-center q-gutter-x-xs">
-        <span class="text-caption text-grey-4 text-weight-bold">PLANT:</span>
+        <span class="text-caption text-grey-7 text-weight-bold">PLANT:</span>
         <q-btn-toggle
           v-model="selectedPlant"
           :options="[{label:'Plant 1',value:1},{label:'Plant 2',value:2},{label:'Plant 3',value:3}]"
           dense unelevated rounded
-          color="blue-grey-9" text-color="grey-4"
+          color="grey-2" text-color="grey-8"
           toggle-color="primary" toggle-text-color="white"
           size="sm"
           @update:model-value="loadShiftData"
@@ -44,13 +44,13 @@
 
       <!-- Shift Type Selector -->
       <div class="row items-center q-gutter-x-xs">
-        <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'กะ:' : 'SHIFT:' }}</span>
+        <span class="text-caption text-grey-7 text-weight-bold">{{ isThai ? 'กะ:' : 'SHIFT:' }}</span>
         <q-btn-toggle
           v-model="selectedShift"
           :options="shiftOptions"
           dense unelevated rounded
-          color="blue-grey-9" text-color="grey-4"
-          toggle-color="amber-9" toggle-text-color="white"
+          color="grey-2" text-color="grey-8"
+          toggle-color="primary" toggle-text-color="white"
           size="sm"
           @update:model-value="loadShiftData"
         />
@@ -60,9 +60,9 @@
       <q-input
         v-model="selectedDate"
         type="date"
-        dense outlined dark
-        bg-color="grey-10"
-        style="width: 140px; font-size: 12px;"
+        dense outlined
+        bg-color="white"
+        style="width: 145px; font-size: 12px;"
         @update:model-value="loadShiftData"
       />
 
@@ -71,7 +71,7 @@
         <q-btn
           unelevated
           dense
-          color="teal-7"
+          color="positive"
           icon="save"
           :label="isThai ? 'บันทึกร่าง' : 'Save Draft'"
           class="q-px-sm text-weight-bold"
@@ -82,19 +82,19 @@
         <q-btn
           unelevated
           dense
-          color="amber-8"
+          color="primary"
           icon="email"
           :label="isThai ? 'ส่ง EMAIL สรุป' : 'Email Summary'"
-          class="q-px-sm text-weight-bold text-dark"
+          class="q-px-sm text-weight-bold"
           size="sm"
           @click="openEmailDialog"
         />
         <q-btn
-          outline
-          dense
-          color="grey-4"
-          icon="refresh"
+          flat
           round
+          dense
+          color="primary"
+          icon="refresh"
           size="sm"
           @click="loadShiftData"
         >
@@ -111,10 +111,11 @@
         v-model="activeTab"
         dense
         align="left"
-        class="text-grey-5 bg-grey-10 rounded-borders q-mb-md"
-        active-color="amber-4"
-        indicator-color="amber-4"
-        style="border: 1px solid rgba(255,255,255,0.06); border-radius: 10px;"
+        class="bg-white text-grey-7 rounded-borders shadow-1 q-mb-md"
+        active-color="primary"
+        indicator-color="primary"
+        active-bg-color="purple-1"
+        style="border: 1px solid #e8e0f0; border-radius: 8px;"
       >
         <q-tab name="kpis" icon="analytics" :label="isThai ? 'ภาพรวม & ยอดผลิต' : 'Overview & Yield'" />
         <q-tab name="issues" icon="warning" :label="isThai ? 'ปัญหาเครื่องจักร & ซ่อมบำรุง' : 'Machine Issues & Maintenance'">
@@ -132,17 +133,17 @@
         <!-- KPI Metric Cards Grid -->
         <div class="row q-col-gutter-md q-mb-md">
           <div class="col-12 col-sm-6 col-md-3">
-            <q-card class="kpi-card bg-slate shadow-4">
+            <q-card flat bordered class="bg-white shadow-1 kpi-card" style="border-radius: 8px; border: 1px solid #e8e0f0;">
               <q-card-section class="row items-center justify-between no-wrap q-pb-xs">
-                <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'BATCHES สำเร็จ' : 'COMPLETED BATCHES' }}</span>
-                <q-icon name="check_circle" color="green-4" size="22px" />
+                <span class="text-caption text-grey-7 text-weight-bold">{{ isThai ? 'BATCHES สำเร็จ' : 'COMPLETED BATCHES' }}</span>
+                <q-icon name="check_circle" color="green-7" size="24px" />
               </q-card-section>
               <q-card-section class="q-pt-none">
-                <div class="text-h4 text-weight-bolder text-green-4">
+                <div class="text-h4 text-weight-bolder text-green-7">
                   {{ shiftKpis.completed_batches || 0 }}
-                  <span class="text-body2 text-grey-5">/ {{ shiftKpis.total_batches || 0 }}</span>
+                  <span class="text-body2 text-grey-6">/ {{ shiftKpis.total_batches || 0 }}</span>
                 </div>
-                <div class="text-caption text-grey-5 q-mt-xs">
+                <div class="text-caption text-grey-6 q-mt-xs">
                   {{ isThai ? 'กำลังผลิต: ' + (shiftKpis.running_batches || 0) + ' Batch' : 'In Production: ' + (shiftKpis.running_batches || 0) + ' Batches' }}
                 </div>
               </q-card-section>
@@ -150,17 +151,17 @@
           </div>
 
           <div class="col-12 col-sm-6 col-md-3">
-            <q-card class="kpi-card bg-slate shadow-4">
+            <q-card flat bordered class="bg-white shadow-1 kpi-card" style="border-radius: 8px; border: 1px solid #e8e0f0;">
               <q-card-section class="row items-center justify-between no-wrap q-pb-xs">
-                <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'ยอดผลิตรวม (YIELD)' : 'TOTAL YIELD' }}</span>
-                <q-icon name="scale" color="cyan-4" size="22px" />
+                <span class="text-caption text-grey-7 text-weight-bold">{{ isThai ? 'ยอดผลิตรวม (YIELD)' : 'TOTAL YIELD' }}</span>
+                <q-icon name="scale" color="teal-7" size="24px" />
               </q-card-section>
               <q-card-section class="q-pt-none">
-                <div class="text-h4 text-weight-bolder text-cyan-4">
+                <div class="text-h4 text-weight-bolder text-teal-7">
                   {{ formatNumber(shiftKpis.total_volume_kg || 0) }}
-                  <span class="text-body2 text-grey-5">kg</span>
+                  <span class="text-body2 text-grey-6">kg</span>
                 </div>
-                <div class="text-caption text-grey-5 q-mt-xs">
+                <div class="text-caption text-grey-6 q-mt-xs">
                   {{ isThai ? 'เป้าหมาย: ' + formatNumber(shiftKpis.target_volume_kg || 0) + ' kg' : 'Target: ' + formatNumber(shiftKpis.target_volume_kg || 0) + ' kg' }}
                 </div>
               </q-card-section>
@@ -168,16 +169,16 @@
           </div>
 
           <div class="col-12 col-sm-6 col-md-3">
-            <q-card class="kpi-card bg-slate shadow-4">
+            <q-card flat bordered class="bg-white shadow-1 kpi-card" style="border-radius: 8px; border: 1px solid #e8e0f0;">
               <q-card-section class="row items-center justify-between no-wrap q-pb-xs">
-                <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'OEE ประจำกะ' : 'SHIFT OEE' }}</span>
-                <q-icon name="speed" color="lime-4" size="22px" />
+                <span class="text-caption text-grey-7 text-weight-bold">{{ isThai ? 'OEE ประจำกะ' : 'SHIFT OEE' }}</span>
+                <q-icon name="speed" color="deep-purple-7" size="24px" />
               </q-card-section>
               <q-card-section class="q-pt-none">
-                <div class="text-h4 text-weight-bolder text-lime-4">
+                <div class="text-h4 text-weight-bolder text-deep-purple-7">
                   {{ shiftKpis.oee_pct || 0 }}%
                 </div>
-                <div class="text-caption text-grey-5 q-mt-xs">
+                <div class="text-caption text-grey-6 q-mt-xs">
                   Availability: {{ shiftKpis.availability_pct || 0 }}% | Quality: {{ shiftKpis.quality_pct || 0 }}%
                 </div>
               </q-card-section>
@@ -185,17 +186,17 @@
           </div>
 
           <div class="col-12 col-sm-6 col-md-3">
-            <q-card class="kpi-card bg-slate shadow-4">
+            <q-card flat bordered class="bg-white shadow-1 kpi-card" style="border-radius: 8px; border: 1px solid #e8e0f0;">
               <q-card-section class="row items-center justify-between no-wrap q-pb-xs">
-                <span class="text-caption text-grey-4 text-weight-bold">{{ isThai ? 'DOWNTIME รวม' : 'TOTAL DOWNTIME' }}</span>
-                <q-icon name="timer_off" color="orange-4" size="22px" />
+                <span class="text-caption text-grey-7 text-weight-bold">{{ isThai ? 'DOWNTIME รวม' : 'TOTAL DOWNTIME' }}</span>
+                <q-icon name="timer_off" color="deep-orange-7" size="24px" />
               </q-card-section>
               <q-card-section class="q-pt-none">
-                <div class="text-h4 text-weight-bolder text-orange-4">
+                <div class="text-h4 text-weight-bolder text-deep-orange-7">
                   {{ shiftKpis.downtime_mins || 0 }}
-                  <span class="text-body2 text-grey-5">{{ isThai ? 'นาที' : 'mins' }}</span>
+                  <span class="text-body2 text-grey-6">{{ isThai ? 'นาที' : 'mins' }}</span>
                 </div>
-                <div class="text-caption text-grey-5 q-mt-xs">
+                <div class="text-caption text-grey-6 q-mt-xs">
                   {{ isThai ? 'ปัญหาเปิดอยู่: ' + openIssuesCount + ' รายการ' : 'Open Issues: ' + openIssuesCount }}
                 </div>
               </q-card-section>
@@ -204,15 +205,15 @@
         </div>
 
         <!-- Batches Produced in this Shift Table -->
-        <q-card class="bg-slate shadow-4 q-pa-md" style="border-radius: 12px;">
+        <q-card flat bordered class="bg-white shadow-1 q-pa-md" style="border-radius: 8px; border: 1px solid #e8e0f0;">
           <div class="row items-center justify-between q-mb-md">
             <div class="row items-center q-gutter-x-sm">
-              <q-icon name="view_list" size="20px" color="cyan-3" />
-              <span class="text-subtitle1 text-weight-bold">
+              <q-icon name="view_list" size="22px" color="primary" />
+              <span class="text-subtitle1 text-weight-bold text-grey-9">
                 {{ isThai ? 'รายการ Batch ที่ผลิตในกะนี้ (Plant ' + selectedPlant + ')' : 'Shift Production Batches (Plant ' + selectedPlant + ')' }}
               </span>
             </div>
-            <q-badge color="blue-grey-8" text-color="grey-3">
+            <q-badge color="blue-1" text-color="blue-9" style="font-size: 12px; padding: 4px 8px;">
               {{ isThai ? 'ช่วงเวลา: ' : 'Time: ' }}{{ shiftData?.time_range || '-' }}
             </q-badge>
           </div>
@@ -222,10 +223,10 @@
             :columns="batchColumns"
             row-key="batch_id"
             dense
-            dark
             flat
+            bordered
             :loading="loadingData"
-            class="custom-table"
+            class="bg-white app-table"
             :no-data-label="isThai ? 'ไม่มีข้อมูล Batch ในช่วงเวลากะนี้' : 'No batch data recorded for this shift'"
           >
             <template v-slot:body-cell-status="props">
@@ -254,14 +255,14 @@
       <!-- TAB 2: ⚠️ Machinery Issues & Maintenance -->
       <!-- ───────────────────────────────────────────────────────────── -->
       <div v-if="activeTab === 'issues'">
-        <q-card class="bg-slate shadow-4 q-pa-md q-mb-md" style="border-radius: 12px;">
+        <q-card flat bordered class="bg-white shadow-1 q-pa-md q-mb-md" style="border-radius: 8px; border: 1px solid #e8e0f0;">
           <div class="row items-center justify-between q-mb-md">
             <div>
-              <div class="text-subtitle1 text-weight-bold row items-center q-gutter-x-sm">
-                <q-icon name="build_circle" color="orange-4" size="22px" />
+              <div class="text-subtitle1 text-weight-bold text-grey-9 row items-center q-gutter-x-sm">
+                <q-icon name="build_circle" color="orange-8" size="22px" />
                 <span>{{ isThai ? 'บันทึกปัญหาเครื่องจักร & การซ่อมบำรุง (Maintenance Log)' : 'Machine Issues & Maintenance Log' }}</span>
               </div>
-              <div class="text-caption text-grey-5">
+              <div class="text-caption text-grey-6">
                 {{ isThai ? 'บันทึกรายการปัญหาเครื่องที่รอซ่อม เพื่อส่งต่อให้ช่างและกะถัดไปรับทราบ' : 'Log equipment issues and pending repairs for maintenance and incoming shift.' }}
               </div>
             </div>
@@ -278,48 +279,48 @@
           <!-- Issues Cards Grid -->
           <div v-if="issuesList.length > 0" class="row q-col-gutter-md">
             <div v-for="iss in issuesList" :key="iss.id" class="col-12 col-md-6">
-              <q-card class="bg-grey-10 text-white q-pa-md issue-card" :class="'border-' + iss.severity?.toLowerCase()">
+              <q-card flat bordered class="bg-white q-pa-md issue-card shadow-1" :class="'border-' + iss.severity?.toLowerCase()" style="border-radius: 8px; border: 1px solid #e8e0f0;">
                 <div class="row items-center justify-between no-wrap">
                   <div class="row items-center q-gutter-x-sm">
                     <q-chip dense :color="getSeverityColor(iss.severity)" text-color="white" size="xs" class="text-weight-bolder">
                       {{ iss.severity }}
                     </q-chip>
-                    <span class="text-subtitle2 text-weight-bold text-cyan-3">{{ iss.machine_tag }}</span>
+                    <span class="text-subtitle2 text-weight-bold text-primary">{{ iss.machine_tag }}</span>
                   </div>
                   <q-chip dense :color="getIssueStatusColor(iss.status)" text-color="white" size="xs">
                     {{ iss.status }}
                   </q-chip>
                 </div>
 
-                <div class="text-body2 text-weight-bold q-mt-sm">{{ iss.title }}</div>
-                <div class="text-caption text-grey-4 q-mt-xs" style="min-height: 36px;">
+                <div class="text-body2 text-weight-bold text-grey-9 q-mt-sm">{{ iss.title }}</div>
+                <div class="text-caption text-grey-7 q-mt-xs" style="min-height: 36px;">
                   {{ iss.description || (isThai ? 'ไม่มีรายละเอียดเพิ่มเติม' : 'No additional details provided.') }}
                 </div>
 
-                <q-separator dark class="q-my-sm" style="opacity: 0.15;" />
+                <q-separator class="q-my-sm" />
 
-                <div class="row items-center justify-between text-caption text-grey-5">
+                <div class="row items-center justify-between text-caption text-grey-6">
                   <div>
-                    <q-icon name="person" size="14px" /> {{ isThai ? 'ผู้แจ้ง: ' : 'Reported by: ' }}{{ iss.reported_by || 'Operator' }}
+                    <q-icon name="person" size="14px" /> {{ isThai ? 'ผู้แจ้ง: ' : 'Reported by: ' }}<span class="text-grey-9">{{ iss.reported_by || 'Operator' }}</span>
                     <span v-if="iss.assigned_to" class="q-ml-sm">
-                      <q-icon name="engineering" size="14px" /> {{ isThai ? 'ผู้รับผิดชอบ: ' : 'Assigned: ' }}{{ iss.assigned_to }}
+                      <q-icon name="engineering" size="14px" /> {{ isThai ? 'ผู้รับผิดชอบ: ' : 'Assigned: ' }}<span class="text-grey-9">{{ iss.assigned_to }}</span>
                     </span>
                   </div>
                   <div class="row q-gutter-x-xs">
                     <q-btn
                       v-if="iss.status !== 'Resolved'"
-                      flat dense size="xs" color="green-4" icon="check" :label="isThai ? 'แก้แล้ว' : 'Resolve'"
+                      flat dense size="xs" color="positive" icon="check" :label="isThai ? 'แก้แล้ว' : 'Resolve'"
                       @click="resolveIssue(iss.id)"
                     />
-                    <q-btn flat dense size="xs" color="grey-4" icon="edit" @click="editIssue(iss)" />
+                    <q-btn flat dense size="xs" color="grey-7" icon="edit" @click="editIssue(iss)" />
                   </div>
                 </div>
               </q-card>
             </div>
           </div>
           <div v-else class="text-center q-pa-xl text-grey-5">
-            <q-icon name="task_alt" size="48px" color="green-5" class="q-mb-sm" /><br>
-            <span class="text-weight-bold">{{ isThai ? 'ไม่มีปัญหาเครื่องจักรค้างในระบบ (All Systems Normal)' : 'No open equipment issues in system (All Systems Normal)' }}</span>
+            <q-icon name="task_alt" size="48px" color="positive" class="q-mb-sm" /><br>
+            <span class="text-weight-bold text-grey-7">{{ isThai ? 'ไม่มีปัญหาเครื่องจักรค้างในระบบ (All Systems Normal)' : 'No open equipment issues in system (All Systems Normal)' }}</span>
           </div>
         </q-card>
       </div>
@@ -328,14 +329,14 @@
       <!-- TAB 3: 🧪 Chemical & Material Watchlist -->
       <!-- ───────────────────────────────────────────────────────────── -->
       <div v-if="activeTab === 'chemicals'">
-        <q-card class="bg-slate shadow-4 q-pa-md" style="border-radius: 12px;">
+        <q-card flat bordered class="bg-white shadow-1 q-pa-md" style="border-radius: 8px; border: 1px solid #e8e0f0;">
           <div class="row items-center justify-between q-mb-md">
             <div>
-              <div class="text-subtitle1 text-weight-bold row items-center q-gutter-x-sm">
-                <q-icon name="science" color="cyan-4" size="22px" />
+              <div class="text-subtitle1 text-weight-bold text-grey-9 row items-center q-gutter-x-sm">
+                <q-icon name="science" color="teal-7" size="22px" />
                 <span>{{ isThai ? 'รายการสารเคมี & วัตถุดิบเฝ้าระวัง (Chemical Low-Stock Watchlist)' : 'Critical Raw Materials & Chemical Watchlist' }}</span>
               </div>
-              <div class="text-caption text-grey-5">
+              <div class="text-caption text-grey-6">
                 {{ isThai ? 'เตือนรายการสารเคมีที่สต็อกเหลือน้อย หรือต้องเตรียมเบิกล่วงหน้าสำหรับกะถัดไป' : 'Monitor low-stock raw materials or advance requisition requests for the next shift.' }}
               </div>
             </div>
@@ -353,12 +354,12 @@
             :rows="materialAlerts"
             :columns="materialColumns"
             row-key="ingredient_name"
-            dense dark flat
-            class="custom-table"
+            dense flat bordered
+            class="bg-white app-table"
             :no-data-label="isThai ? 'ไม่มีรายการสารเคมีเฝ้าระวังในกะนี้' : 'No chemical alerts recorded for this shift'"
           >
             <template v-slot:body-cell-current_stock="props">
-              <q-td :props="props" class="text-weight-bold" :class="props.value <= props.row.min_threshold ? 'text-red-4' : 'text-green-4'">
+              <q-td :props="props" class="text-weight-bold" :class="props.value <= props.row.min_threshold ? 'text-negative' : 'text-positive'">
                 {{ formatNumber(props.value) }} {{ props.row.unit }}
               </q-td>
             </template>
@@ -369,7 +370,7 @@
             </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
-                <q-btn flat dense round icon="delete" color="red-4" size="xs" @click="removeMaterialAlert(props.rowIndex)" />
+                <q-btn flat dense round icon="delete" color="negative" size="xs" @click="removeMaterialAlert(props.rowIndex)" />
               </q-td>
             </template>
           </q-table>
@@ -383,20 +384,20 @@
         <div class="row q-col-gutter-md">
           <!-- Left: Handover Checklist & Outgoing Sign-off -->
           <div class="col-12 col-md-6">
-            <q-card class="bg-slate shadow-4 q-pa-md" style="border-radius: 12px; height: 100%;">
-              <div class="text-subtitle1 text-weight-bold text-amber-4 row items-center q-gutter-x-sm q-mb-sm">
+            <q-card flat bordered class="bg-white shadow-1 q-pa-md" style="border-radius: 8px; border: 1px solid #e8e0f0; height: 100%;">
+              <div class="text-subtitle1 text-weight-bold text-primary row items-center q-gutter-x-sm q-mb-sm">
                 <q-icon name="checklist" size="22px" />
                 <span>{{ isThai ? '1. รายการตรวจสอบก่อนส่งมอบ (Shift Checklist)' : '1. Pre-Handover Checklist (Shift Checklist)' }}</span>
               </div>
 
               <div class="q-gutter-y-xs q-mb-md">
-                <q-checkbox v-model="checklist.tank_cleaned" dark :label="isThai ? 'ล้างถังผสม / ท่อทางเรียบร้อย (CIP / Flush OK)' : 'Mixer Tank & Piping Cleaned (CIP / Flush OK)'" color="teal-5" />
-                <q-checkbox v-model="checklist.area_5s" dark :label="isThai ? 'ทำความสะอาดพื้นที่ทำงาน 5ส เรียบร้อย' : 'Work Area Cleaned & 5S Maintained'" color="teal-5" />
-                <q-checkbox v-model="checklist.safety_normal" dark :label="isThai ? 'ระบบความปลอดภัย / Emergency Switch อยู่ในสภาพปกติ' : 'Safety System & Emergency Switch Normal'" color="teal-5" />
-                <q-checkbox v-model="checklist.waste_disposed" dark :label="isThai ? 'ทิ้งกาก/ของเสียและจัดเก็บถุงสารเคมีเรียบร้อย' : 'Waste Disposed & Raw Material Bags Stored Properly'" color="teal-5" />
+                <q-checkbox v-model="checklist.tank_cleaned" :label="isThai ? 'ล้างถังผสม / ท่อทางเรียบร้อย (CIP / Flush OK)' : 'Mixer Tank & Piping Cleaned (CIP / Flush OK)'" color="primary" class="text-grey-9 text-weight-medium" />
+                <q-checkbox v-model="checklist.area_5s" :label="isThai ? 'ทำความสะอาดพื้นที่ทำงาน 5ส เรียบร้อย' : 'Work Area Cleaned & 5S Maintained'" color="primary" class="text-grey-9 text-weight-medium" />
+                <q-checkbox v-model="checklist.safety_normal" :label="isThai ? 'ระบบความปลอดภัย / Emergency Switch อยู่ในสภาพปกติ' : 'Safety System & Emergency Switch Normal'" color="primary" class="text-grey-9 text-weight-medium" />
+                <q-checkbox v-model="checklist.waste_disposed" :label="isThai ? 'ทิ้งกาก/ของเสียและจัดเก็บถุงสารเคมีเรียบร้อย' : 'Waste Disposed & Raw Material Bags Stored Properly'" color="primary" class="text-grey-9 text-weight-medium" />
               </div>
 
-              <q-separator dark class="q-my-md" style="opacity: 0.15;" />
+              <q-separator class="q-my-md" />
 
               <div class="text-subtitle1 text-weight-bold text-primary row items-center q-gutter-x-sm q-mb-xs">
                 <q-icon name="edit_note" size="22px" />
@@ -406,20 +407,19 @@
                 v-model="outgoingNotes"
                 type="textarea"
                 rows="4"
-                outlined dark dense
-                bg-color="grey-10"
+                outlined dense
+                bg-color="white"
                 :placeholder="isThai ? 'ระบุสิ่งที่ต้องการเน้นย้ำ หรือฝากงานให้กะถัดไป...' : 'Enter critical notes, pending tasks, or instructions for next shift...'"
                 class="q-mb-md"
               />
 
               <div class="row items-center justify-between">
-                <div class="text-caption text-grey-4">
-                  {{ isThai ? 'ผู้ส่งมอบกะ: ' : 'Outgoing Operator: ' }}<strong class="text-white">{{ currentUser?.full_name || currentUser?.username || 'Operator' }}</strong>
+                <div class="text-caption text-grey-7">
+                  {{ isThai ? 'ผู้ส่งมอบกะ: ' : 'Outgoing Operator: ' }}<strong class="text-grey-9">{{ currentUser?.full_name || currentUser?.username || 'Operator' }}</strong>
                 </div>
                 <q-btn
                   unelevated
-                  color="amber-9"
-                  text-color="dark"
+                  color="primary"
                   icon="how_to_reg"
                   :label="isThai ? 'ลงชื่อยืนยันส่งมอบกะ (Submit)' : 'Submit Shift Handover (SUBMIT)'"
                   class="text-weight-bold"
@@ -432,55 +432,55 @@
 
           <!-- Right: Incoming Operator Acknowledge (QR Badge / Sign) -->
           <div class="col-12 col-md-6">
-            <q-card class="bg-slate shadow-4 q-pa-md" style="border-radius: 12px; height: 100%;">
-              <div class="text-subtitle1 text-weight-bold text-purple-3 row items-center q-gutter-x-sm q-mb-sm">
+            <q-card flat bordered class="bg-white shadow-1 q-pa-md" style="border-radius: 8px; border: 1px solid #e8e0f0; height: 100%;">
+              <div class="text-subtitle1 text-weight-bold text-deep-purple-8 row items-center q-gutter-x-sm q-mb-sm">
                 <q-icon name="qr_code_scanner" size="22px" />
                 <span>{{ isThai ? '3. การรับมอบงานของกะใหม่ (Incoming Sign-off)' : '3. Incoming Shift Sign-Off' }}</span>
               </div>
 
               <!-- Status Banner -->
-              <div class="q-pa-md rounded-borders q-mb-md" :class="handoverRecord?.status === 'Acknowledged' ? 'bg-green-10 text-white' : 'bg-grey-10 text-grey-4'" style="border: 1px solid rgba(255,255,255,0.1);">
+              <div class="q-pa-md rounded-borders q-mb-md" :class="handoverRecord?.status === 'Acknowledged' ? 'bg-green-1 border-green text-green-9' : 'bg-grey-2 border-grey text-grey-8'" style="border: 1px solid #e0e0e0;">
                 <div class="row items-center justify-between">
                   <span class="text-weight-bold">{{ isThai ? 'สถานะเอกสารส่งกะ:' : 'Handover Document Status:' }}</span>
-                  <q-chip dense :color="handoverRecord?.status === 'Acknowledged' ? 'green-6' : 'amber-8'" text-color="white" class="text-weight-bold">
+                  <q-chip dense :color="handoverRecord?.status === 'Acknowledged' ? 'green-7' : 'amber-8'" text-color="white" class="text-weight-bold">
                     {{ handoverRecord?.status || 'Draft' }}
                   </q-chip>
                 </div>
-                <div v-if="handoverRecord?.acknowledged_at" class="text-caption text-grey-3 q-mt-xs">
+                <div v-if="handoverRecord?.acknowledged_at" class="text-caption text-green-9 q-mt-xs">
                   {{ isThai ? '✅ รับมอบแล้วโดย: ' : '✅ Acknowledged by: ' }}<strong>{{ handoverRecord.incoming_operator_name }}</strong> {{ isThai ? 'เมื่อ ' : 'at ' }}{{ handoverRecord.acknowledged_at }}
                 </div>
-                <div v-else class="text-caption text-amber-3 q-mt-xs">
+                <div v-else class="text-caption text-amber-9 q-mt-xs text-weight-medium">
                   {{ isThai ? '⏳ รอกะถัดไปลงชื่อรับมอบงาน' : '⏳ Awaiting incoming shift sign-off' }}
                 </div>
               </div>
 
               <div v-if="handoverRecord?.status !== 'Acknowledged'">
-                <div class="text-body2 text-grey-3 q-mb-sm">
+                <div class="text-body2 text-grey-7 q-mb-sm">
                   {{ isThai ? 'สำหรับ Operator กะใหม่: สแกน QR Badge พนักงาน หรือกดปุ่มด้านล่างเพื่อเซ็นรับมอบกะ' : 'For Next Shift Operator: Scan your QR Badge or click the button below to sign off' }}
                 </div>
 
                 <!-- QR Badge Fast Scan Box -->
-                <div class="badge-scan-box q-pa-md q-mb-md text-center" style="border-radius: 12px; background: rgba(126, 87, 194, 0.15); border: 2px dashed #7e57c2;">
-                  <q-icon name="badge" size="36px" color="deep-purple-3" class="q-mb-xs" />
-                  <div class="text-subtitle2 text-weight-bold text-purple-2">
+                <div class="badge-scan-box q-pa-md q-mb-md text-center" style="border-radius: 10px; background: #f8f6fc; border: 2px dashed #b39ddb;">
+                  <q-icon name="badge" size="36px" color="deep-purple-6" class="q-mb-xs" />
+                  <div class="text-subtitle2 text-weight-bold text-deep-purple-8">
                     {{ isThai ? 'แตะบัตร QR Badge เพื่อรับกะทันที' : 'Tap / Scan QR Badge to Sign Off' }}
                   </div>
                   <q-input
                     ref="handoverBadgeRef"
                     v-model="badgeInputHandover"
-                    outlined dense dark
+                    outlined dense
                     placeholder="Waiting for RFID/QR scan..."
-                    bg-color="grey-10"
+                    bg-color="white"
                     class="q-mt-sm scan-input"
                     @keyup.enter="handleBadgeAcknowledge"
                   >
-                    <template v-slot:prepend><q-icon name="qr_code" color="purple-3" /></template>
+                    <template v-slot:prepend><q-icon name="qr_code" color="deep-purple-6" /></template>
                   </q-input>
                 </div>
 
                 <q-btn
-                  unelevated
-                  color="deep-purple-7"
+                  outline
+                  color="deep-purple-8"
                   icon="verified"
                   :label="isThai ? 'ลงชื่อรับมอบงานแบบระบุชื่อ (Manual Sign)' : 'Manual Shift Sign-Off (MANUAL SIGN)'"
                   class="full-width text-weight-bold q-py-sm"
@@ -496,22 +496,22 @@
       <!-- TAB 5: 📜 Handover History & Search -->
       <!-- ───────────────────────────────────────────────────────────── -->
       <div v-if="activeTab === 'history'">
-        <q-card class="bg-slate shadow-4 q-pa-md" style="border-radius: 12px;">
+        <q-card flat bordered class="bg-white shadow-1 q-pa-md" style="border-radius: 8px; border: 1px solid #e8e0f0;">
           <div class="row items-center justify-between q-mb-md">
-            <div class="text-subtitle1 text-weight-bold row items-center q-gutter-x-sm">
-              <q-icon name="history" color="amber-4" size="22px" />
+            <div class="text-subtitle1 text-weight-bold text-grey-9 row items-center q-gutter-x-sm">
+              <q-icon name="history" color="primary" size="22px" />
               <span>{{ isThai ? 'ประวัติการส่งมอบงานย้อนหลัง (Handover Archive)' : 'Shift Handover History Archive' }}</span>
             </div>
-            <q-btn flat dense icon="refresh" color="grey-4" :label="isThai ? 'โหลดใหม่' : 'Reload'" @click="loadHistoryList" size="sm" />
+            <q-btn flat dense icon="refresh" color="primary" :label="isThai ? 'โหลดใหม่' : 'Reload'" @click="loadHistoryList" size="sm" />
           </div>
 
           <q-table
             :rows="historyList"
             :columns="historyColumns"
             row-key="id"
-            dense dark flat
+            dense flat bordered
             :loading="loadingHistory"
-            class="custom-table"
+            class="bg-white app-table"
             :no-data-label="isThai ? 'ไม่มีประวัติการส่งกะ' : 'No handover records found'"
           >
             <template v-slot:body-cell-status="props">
@@ -523,7 +523,7 @@
             </template>
             <template v-slot:body-cell-actions="props">
               <q-td :props="props">
-                <q-btn flat dense size="xs" color="cyan-3" icon="visibility" :label="isThai ? 'ดูสรุป' : 'View Details'" @click="viewHistoryDetail(props.row.id)" />
+                <q-btn flat dense size="xs" color="primary" icon="visibility" :label="isThai ? 'ดูสรุป' : 'View Details'" @click="viewHistoryDetail(props.row.id)" />
               </q-td>
             </template>
           </q-table>
@@ -537,20 +537,20 @@
 
     <!-- Add Issue Dialog -->
     <q-dialog v-model="showIssueDialog">
-      <q-card class="bg-grey-10 text-white" style="min-width: 440px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);">
+      <q-card class="bg-white text-grey-9" style="min-width: 440px; border-radius: 10px; border: 1px solid #e8e0f0;">
         <q-card-section class="bg-primary text-white q-py-sm row items-center justify-between">
           <span class="text-subtitle1 text-weight-bold">⚠️ {{ isThai ? 'แจ้งปัญหาเครื่องจักร / ซ่อมบำรุง' : 'Report Machine Issue / Maintenance' }}</span>
           <q-btn flat round dense icon="close" v-close-popup size="sm" />
         </q-card-section>
         <q-card-section class="q-pa-md q-gutter-y-sm">
-          <q-input v-model="issueForm.machine_tag" :label="isThai ? 'รหัสเครื่องจักร (Machine Tag / Tank)' : 'Machine Tag / Tank'" dense outlined dark bg-color="grey-9" placeholder="e.g. Mixer Tank 1, Valve Steam A" />
-          <q-input v-model="issueForm.title" :label="isThai ? 'หัวข้อปัญหา' : 'Issue Title'" dense outlined dark bg-color="grey-9" :placeholder="isThai ? 'เช่น วาล์วปิดไม่สนิท, มอเตอร์มีเสียงดัง' : 'e.g. Steam valve leak, motor vibration'" />
-          <q-select v-model="issueForm.severity" :options="['Low', 'Medium', 'High', 'Critical']" :label="isThai ? 'ระดับความเร่งด่วน' : 'Severity Level'" dense outlined dark bg-color="grey-9" />
-          <q-input v-model="issueForm.description" :label="isThai ? 'รายละเอียดอาการ' : 'Description / Symptom'" type="textarea" rows="3" dense outlined dark bg-color="grey-9" />
-          <q-input v-model="issueForm.assigned_to" :label="isThai ? 'มอบหมายให้ (ช่าง/ทีม)' : 'Assigned To (Technician / Team)'" dense outlined dark bg-color="grey-9" :placeholder="isThai ? 'เช่น ทีม Maintenance กะบ่าย' : 'e.g. Maintenance Team B'" />
+          <q-input v-model="issueForm.machine_tag" :label="isThai ? 'รหัสเครื่องจักร (Machine Tag / Tank)' : 'Machine Tag / Tank'" dense outlined bg-color="white" placeholder="e.g. Mixer Tank 1, Valve Steam A" />
+          <q-input v-model="issueForm.title" :label="isThai ? 'หัวข้อปัญหา' : 'Issue Title'" dense outlined bg-color="white" :placeholder="isThai ? 'เช่น วาล์วปิดไม่สนิท, มอเตอร์มีเสียงดัง' : 'e.g. Steam valve leak, motor vibration'" />
+          <q-select v-model="issueForm.severity" :options="['Low', 'Medium', 'High', 'Critical']" :label="isThai ? 'ระดับความเร่งด่วน' : 'Severity Level'" dense outlined bg-color="white" />
+          <q-input v-model="issueForm.description" :label="isThai ? 'รายละเอียดอาการ' : 'Description / Symptom'" type="textarea" rows="3" dense outlined bg-color="white" />
+          <q-input v-model="issueForm.assigned_to" :label="isThai ? 'มอบหมายให้ (ช่าง/ทีม)' : 'Assigned To (Technician / Team)'" dense outlined bg-color="white" :placeholder="isThai ? 'เช่น ทีม Maintenance กะบ่าย' : 'e.g. Maintenance Team B'" />
         </q-card-section>
         <q-card-actions align="right" class="q-pa-md">
-          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-4" v-close-popup />
+          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-7" v-close-popup />
           <q-btn unelevated :label="isThai ? 'บันทึกปัญหา' : 'Save Issue'" color="primary" @click="submitIssue" />
         </q-card-actions>
       </q-card>
@@ -558,26 +558,26 @@
 
     <!-- Add Material Watchlist Dialog -->
     <q-dialog v-model="showMaterialDialog">
-      <q-card class="bg-grey-10 text-white" style="min-width: 400px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);">
+      <q-card class="bg-white text-grey-9" style="min-width: 400px; border-radius: 10px; border: 1px solid #e8e0f0;">
         <q-card-section class="bg-teal-8 text-white q-py-sm row items-center justify-between">
           <span class="text-subtitle1 text-weight-bold">🧪 {{ isThai ? 'เพิ่มรายการสารเคมีเฝ้าระวัง' : 'Add Chemical Watchlist Item' }}</span>
           <q-btn flat round dense icon="close" v-close-popup size="sm" />
         </q-card-section>
         <q-card-section class="q-pa-md q-gutter-y-sm">
-          <q-input v-model="materialForm.ingredient_name" :label="isThai ? 'ชื่อสารเคมี / วัตถุดิบ' : 'Material / Ingredient Name'" dense outlined dark bg-color="grey-9" />
-          <q-input v-model="materialForm.mat_sap_code" :label="isThai ? 'รหัส SAP (ถ้ามี)' : 'SAP Code (Optional)'" dense outlined dark bg-color="grey-9" />
+          <q-input v-model="materialForm.ingredient_name" :label="isThai ? 'ชื่อสารเคมี / วัตถุดิบ' : 'Material / Ingredient Name'" dense outlined bg-color="white" />
+          <q-input v-model="materialForm.mat_sap_code" :label="isThai ? 'รหัส SAP (ถ้ามี)' : 'SAP Code (Optional)'" dense outlined bg-color="white" />
           <div class="row q-col-gutter-sm">
             <div class="col-6">
-              <q-input v-model.number="materialForm.current_stock" :label="isThai ? 'คงเหลือปัจจุบัน' : 'Current Stock'" type="number" dense outlined dark bg-color="grey-9" />
+              <q-input v-model.number="materialForm.current_stock" :label="isThai ? 'คงเหลือปัจจุบัน' : 'Current Stock'" type="number" dense outlined bg-color="white" />
             </div>
             <div class="col-6">
-              <q-input v-model.number="materialForm.min_threshold" :label="isThai ? 'จุดเตือนสต็อกต่ำ' : 'Min Threshold'" type="number" dense outlined dark bg-color="grey-9" />
+              <q-input v-model.number="materialForm.min_threshold" :label="isThai ? 'จุดเตือนสต็อกต่ำ' : 'Min Threshold'" type="number" dense outlined bg-color="white" />
             </div>
           </div>
-          <q-input v-model="materialForm.alert_note" :label="isThai ? 'ข้อความเตือน (Note)' : 'Alert Note'" dense outlined dark bg-color="grey-9" :placeholder="isThai ? 'เช่น เบิกล่วงหน้า 5 ถุง' : 'e.g. Requisition 5 bags advance'" />
+          <q-input v-model="materialForm.alert_note" :label="isThai ? 'ข้อความเตือน (Note)' : 'Alert Note'" dense outlined bg-color="white" :placeholder="isThai ? 'เช่น เบิกล่วงหน้า 5 ถุง' : 'e.g. Requisition 5 bags advance'" />
         </q-card-section>
         <q-card-actions align="right" class="q-pa-md">
-          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-4" v-close-popup />
+          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-7" v-close-popup />
           <q-btn unelevated :label="isThai ? 'เพิ่มรายการ' : 'Add Item'" color="teal-7" @click="submitMaterialAlert" />
         </q-card-actions>
       </q-card>
@@ -585,13 +585,13 @@
 
     <!-- Email Dispatch Dialog -->
     <q-dialog v-model="showEmailDialog">
-      <q-card class="bg-grey-10 text-white" style="min-width: 480px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);">
-        <q-card-section class="bg-amber-9 text-dark q-py-sm row items-center justify-between">
-          <span class="text-subtitle1 text-weight-bolder">📧 {{ isThai ? 'ส่งรายงานสรุปกะผ่าน Email' : 'Send Shift Summary Email Report' }}</span>
+      <q-card class="bg-white text-grey-9" style="min-width: 480px; border-radius: 10px; border: 1px solid #e8e0f0;">
+        <q-card-section class="bg-primary text-white q-py-sm row items-center justify-between">
+          <span class="text-subtitle1 text-weight-bold">📧 {{ isThai ? 'ส่งรายงานสรุปกะผ่าน Email' : 'Send Shift Summary Email Report' }}</span>
           <q-btn flat round dense icon="close" v-close-popup size="sm" />
         </q-card-section>
         <q-card-section class="q-pa-md q-gutter-y-sm">
-          <div class="text-caption text-grey-4">
+          <div class="text-caption text-grey-7">
             {{ isThai ? 'ระบบจะสร้างรายงาน HTML สรุป KPI, ยอดผลิต, และปัญหาเครื่องจักร ส่งตรงเข้า Email' : 'System will generate HTML email summary of shift KPIs, yield, and machinery issues.' }}
           </div>
           <q-select
@@ -599,36 +599,36 @@
             :label="isThai ? 'ผู้รับรายงาน (Recipients)' : 'Recipients'"
             use-input use-chips multiple
             new-value-mode="add-unique"
-            dense outlined dark bg-color="grey-9"
+            dense outlined bg-color="white"
             :hint="isThai ? 'พิมพ์อีเมลแล้วกด Enter เพื่อเพิ่ม' : 'Type email and press Enter to add'"
           />
           <q-input
             v-model="emailCustomNotes"
             :label="isThai ? 'ข้อความเพิ่มเติมใน Email' : 'Additional Email Notes'"
             type="textarea" rows="2"
-            dense outlined dark bg-color="grey-9"
+            dense outlined bg-color="white"
           />
         </q-card-section>
         <q-card-actions align="right" class="q-pa-md">
-          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-4" v-close-popup />
-          <q-btn unelevated :label="isThai ? 'ส่ง Email ทันที' : 'Send Email Now'" color="amber-9" text-color="dark" class="text-weight-bold" :loading="sendingEmail" @click="dispatchEmailReport" />
+          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-7" v-close-popup />
+          <q-btn unelevated :label="isThai ? 'ส่ง Email ทันที' : 'Send Email Now'" color="primary" class="text-weight-bold" :loading="sendingEmail" @click="dispatchEmailReport" />
         </q-card-actions>
       </q-card>
     </q-dialog>
 
     <!-- Manual Acknowledge Sign Dialog -->
     <q-dialog v-model="showAcknowledgeDialog">
-      <q-card class="bg-grey-10 text-white" style="min-width: 400px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1);">
+      <q-card class="bg-white text-grey-9" style="min-width: 400px; border-radius: 10px; border: 1px solid #e8e0f0;">
         <q-card-section class="bg-deep-purple-8 text-white q-py-sm row items-center justify-between">
           <span class="text-subtitle1 text-weight-bold">✍️ {{ isThai ? 'ลงชื่อรับมอบงานกะใหม่ (Manual Sign-off)' : 'Manual Incoming Shift Sign-Off' }}</span>
           <q-btn flat round dense icon="close" v-close-popup size="sm" />
         </q-card-section>
         <q-card-section class="q-pa-md q-gutter-y-sm">
-          <q-input v-model="incomingNameInput" :label="isThai ? 'ชื่อ-นามสกุล ผู้รับมอบงาน' : 'Incoming Operator Full Name'" dense outlined dark bg-color="grey-9" />
-          <q-input v-model="incomingNotesInput" :label="isThai ? 'ข้อความตอบรับ / บันทึกเพิ่มเติม' : 'Incoming Acceptance Notes / Remarks'" type="textarea" rows="3" dense outlined dark bg-color="grey-9" />
+          <q-input v-model="incomingNameInput" :label="isThai ? 'ชื่อ-นามสกุล ผู้รับมอบงาน' : 'Incoming Operator Full Name'" dense outlined bg-color="white" />
+          <q-input v-model="incomingNotesInput" :label="isThai ? 'ข้อความตอบรับ / บันทึกเพิ่มเติม' : 'Incoming Acceptance Notes / Remarks'" type="textarea" rows="3" dense outlined bg-color="white" />
         </q-card-section>
         <q-card-actions align="right" class="q-pa-md">
-          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-4" v-close-popup />
+          <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-7" v-close-popup />
           <q-btn unelevated :label="isThai ? 'ยืนยันเซ็นรับกะ' : 'Confirm Sign-Off'" color="deep-purple-7" class="text-weight-bold" @click="submitManualAcknowledge" />
         </q-card-actions>
       </q-card>
@@ -749,165 +749,182 @@ const materialForm = ref({
 })
 
 const showEmailDialog = ref<boolean>(false)
-const emailRecipients = ref<string[]>(['supervisor@mitrphol.com', 'plant.manager@mitrphol.com'])
+const emailRecipients = ref<string[]>(['production-leads@mitrphol.com', 'maintenance@mitrphol.com'])
 const emailCustomNotes = ref<string>('')
 
 const showAcknowledgeDialog = ref<boolean>(false)
 const incomingNameInput = ref<string>('')
 const incomingNotesInput = ref<string>('')
 
-// History
+// History Tab
 const historyList = ref<any[]>([])
 const loadingHistory = ref<boolean>(false)
+
+// Table Columns (Bilingual)
+const batchColumns = computed(() => [
+  { name: 'batch_id', label: isThai.value ? 'BATCH ID' : 'BATCH ID', field: 'batch_id', align: 'left' as const, sortable: true },
+  { name: 'sku_name', label: isThai.value ? 'สูตร / SKU' : 'SKU / PRODUCT', field: 'sku_name', align: 'left' as const, sortable: true },
+  { name: 'batch_size', label: isThai.value ? 'ขนาด BATCH' : 'BATCH SIZE', field: 'batch_size', align: 'right' as const, sortable: true },
+  { name: 'status', label: isThai.value ? 'สถานะ' : 'STATUS', field: 'status', align: 'center' as const, sortable: true },
+  { name: 'start_time', label: isThai.value ? 'เวลาเริ่ม' : 'START TIME', field: 'start_time', align: 'center' as const, sortable: true },
+  { name: 'end_time', label: isThai.value ? 'เวลาเสร็จ' : 'END TIME', field: 'end_time', align: 'center' as const, sortable: true }
+])
+
+const materialColumns = computed(() => [
+  { name: 'ingredient_name', label: isThai.value ? 'ชื่อสารเคมี / วัตถุดิบ' : 'MATERIAL NAME', field: 'ingredient_name', align: 'left' as const },
+  { name: 'mat_sap_code', label: isThai.value ? 'SAP CODE' : 'SAP CODE', field: 'mat_sap_code', align: 'left' as const },
+  { name: 'current_stock', label: isThai.value ? 'สต็อกคงเหลือ' : 'CURRENT STOCK', field: 'current_stock', align: 'right' as const },
+  { name: 'min_threshold', label: isThai.value ? 'จุดแจ้งเตือนขั้นต่ำ' : 'MIN THRESHOLD', field: 'min_threshold', align: 'right' as const },
+  { name: 'alert_note', label: isThai.value ? 'หมายเหตุ / การดำเนินการ' : 'NOTE / ACTION', field: 'alert_note', align: 'left' as const },
+  { name: 'actions', label: isThai.value ? 'จัดการ' : 'ACTION', field: 'actions', align: 'center' as const }
+])
+
+const historyColumns = computed(() => [
+  { name: 'shift_date', label: isThai.value ? 'วันที่' : 'DATE', field: 'shift_date', align: 'left' as const, sortable: true },
+  { name: 'shift_type', label: isThai.value ? 'กะ' : 'SHIFT', field: 'shift_type', align: 'left' as const, sortable: true },
+  { name: 'plant_id', label: isThai.value ? 'PLANT' : 'PLANT', field: 'plant_id', align: 'center' as const },
+  { name: 'outgoing_operator_name', label: isThai.value ? 'ผู้ส่งมอบ' : 'OUTGOING OPERATOR', field: 'outgoing_operator_name', align: 'left' as const },
+  { name: 'incoming_operator_name', label: isThai.value ? 'ผู้รับมอบ' : 'INCOMING OPERATOR', field: 'incoming_operator_name', align: 'left' as const },
+  { name: 'status', label: isThai.value ? 'สถานะ' : 'STATUS', field: 'status', align: 'center' as const },
+  { name: 'actions', label: isThai.value ? 'ดูข้อมูล' : 'VIEW', field: 'actions', align: 'center' as const }
+])
 
 const openIssuesCount = computed(() => {
   return issuesList.value.filter(i => i.status !== 'Resolved').length
 })
 
-// Columns
-const batchColumns = computed(() => [
-  { name: 'batch_id', label: 'BATCH ID', field: 'batch_id', align: 'left' as const, sortable: true },
-  { name: 'sku_name', label: isThai.value ? 'สูตร / SKU' : 'SKU / PRODUCT', field: 'sku_name', align: 'left' as const, sortable: true },
-  { name: 'batch_size', label: isThai.value ? 'ขนาด BATCH' : 'BATCH SIZE', field: 'batch_size', align: 'right' as const, sortable: true },
-  { name: 'status', label: isThai.value ? 'สถานะ' : 'STATUS', field: 'status', align: 'center' as const, sortable: true },
-  { name: 'created_at', label: isThai.value ? 'เวลาเริ่ม' : 'START TIME', field: 'created_at', align: 'center' as const },
-  { name: 'updated_at', label: isThai.value ? 'เวลาเสร็จ' : 'END TIME', field: 'updated_at', align: 'center' as const }
-])
-
-const materialColumns = computed(() => [
-  { name: 'ingredient_name', label: isThai.value ? 'ชื่อสารเคมี / วัตถุดิบ' : 'Material / Ingredient Name', field: 'ingredient_name', align: 'left' as const },
-  { name: 'mat_sap_code', label: isThai.value ? 'รหัส SAP' : 'SAP Code', field: 'mat_sap_code', align: 'left' as const },
-  { name: 'current_stock', label: isThai.value ? 'คงเหลือ' : 'Current Stock', field: 'current_stock', align: 'right' as const },
-  { name: 'min_threshold', label: isThai.value ? 'เกณฑ์ต่ำสุด' : 'Min Threshold', field: 'min_threshold', align: 'right' as const },
-  { name: 'alert_note', label: isThai.value ? 'หมายเหตุ' : 'Notes / Instructions', field: 'alert_note', align: 'left' as const },
-  { name: 'actions', label: '', field: 'actions', align: 'center' as const }
-])
-
-const historyColumns = computed(() => [
-  { name: 'shift_date', label: isThai.value ? 'วันที่' : 'Date', field: 'shift_date', align: 'left' as const },
-  { name: 'plant', label: 'Plant', field: (row: any) => `Plant ${row.plant}`, align: 'center' as const },
-  { name: 'shift_type', label: isThai.value ? 'กะ' : 'Shift', field: 'shift_type', align: 'center' as const },
-  { name: 'outgoing_operator_name', label: isThai.value ? 'ผู้ส่งมอบ' : 'Outgoing Operator', field: 'outgoing_operator_name', align: 'left' as const },
-  { name: 'incoming_operator_name', label: isThai.value ? 'ผู้รับมอบ' : 'Incoming Operator', field: 'incoming_operator_name', align: 'left' as const },
-  { name: 'status', label: isThai.value ? 'สถานะ' : 'Status', field: 'status', align: 'center' as const },
-  { name: 'actions', label: isThai.value ? 'การกระทำ' : 'Actions', field: 'actions', align: 'center' as const }
-])
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Methods
-// ─────────────────────────────────────────────────────────────────────────────
-
-const formatNumber = (val: number) => {
-  return Number(val || 0).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const formatNumber = (val: any) => {
+  if (val === null || val === undefined) return '0.0'
+  return Number(val).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 }
 
-const getStatusColor = (st: string) => {
-  if (['Done', 'Completed', 'Finished'].includes(st)) return 'green-7'
-  if (['Running', 'Active', 'In_Progress', 'In Progress'].includes(st)) return 'blue-7'
-  return 'grey-7'
-}
-
-const getSeverityColor = (sev: string) => {
-  if (sev === 'Critical') return 'red-8'
-  if (sev === 'High') return 'orange-8'
-  if (sev === 'Medium') return 'amber-8'
-  return 'blue-8'
-}
-
-const getIssueStatusColor = (st: string) => {
-  if (st === 'Resolved') return 'green-7'
-  if (st === 'In_Progress') return 'blue-7'
-  return 'orange-7'
-}
-
-const loadCurrentShiftInfo = async () => {
-  try {
-    const res = await $fetch<any>(`${apiBase}/shift-logbook/current-shift-info`)
-    currentShiftInfo.value = res
-    if (res?.shift_type && !selectedShift.value) {
-      selectedShift.value = res.shift_type
-    }
-  } catch (err) {
-    console.error('Failed to load current shift info:', err)
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'Completed': return 'positive'
+    case 'Running':
+    case 'In-Progress': return 'primary'
+    case 'Planned': return 'grey-7'
+    case 'Interrupted':
+    case 'Cancelled': return 'negative'
+    default: return 'blue-grey-6'
   }
 }
 
+const getSeverityColor = (sev: string) => {
+  switch (sev?.toLowerCase()) {
+    case 'critical': return 'negative'
+    case 'high': return 'deep-orange-7'
+    case 'medium': return 'amber-8'
+    case 'low': return 'blue-7'
+    default: return 'grey-7'
+  }
+}
+
+const getIssueStatusColor = (st: string) => {
+  switch (st) {
+    case 'Open': return 'negative'
+    case 'In-Progress': return 'amber-8'
+    case 'Resolved': return 'positive'
+    default: return 'grey-7'
+  }
+}
+
+// Fetch Current Shift Info (Real-time live shift for today)
+const fetchCurrentShiftInfo = async () => {
+  try {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/current-shift`)
+    currentShiftInfo.value = res
+  } catch (err) {
+    console.error('Failed to fetch current shift info:', err)
+  }
+}
+
+// Load Shift Data (Batches, KPIs, Handover)
 const loadShiftData = async () => {
   loadingData.value = true
   try {
-    const res = await $fetch<any>(`${apiBase}/shift-logbook/kpi-summary`, {
-      params: {
-        plant: selectedPlant.value,
-        shift_type: selectedShift.value,
-        shift_date: selectedDate.value
-      }
+    const params = new URLSearchParams({
+      plant_id: String(selectedPlant.value),
+      shift_type: selectedShift.value,
+      shift_date: selectedDate.value
     })
-    shiftData.value = res
-    shiftKpis.value = res.kpis || {}
-    shiftBatches.value = res.batches || []
-    issuesList.value = res.open_issues || []
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/summary?${params.toString()}`)
+    if (res) {
+      shiftData.value = res
+      shiftKpis.value = res.kpis || {}
+      shiftBatches.value = res.batches || []
+      issuesList.value = res.issues || []
+      materialAlerts.value = res.chemical_alerts || []
+      handoverRecord.value = res.handover || null
 
-    // Also check if existing handover record is saved
-    const handovers = await $fetch<any[]>(`${apiBase}/shift-logbook/handovers`, {
-      params: {
-        plant: selectedPlant.value,
-        shift_type: selectedShift.value,
-        shift_date: selectedDate.value
+      if (res.handover) {
+        checklist.value = {
+          tank_cleaned: Boolean(res.handover.checklist_tank_cleaned),
+          area_5s: Boolean(res.handover.checklist_area_5s),
+          safety_normal: Boolean(res.handover.checklist_safety_normal),
+          waste_disposed: Boolean(res.handover.checklist_waste_disposed)
+        }
+        outgoingNotes.value = res.handover.outgoing_notes || ''
+      } else {
+        checklist.value = { tank_cleaned: false, area_5s: false, safety_normal: true, waste_disposed: false }
+        outgoingNotes.value = ''
       }
-    })
-    if (handovers && handovers.length > 0) {
-      const hDetail = await $fetch<any>(`${apiBase}/shift-logbook/handovers/${handovers[0].id}`)
-      handoverRecord.value = hDetail
-      if (hDetail.checklist) checklist.value = hDetail.checklist
-      if (hDetail.outgoing_notes) outgoingNotes.value = hDetail.outgoing_notes
-      if (hDetail.material_alerts) materialAlerts.value = hDetail.material_alerts
-    } else {
-      handoverRecord.value = null
     }
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'เกิดข้อผิดพลาดในการดึงข้อมูลกะ: ' : 'Error loading shift data: ') + (err.message || '') })
+  } catch (err) {
+    console.error('Error loading shift data:', err)
   } finally {
     loadingData.value = false
   }
 }
 
+// Save Handover (Draft or Submitted)
 const saveHandover = async (status: string) => {
   savingDraft.value = true
   try {
     const payload = {
-      plant: selectedPlant.value,
-      shift_type: selectedShift.value,
       shift_date: selectedDate.value,
-      outgoing_operator_name: currentUser.value?.full_name || currentUser.value?.username || 'Operator',
+      shift_type: selectedShift.value,
+      plant_id: selectedPlant.value,
       status: status,
-      production_kpis: shiftKpis.value,
-      checklist: checklist.value,
+      checklist_tank_cleaned: checklist.value.tank_cleaned,
+      checklist_area_5s: checklist.value.area_5s,
+      checklist_safety_normal: checklist.value.safety_normal,
+      checklist_waste_disposed: checklist.value.waste_disposed,
       outgoing_notes: outgoingNotes.value,
-      material_alerts: materialAlerts.value
+      outgoing_operator_name: currentUser?.value?.full_name || currentUser?.value?.username || 'Operator'
     }
 
-    await $fetch<any>(`${apiBase}/shift-logbook/handovers`, {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/handover`, {
       method: 'POST',
       body: payload
     })
 
+    if (res) {
+      handoverRecord.value = res
+      $q.notify({
+        type: 'positive',
+        message: isThai.value ? `บันทึกข้อมูลกะเรียบร้อย (${status})` : `Shift handover saved (${status})`,
+        position: 'top',
+        timeout: 3000
+      })
+    }
+  } catch (err) {
+    console.error('Failed to save handover:', err)
     $q.notify({
-      type: 'positive',
-      message: status === 'Submitted'
-        ? (isThai.value ? '✅ ส่งมอบงานประจำกะเรียบร้อยแล้ว!' : '✅ Shift handover submitted successfully!')
-        : (isThai.value ? '💾 บันทึกแบบร่างเรียบร้อยแล้ว' : '💾 Draft saved successfully')
+      type: 'negative',
+      message: isThai.value ? 'บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' : 'Failed to save handover record.',
+      position: 'top'
     })
-    await loadShiftData()
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'บันทึกไม่สำเร็จ: ' : 'Save failed: ') + (err.message || '') })
   } finally {
     savingDraft.value = false
   }
 }
 
+// Issues Modal Handlers
 const openAddIssueDialog = () => {
   issueForm.value = {
-    machine_tag: `Mixer Tank ${selectedPlant.value}`,
+    machine_tag: `Plant ${selectedPlant.value} - Tank ${selectedPlant.value}`,
     title: '',
     severity: 'Medium',
     description: '',
@@ -917,37 +934,50 @@ const openAddIssueDialog = () => {
 }
 
 const submitIssue = async () => {
-  if (!issueForm.value.title || !issueForm.value.machine_tag) {
-    $q.notify({ type: 'warning', message: isThai.value ? 'กรุณาระบุเครื่องจักรและหัวข้อปัญหา' : 'Please specify machine tag and issue title' })
+  if (!issueForm.value.title.trim()) {
+    $q.notify({ type: 'warning', message: isThai.value ? 'กรุณาระบุหัวข้อปัญหา' : 'Please enter issue title' })
     return
   }
   try {
-    await $fetch(`${apiBase}/shift-logbook/issues`, {
+    const payload = {
+      shift_date: selectedDate.value,
+      shift_type: selectedShift.value,
+      plant_id: selectedPlant.value,
+      machine_tag: issueForm.value.machine_tag,
+      title: issueForm.value.title,
+      severity: issueForm.value.severity,
+      description: issueForm.value.description,
+      reported_by: currentUser?.value?.full_name || currentUser?.value?.username || 'Operator',
+      assigned_to: issueForm.value.assigned_to,
+      status: 'Open'
+    }
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/issue`, {
       method: 'POST',
-      body: {
-        plant: selectedPlant.value,
-        ...issueForm.value,
-        reported_by: currentUser.value?.full_name || currentUser.value?.username || 'Operator'
-      }
+      body: payload
     })
-    $q.notify({ type: 'positive', message: isThai.value ? 'บันทึกปัญหาเครื่องจักรแล้ว' : 'Machine issue recorded' })
-    showIssueDialog.value = false
-    await loadShiftData()
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'บันทึกไม่สำเร็จ: ' : 'Failed to save issue: ') + err.message })
+    if (res) {
+      issuesList.value.unshift(res)
+      showIssueDialog.value = false
+      $q.notify({ type: 'positive', message: isThai.value ? 'บันทึกปัญหาเครื่องจักรแล้ว' : 'Machine issue recorded' })
+    }
+  } catch (err) {
+    console.error('Failed to submit issue:', err)
   }
 }
 
-const resolveIssue = async (id: number) => {
+const resolveIssue = async (issueId: number) => {
   try {
-    await $fetch(`${apiBase}/shift-logbook/issues/${id}`, {
-      method: 'PUT',
+    await $fetch<any>(`${apiBase}/shift-logbook/issue/${issueId}`, {
+      method: 'PATCH',
       body: { status: 'Resolved' }
     })
-    $q.notify({ type: 'positive', message: isThai.value ? 'อัปเดตสถานะเป็นแก้ไขแล้ว' : 'Status updated to Resolved' })
-    await loadShiftData()
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'อัปเดตไม่สำเร็จ: ' : 'Failed to update: ') + err.message })
+    const idx = issuesList.value.findIndex(i => i.id === issueId)
+    if (idx !== -1) {
+      issuesList.value[idx].status = 'Resolved'
+    }
+    $q.notify({ type: 'positive', message: isThai.value ? 'อัปเดตสถานะเป็นแก้ไขแล้ว' : 'Issue marked as Resolved' })
+  } catch (err) {
+    console.error('Failed to resolve issue:', err)
   }
 }
 
@@ -956,6 +986,7 @@ const editIssue = (iss: any) => {
   showIssueDialog.value = true
 }
 
+// Material Watchlist Handlers
 const openAddMaterialDialog = () => {
   materialForm.value = {
     ingredient_name: '',
@@ -968,83 +999,45 @@ const openAddMaterialDialog = () => {
   showMaterialDialog.value = true
 }
 
-const submitMaterialAlert = () => {
-  if (!materialForm.value.ingredient_name) return
-  materialAlerts.value.push({ ...materialForm.value })
-  showMaterialDialog.value = false
-  $q.notify({ type: 'positive', message: isThai.value ? 'เพิ่มรายการเฝ้าระวังเรียบร้อย' : 'Watchlist item added' })
-}
-
-const removeMaterialAlert = (index: number) => {
-  materialAlerts.value.splice(index, 1)
-}
-
-const handleBadgeAcknowledge = async () => {
-  const code = badgeInputHandover.value.trim()
-  if (!code) return
+const submitMaterialAlert = async () => {
+  if (!materialForm.value.ingredient_name.trim()) {
+    $q.notify({ type: 'warning', message: isThai.value ? 'กรุณากรอกชื่อสารเคมี' : 'Please enter material name' })
+    return
+  }
   try {
-    const authRes = await $fetch<any>(`${apiBase}/auth/badge-login`, {
-      method: 'POST',
-      body: { badge_code: code }
-    })
-    
-    if (authRes?.user && handoverRecord.value?.id) {
-      await $fetch(`${apiBase}/shift-logbook/handovers/${handoverRecord.value.id}/acknowledge`, {
-        method: 'POST',
-        body: {
-          incoming_operator_id: authRes.user.id,
-          incoming_operator_name: authRes.user.full_name || authRes.user.username,
-          incoming_notes: isThai.value ? 'รับมอบงานผ่านการสแกน QR Badge' : 'Signed off via QR Badge Scan'
-        }
-      })
-      $q.notify({
-        type: 'positive',
-        message: isThai.value
-          ? `✅ สแกนสำเร็จ! ยินดีต้อนรับ ${authRes.user.full_name}`
-          : `✅ Scan successful! Welcome ${authRes.user.full_name}`
-      })
-      badgeInputHandover.value = ''
-      await loadShiftData()
-    } else {
-      $q.notify({
-        type: 'warning',
-        message: isThai.value ? 'กรุณาบันทึกส่งกะ (Submit) ก่อนทำการรับมอบ' : 'Please submit handover before incoming sign-off'
-      })
+    const payload = {
+      shift_date: selectedDate.value,
+      shift_type: selectedShift.value,
+      plant_id: selectedPlant.value,
+      ...materialForm.value
     }
-  } catch (err: any) {
-    $q.notify({
-      type: 'negative',
-      message: (isThai.value ? 'รหัส QR Badge ไม่ถูกต้อง: ' : 'Invalid QR Badge: ') + (err.message || '')
-    })
-  }
-}
-
-const submitManualAcknowledge = async () => {
-  if (!incomingNameInput.value.trim()) {
-    $q.notify({ type: 'warning', message: isThai.value ? 'กรุณาระบุชื่อผู้รับมอบงาน' : 'Please enter incoming operator name' })
-    return
-  }
-  if (!handoverRecord.value?.id) {
-    $q.notify({ type: 'warning', message: isThai.value ? 'ยังไม่มีเอกสารส่งมอบกะ กรุณากดบันทึกส่งมอบก่อน' : 'No handover record found. Please submit handover first.' })
-    return
-  }
-
-  try {
-    await $fetch(`${apiBase}/shift-logbook/handovers/${handoverRecord.value.id}/acknowledge`, {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/chemical-alert`, {
       method: 'POST',
-      body: {
-        incoming_operator_name: incomingNameInput.value.trim(),
-        incoming_notes: incomingNotesInput.value.trim()
-      }
+      body: payload
     })
-    $q.notify({ type: 'positive', message: isThai.value ? '✅ เซ็นรับมอบงานเรียบร้อยแล้ว!' : '✅ Shift sign-off completed!' })
-    showAcknowledgeDialog.value = false
-    await loadShiftData()
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'เซ็นรับมอบไม่สำเร็จ: ' : 'Sign-off failed: ') + err.message })
+    if (res) {
+      materialAlerts.value.push(res)
+      showMaterialDialog.value = false
+      $q.notify({ type: 'positive', message: isThai.value ? 'เพิ่มรายการเฝ้าระวังแล้ว' : 'Material alert added' })
+    }
+  } catch (err) {
+    console.error('Failed to add material alert:', err)
   }
 }
 
+const removeMaterialAlert = async (idx: number) => {
+  const item = materialAlerts.value[idx]
+  if (item && item.id) {
+    try {
+      await $fetch<any>(`${apiBase}/shift-logbook/chemical-alert/${item.id}`, { method: 'DELETE' })
+    } catch (e) {
+      console.warn('Failed to delete on backend', e)
+    }
+  }
+  materialAlerts.value.splice(idx, 1)
+}
+
+// Email Handlers
 const openEmailDialog = () => {
   showEmailDialog.value = true
 }
@@ -1052,33 +1045,107 @@ const openEmailDialog = () => {
 const dispatchEmailReport = async () => {
   sendingEmail.value = true
   try {
-    const res = await $fetch<any>(`${apiBase}/shift-logbook/send-email-report`, {
+    const payload = {
+      plant_id: selectedPlant.value,
+      shift_type: selectedShift.value,
+      shift_date: selectedDate.value,
+      recipients: emailRecipients.value,
+      notes: emailCustomNotes.value
+    }
+    await $fetch<any>(`${apiBase}/shift-logbook/send-email-summary`, {
       method: 'POST',
-      body: {
-        handover_id: handoverRecord.value?.id,
-        plant: selectedPlant.value,
-        shift_type: selectedShift.value,
-        shift_date: selectedDate.value,
-        recipient_emails: emailRecipients.value,
-        custom_notes: emailCustomNotes.value
-      }
-    })
-    $q.notify({
-      type: 'positive',
-      message: (isThai.value ? '📧 ส่งรายงานทาง Email เรียบร้อยแล้ว! ' : '📧 Email report sent successfully! ') + (res.smtp_status || '')
+      body: payload
     })
     showEmailDialog.value = false
-  } catch (err: any) {
-    $q.notify({ type: 'negative', message: (isThai.value ? 'ส่ง Email ไม่สำเร็จ: ' : 'Failed to send email: ') + err.message })
+    $q.notify({
+      type: 'positive',
+      message: isThai.value ? 'ส่งรายงานกะผ่าน Email เรียบร้อยแล้ว' : 'Shift summary email dispatched successfully!',
+      position: 'top',
+      timeout: 4000
+    })
+  } catch (err) {
+    console.error('Failed to send email:', err)
+    $q.notify({
+      type: 'negative',
+      message: isThai.value ? 'เกิดข้อผิดพลาดในการส่ง Email' : 'Failed to send email summary.',
+      position: 'top'
+    })
   } finally {
     sendingEmail.value = false
   }
 }
 
+// QR Badge & Manual Sign Handlers
+const handleBadgeAcknowledge = async () => {
+  const code = badgeInputHandover.value.trim()
+  if (!code) return
+  try {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/acknowledge`, {
+      method: 'POST',
+      body: {
+        shift_date: selectedDate.value,
+        shift_type: selectedShift.value,
+        plant_id: selectedPlant.value,
+        badge_code: code
+      }
+    })
+    if (res) {
+      handoverRecord.value = res
+      badgeInputHandover.value = ''
+      $q.notify({
+        type: 'positive',
+        message: isThai.value ? `🎉 เซ็นรับมอบกะเรียบร้อยแล้วโดย ${res.incoming_operator_name}` : `🎉 Shift acknowledged by ${res.incoming_operator_name}`,
+        position: 'top',
+        timeout: 4000
+      })
+    }
+  } catch (err) {
+    console.error('Badge acknowledge failed:', err)
+    $q.notify({
+      type: 'negative',
+      message: isThai.value ? 'ไม่พบรหัส Badge หรือเกิดข้อผิดพลาด' : 'Invalid Badge or acknowledge failed.',
+      position: 'top'
+    })
+  }
+}
+
+const submitManualAcknowledge = async () => {
+  if (!incomingNameInput.value.trim()) {
+    $q.notify({ type: 'warning', message: isThai.value ? 'กรุณาระบุชื่อผู้รับมอบงาน' : 'Please enter operator name' })
+    return
+  }
+  try {
+    const res = await $fetch<any>(`${apiBase}/shift-logbook/acknowledge`, {
+      method: 'POST',
+      body: {
+        shift_date: selectedDate.value,
+        shift_type: selectedShift.value,
+        plant_id: selectedPlant.value,
+        operator_name: incomingNameInput.value.trim(),
+        incoming_notes: incomingNotesInput.value.trim()
+      }
+    })
+    if (res) {
+      handoverRecord.value = res
+      showAcknowledgeDialog.value = false
+      incomingNameInput.value = ''
+      incomingNotesInput.value = ''
+      $q.notify({
+        type: 'positive',
+        message: isThai.value ? `🎉 เซ็นรับมอบกะเรียบร้อยแล้ว` : `🎉 Shift handover acknowledged!`,
+        position: 'top'
+      })
+    }
+  } catch (err) {
+    console.error('Manual acknowledge failed:', err)
+  }
+}
+
+// History List Handler
 const loadHistoryList = async () => {
   loadingHistory.value = true
   try {
-    const res = await $fetch<any[]>(`${apiBase}/shift-logbook/handovers`)
+    const res = await $fetch<any[]>(`${apiBase}/shift-logbook/history?plant_id=${selectedPlant.value}&limit=30`)
     historyList.value = res || []
   } catch (err) {
     console.error('Failed to load history list:', err)
@@ -1087,81 +1154,99 @@ const loadHistoryList = async () => {
   }
 }
 
-const viewHistoryDetail = async (id: number) => {
-  try {
-    const detail = await $fetch<any>(`${apiBase}/shift-logbook/handovers/${id}`)
-    $q.dialog({
-      title: isThai.value ? `รายละเอียดการส่งกะ #${detail.id}` : `Shift Handover #${detail.id} Details`,
-      message: `Plant ${detail.plant} | ${detail.shift_type} (${detail.shift_date})<br>
-                <strong>${isThai.value ? 'ผู้ส่ง:' : 'Outgoing:'}</strong> ${detail.outgoing_operator_name || '-'} | <strong>${isThai.value ? 'ผู้รับ:' : 'Incoming:'}</strong> ${detail.incoming_operator_name || '-'}<br>
-                <strong>${isThai.value ? 'ยอดผลิต:' : 'Yield:'}</strong> ${formatNumber(detail.production_kpis?.total_volume_kg || 0)} kg | <strong>Batches:</strong> ${detail.production_kpis?.completed_batches || 0}<br>
-                <strong>${isThai.value ? 'โน้ต:' : 'Notes:'}</strong> ${detail.outgoing_notes || '-'}`,
-      html: true,
-      ok: { label: isThai.value ? 'ปิด' : 'Close', color: 'primary' }
-    })
-  } catch (err) {
-    console.error(err)
+const viewHistoryDetail = (histId: number) => {
+  const item = historyList.value.find(h => h.id === histId)
+  if (item) {
+    selectedDate.value = item.shift_date
+    selectedShift.value = item.shift_type
+    selectedPlant.value = item.plant_id
+    activeTab.value = 'kpis'
+    loadShiftData()
   }
 }
 
-// Lifecycle & Timers
-let shiftTimer: any = null
+// Lifecycle
+let timerInterval: any = null
 
 onMounted(async () => {
-  await loadCurrentShiftInfo()
+  await fetchCurrentShiftInfo()
+  if (isViewingToday.value && currentShiftInfo.value?.shift_type) {
+    selectedShift.value = currentShiftInfo.value.shift_type
+  }
   await loadShiftData()
-  await loadHistoryList()
 
-  // Update timer every 30s
-  shiftTimer = setInterval(loadCurrentShiftInfo, 30000)
+  // Refresh clock & live info every 30s
+  timerInterval = setInterval(() => {
+    fetchCurrentShiftInfo()
+  }, 30000)
 })
 
 onUnmounted(() => {
-  if (shiftTimer) clearInterval(shiftTimer)
+  if (timerInterval) clearInterval(timerInterval)
 })
 </script>
 
 <style scoped>
-.bg-dark-page {
-  background-color: #0b0f19;
+/* Clean Quasar Framework Styling */
+.shift-page {
+  font-family: inherit;
 }
-.bg-slate {
-  background: #1e293b;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+
+.top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
+
+/* KPI Card Enhancements */
 .kpi-card {
-  border-radius: 12px;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+
 .kpi-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
 }
-.custom-table :deep(thead tr th) {
-  background-color: #111827;
-  color: #94a3b8;
+
+/* Issue Card borders */
+.issue-card {
+  transition: all 0.15s ease;
+}
+
+.issue-card.border-critical {
+  border-left: 4px solid #c62828 !important;
+}
+
+.issue-card.border-high {
+  border-left: 4px solid #e65100 !important;
+}
+
+.issue-card.border-medium {
+  border-left: 4px solid #f57f17 !important;
+}
+
+.issue-card.border-low {
+  border-left: 4px solid #1976d2 !important;
+}
+
+/* App Table standard header */
+.app-table :deep(thead tr:first-child th) {
+  background-color: #f8fafc;
+  color: #334155;
   font-weight: 700;
   font-size: 11px;
-  text-transform: uppercase;
 }
-.custom-table :deep(tbody tr:hover) {
-  background-color: rgba(255, 255, 255, 0.04) !important;
+
+.app-table :deep(tbody tr:hover) {
+  background-color: #f1f5f9 !important;
 }
-.issue-card {
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.08);
-  transition: all 0.2s;
+
+/* QR Badge Box */
+.badge-scan-box {
+  transition: all 0.2s ease;
 }
-.border-critical {
-  border-left: 4px solid #ef4444 !important;
-}
-.border-high {
-  border-left: 4px solid #f97316 !important;
-}
-.border-medium {
-  border-left: 4px solid #eab308 !important;
-}
-.border-low {
-  border-left: 4px solid #3b82f6 !important;
+
+.scan-input :deep(.q-field__control) {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
 }
 </style>
