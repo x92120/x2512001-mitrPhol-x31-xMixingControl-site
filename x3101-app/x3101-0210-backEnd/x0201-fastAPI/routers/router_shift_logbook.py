@@ -69,11 +69,14 @@ class ShiftAcknowledgeRequest(BaseModel):
 
 class EmailReportRequest(BaseModel):
     handover_id: Optional[int] = None
-    plant: int = 1
+    plant: Optional[int] = 1
+    plant_id: Optional[int] = None
     shift_type: str = "Morning"
     shift_date: str
     recipient_emails: Optional[List[str]] = None
+    recipients: Optional[List[str]] = None
     custom_notes: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,6 +212,7 @@ def get_shift_time_range(shift_date_str: str, shift_type: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/current-shift-info")
+@router.get("/current-shift")
 def endpoint_current_shift():
     """Get active shift info, remaining time, and shift cutoff indicator."""
     return get_current_shift_info()
@@ -247,8 +251,10 @@ def get_shifts_for_date(shift_date: Optional[str] = Query(None, description="Dat
 
 
 @router.get("/kpi-summary")
+@router.get("/summary")
 def get_shift_kpi_summary(
-    plant: int = Query(1, description="Plant number (1, 2, 3)"),
+    plant: Optional[int] = Query(None, description="Plant number (1, 2, 3)"),
+    plant_id: Optional[int] = Query(None, description="Plant number (1, 2, 3)"),
     shift_type: str = Query("Morning", description="Shift type: Morning, Afternoon, Night"),
     shift_date: Optional[str] = Query(None, description="Date in YYYY-MM-DD"),
     db: Session = Depends(get_db)
@@ -257,12 +263,13 @@ def get_shift_kpi_summary(
     Calculate real-time / historical production KPIs for a given plant, shift, and date.
     Queries ProductionBatches, ProductionPlans, and calculates OEE and downtime.
     """
+    target_plant = plant or plant_id or 1
     target_date_str = shift_date or date.today().isoformat()
     start_dt, end_dt = get_shift_time_range(target_date_str, shift_type)
 
     # Query completed batches
     batches_query = db.query(models.ProductionBatch).join(models.ProductionPlan).filter(
-        models.ProductionPlan.plant == plant,
+        models.ProductionPlan.plant == target_plant,
         or_(
             and_(
                 models.ProductionBatch.created_at >= start_dt,
@@ -352,8 +359,11 @@ def get_shift_kpi_summary(
 
 
 @router.get("/handovers")
+@router.get("/handover")
+@router.get("/history")
 def list_handovers(
     plant: Optional[int] = None,
+    plant_id: Optional[int] = None,
     shift_type: Optional[str] = None,
     shift_date: Optional[str] = None,
     status: Optional[str] = None,
@@ -361,9 +371,10 @@ def list_handovers(
     db: Session = Depends(get_db)
 ):
     """List handover logbook records with filtering."""
+    target_plant = plant or plant_id
     query = db.query(models.ShiftHandover)
-    if plant:
-        query = query.filter(models.ShiftHandover.plant == plant)
+    if target_plant:
+        query = query.filter(models.ShiftHandover.plant == target_plant)
     if shift_type:
         query = query.filter(models.ShiftHandover.shift_type == shift_type)
     if shift_date:
@@ -444,6 +455,7 @@ def get_handover_detail(handover_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/handovers")
+@router.post("/handover")
 def create_or_update_handover(payload: ShiftHandoverCreate, db: Session = Depends(get_db)):
     """Create or save draft/submit shift handover."""
     try:
@@ -593,25 +605,40 @@ def list_issues(
 
 
 @router.post("/issues")
+@router.post("/issue")
 def create_issue(payload: ShiftIssueCreate, db: Session = Depends(get_db)):
     """Report a new machinery issue."""
+    target_plant = getattr(payload, "plant", 1) or getattr(payload, "plant_id", 1) or 1
     issue = models.ShiftIssue(
-        plant=payload.plant,
+        plant=target_plant,
         machine_tag=payload.machine_tag,
         title=payload.title,
         description=payload.description,
         severity=payload.severity,
-        status=payload.status,
+        status=payload.status or "Open",
         reported_by=payload.reported_by,
         assigned_to=payload.assigned_to
     )
     db.add(issue)
     db.commit()
     db.refresh(issue)
-    return {"success": True, "issue_id": issue.id, "message": "Issue recorded"}
+    return {
+        "id": issue.id,
+        "plant": issue.plant,
+        "machine_tag": issue.machine_tag,
+        "title": issue.title,
+        "description": issue.description,
+        "severity": issue.severity,
+        "status": issue.status,
+        "reported_by": issue.reported_by,
+        "assigned_to": issue.assigned_to,
+        "created_at": issue.created_at.strftime("%Y-%m-%d %H:%M") if issue.created_at else None
+    }
 
 
 @router.put("/issues/{issue_id}")
+@router.patch("/issue/{issue_id}")
+@router.patch("/issues/{issue_id}")
 def update_issue(issue_id: int, payload: ShiftIssueUpdate, db: Session = Depends(get_db)):
     """Update issue status or add resolution notes."""
     issue = db.query(models.ShiftIssue).filter(models.ShiftIssue.id == issue_id).first()
@@ -626,6 +653,142 @@ def update_issue(issue_id: int, payload: ShiftIssueUpdate, db: Session = Depends
         issue.assigned_to = payload.assigned_to
     if payload.resolution_notes is not None:
         issue.resolution_notes = payload.resolution_notes
+
+    db.commit()
+    return {"success": True, "message": "Issue updated"}
+
+
+class QuickAcknowledgeReq(BaseModel):
+    shift_date: str
+    shift_type: str
+    plant: Optional[int] = 1
+    plant_id: Optional[int] = 1
+    badge_code: Optional[str] = None
+    operator_name: Optional[str] = None
+    incoming_notes: Optional[str] = None
+
+
+@router.post("/acknowledge")
+def quick_acknowledge_endpoint(payload: QuickAcknowledgeReq, db: Session = Depends(get_db)):
+    target_plant = payload.plant or payload.plant_id or 1
+    try:
+        s_date = datetime.strptime(payload.shift_date, "%Y-%m-%d").date()
+    except Exception:
+        s_date = date.today()
+
+    op_name = payload.operator_name or "Operator"
+    op_id = None
+
+    if payload.badge_code:
+        u = db.query(models.User).filter(models.User.badge_code == payload.badge_code).first()
+        if u:
+            op_name = u.full_name or u.username
+            op_id = u.id
+        else:
+            op_name = f"Badge ({payload.badge_code})"
+
+    handover = db.query(models.ShiftHandover).filter(
+        models.ShiftHandover.plant == target_plant,
+        models.ShiftHandover.shift_type == payload.shift_type,
+        models.ShiftHandover.shift_date == s_date
+    ).first()
+
+    if not handover:
+        handover = models.ShiftHandover(
+            plant=target_plant,
+            shift_type=payload.shift_type,
+            shift_date=s_date,
+            status="Acknowledged",
+            outgoing_operator_name="Auto System"
+        )
+        db.add(handover)
+        db.flush()
+
+    handover.incoming_operator_id = op_id
+    handover.incoming_operator_name = op_name
+    handover.incoming_notes = payload.incoming_notes or ""
+    handover.status = "Acknowledged"
+    handover.acknowledged_at = datetime.now()
+
+    db.commit()
+    db.refresh(handover)
+
+    return {
+        "success": True,
+        "incoming_operator_name": op_name,
+        "acknowledged_at": handover.acknowledged_at.strftime("%Y-%m-%d %H:%M"),
+        "status": "Acknowledged"
+    }
+
+
+class QuickChemicalAlertReq(BaseModel):
+    shift_date: str
+    shift_type: str
+    plant: Optional[int] = 1
+    plant_id: Optional[int] = 1
+    ingredient_name: str
+    mat_sap_code: Optional[str] = ""
+    current_stock: float = 0.0
+    min_threshold: float = 10.0
+    unit: Optional[str] = "kg"
+    alert_note: Optional[str] = ""
+
+
+@router.post("/chemical-alert")
+@router.post("/chemical-alerts")
+def add_chemical_alert(payload: QuickChemicalAlertReq, db: Session = Depends(get_db)):
+    target_plant = payload.plant or payload.plant_id or 1
+    try:
+        s_date = datetime.strptime(payload.shift_date, "%Y-%m-%d").date()
+    except Exception:
+        s_date = date.today()
+
+    handover = db.query(models.ShiftHandover).filter(
+        models.ShiftHandover.plant == target_plant,
+        models.ShiftHandover.shift_type == payload.shift_type,
+        models.ShiftHandover.shift_date == s_date
+    ).first()
+
+    if not handover:
+        handover = models.ShiftHandover(
+            plant=target_plant,
+            shift_type=payload.shift_type,
+            shift_date=s_date,
+            status="Draft",
+            outgoing_operator_name="Operator"
+        )
+        db.add(handover)
+        db.flush()
+
+    new_alert = models.ShiftMaterialAlert(
+        shift_handover_id=handover.id,
+        ingredient_name=payload.ingredient_name,
+        mat_sap_code=payload.mat_sap_code,
+        current_stock=payload.current_stock,
+        min_threshold=payload.min_threshold,
+        unit=payload.unit or "kg",
+        alert_note=payload.alert_note or ""
+    )
+    db.add(new_alert)
+    db.commit()
+    db.refresh(new_alert)
+
+    return {
+        "id": new_alert.id,
+        "ingredient_name": new_alert.ingredient_name,
+        "mat_sap_code": new_alert.mat_sap_code,
+        "current_stock": new_alert.current_stock,
+        "min_threshold": new_alert.min_threshold,
+        "unit": new_alert.unit,
+        "alert_note": new_alert.alert_note
+    }
+
+
+@router.delete("/chemical-alert/{alert_id}")
+def delete_chemical_alert(alert_id: int, db: Session = Depends(get_db)):
+    db.query(models.ShiftMaterialAlert).filter(models.ShiftMaterialAlert.id == alert_id).delete()
+    db.commit()
+    return {"success": True}
 
     db.commit()
     db.refresh(issue)
@@ -761,15 +924,18 @@ def _generate_html_email_template(
 
 
 @router.post("/send-email-report")
+@router.post("/send-email-summary")
 def send_email_shift_report(payload: EmailReportRequest, db: Session = Depends(get_db)):
     """Generate and dispatch HTML shift summary email report to supervisors."""
+    target_plant = payload.plant or payload.plant_id or 1
+    
     handover = None
     if payload.handover_id:
         handover = db.query(models.ShiftHandover).filter(models.ShiftHandover.id == payload.handover_id).first()
 
     # Get KPIs
     kpi_data = get_shift_kpi_summary(
-        plant=payload.plant,
+        plant=target_plant,
         shift_type=payload.shift_type,
         shift_date=payload.shift_date,
         db=db
@@ -780,10 +946,10 @@ def send_email_shift_report(payload: EmailReportRequest, db: Session = Depends(g
     
     outgoing_name = handover.outgoing_operator_name if handover else "Outgoing Operator"
     incoming_name = handover.incoming_operator_name if handover else "Incoming Operator"
-    notes = (handover.outgoing_notes if handover else "") or payload.custom_notes or ""
+    notes = (handover.outgoing_notes if handover else "") or payload.custom_notes or payload.notes or ""
 
     html_content = _generate_html_email_template(
-        plant=payload.plant,
+        plant=target_plant,
         shift_type=payload.shift_type,
         shift_date=payload.shift_date,
         kpis=kpis,
@@ -799,8 +965,8 @@ def send_email_shift_report(payload: EmailReportRequest, db: Session = Depends(g
     smtp_user = os.getenv("SMTP_USER", "")
     smtp_pass = os.getenv("SMTP_PASSWORD", "")
     
-    recipients = payload.recipient_emails or ["supervisor@mitrphol.com", "plant.manager@mitrphol.com"]
-    subject = f"[xMixing Control] สรุปรายงานกะ Plant {payload.plant} - {payload.shift_type} ({payload.shift_date})"
+    recipients = payload.recipient_emails or payload.recipients or ["supervisor@mitrphol.com", "plant.manager@mitrphol.com"]
+    subject = f"[xMixing Control] สรุปรายงานกะ Plant {target_plant} - {payload.shift_type} ({payload.shift_date})"
 
     # Attempt to send email if SMTP credentials are configured
     email_sent = False
