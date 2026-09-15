@@ -101,11 +101,13 @@ def get_current_shift_info():
         shift_end = datetime.combine(today_date, time(6, 0))
         
         if op_weekday < 4:  # Mon - Thu night shift (22:00 - 06:00)
-            shift_label = "กะดึก (22:00 - 06:00)"
+            shift_label_th = "กะดึก (22:00 - 06:00)"
+            shift_label_en = "Night Shift (22:00 - 06:00)"
             shift_start = datetime.combine(operational_date, time(22, 0))
             is_weekend_schedule = False
         else:  # Fri - Sun night shift (18:00 - 06:00)
-            shift_label = "กะดึก (18:00 - 06:00)"
+            shift_label_th = "กะดึก (18:00 - 06:00)"
+            shift_label_en = "Night Shift (18:00 - 06:00)"
             shift_start = datetime.combine(operational_date, time(18, 0))
             is_weekend_schedule = True
     else:
@@ -117,29 +119,34 @@ def get_current_shift_info():
             is_weekend_schedule = False
             if time(6, 0) <= current_time < time(14, 0):
                 shift_name = "Morning"
-                shift_label = "กะเช้า (06:00 - 14:00)"
+                shift_label_th = "กะเช้า (06:00 - 14:00)"
+                shift_label_en = "Morning Shift (06:00 - 14:00)"
                 shift_start = datetime.combine(today_date, time(6, 0))
                 shift_end = datetime.combine(today_date, time(14, 0))
             elif time(14, 0) <= current_time < time(22, 0):
                 shift_name = "Afternoon"
-                shift_label = "กะบ่าย (14:00 - 22:00)"
+                shift_label_th = "กะบ่าย (14:00 - 22:00)"
+                shift_label_en = "Afternoon Shift (14:00 - 22:00)"
                 shift_start = datetime.combine(today_date, time(14, 0))
                 shift_end = datetime.combine(today_date, time(22, 0))
             else:  # 22:00 - 23:59:59
                 shift_name = "Night"
-                shift_label = "กะดึก (22:00 - 06:00)"
+                shift_label_th = "กะดึก (22:00 - 06:00)"
+                shift_label_en = "Night Shift (22:00 - 06:00)"
                 shift_start = datetime.combine(today_date, time(22, 0))
                 shift_end = datetime.combine(today_date + timedelta(days=1), time(6, 0))
         else:  # Friday - Sunday (2 shifts)
             is_weekend_schedule = True
             if time(6, 0) <= current_time < time(18, 0):
                 shift_name = "Morning"
-                shift_label = "กะเช้า (06:00 - 18:00)"
+                shift_label_th = "กะเช้า (06:00 - 18:00)"
+                shift_label_en = "Morning Shift (06:00 - 18:00)"
                 shift_start = datetime.combine(today_date, time(6, 0))
                 shift_end = datetime.combine(today_date, time(18, 0))
             else:  # 18:00 - 23:59:59
                 shift_name = "Night"
-                shift_label = "กะดึก (18:00 - 06:00)"
+                shift_label_th = "กะดึก (18:00 - 06:00)"
+                shift_label_en = "Night Shift (18:00 - 06:00)"
                 shift_start = datetime.combine(today_date, time(18, 0))
                 shift_end = datetime.combine(today_date + timedelta(days=1), time(6, 0))
         
@@ -147,7 +154,9 @@ def get_current_shift_info():
     
     return {
         "shift_type": shift_name,
-        "shift_label": shift_label,
+        "shift_label": shift_label_th,
+        "shift_label_th": shift_label_th,
+        "shift_label_en": shift_label_en,
         "shift_date": shift_date.isoformat(),
         "current_time": now.strftime("%H:%M:%S"),
         "shift_start": shift_start.strftime("%Y-%m-%d %H:%M:%S"),
