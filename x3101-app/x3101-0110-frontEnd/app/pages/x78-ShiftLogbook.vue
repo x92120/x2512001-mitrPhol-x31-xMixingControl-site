@@ -585,33 +585,85 @@
 
     <!-- Email Dispatch Dialog -->
     <q-dialog v-model="showEmailDialog">
-      <q-card class="bg-white text-grey-9" style="min-width: 480px; border-radius: 10px; border: 1px solid #e8e0f0;">
+      <q-card class="bg-white text-grey-9" style="min-width: 520px; max-width: 600px; border-radius: 12px; border: 1px solid #e8e0f0;">
         <q-card-section class="bg-primary text-white q-py-sm row items-center justify-between">
           <span class="text-subtitle1 text-weight-bold">📧 {{ isThai ? 'ส่งรายงานสรุปกะผ่าน Email' : 'Send Shift Summary Email Report' }}</span>
           <q-btn flat round dense icon="close" v-close-popup size="sm" />
         </q-card-section>
-        <q-card-section class="q-pa-md q-gutter-y-sm">
+        <q-card-section class="q-pa-md q-gutter-y-md">
           <div class="text-caption text-grey-7">
-            {{ isThai ? 'ระบบจะสร้างรายงาน HTML สรุป KPI, ยอดผลิต, และปัญหาเครื่องจักร ส่งตรงเข้า Email' : 'System will generate HTML email summary of shift KPIs, yield, and machinery issues.' }}
+            {{ isThai ? 'ระบบจะสร้างรายงาน HTML สรุป KPI, ยอดผลิต, และปัญหาเครื่องจักร ส่งตรงเข้า Email ของผู้รับ' : 'System will generate HTML email summary of shift KPIs, yield, and machinery issues.' }}
           </div>
-          <q-select
-            v-model="emailRecipients"
-            :label="isThai ? 'ผู้รับรายงาน (Recipients)' : 'Recipients'"
-            use-input use-chips multiple
-            new-value-mode="add-unique"
-            dense outlined bg-color="white"
-            :hint="isThai ? 'พิมพ์อีเมลแล้วกด Enter เพื่อเพิ่ม' : 'Type email and press Enter to add'"
-          />
+
+          <!-- Quick Select Preset Chips -->
+          <div>
+            <div class="text-caption text-weight-bold text-grey-8 q-mb-xs">
+              ⚡ {{ isThai ? 'เลือกด่วน (Quick Select):' : 'Quick Select Recipients:' }}
+            </div>
+            <div class="row q-gutter-xs">
+              <q-chip
+                v-for="preset in ['xdev.0777@gmail.com', 'production-leads@mitrphol.com', 'maintenance@mitrphol.com', 'plant.manager@mitrphol.com', 'supervisor@mitrphol.com']"
+                :key="preset"
+                clickable
+                dense
+                :color="emailRecipients.includes(preset) ? 'primary' : 'grey-3'"
+                :text-color="emailRecipients.includes(preset) ? 'white' : 'grey-9'"
+                :icon="emailRecipients.includes(preset) ? 'check' : 'add'"
+                @click="toggleRecipientChip(preset)"
+              >
+                {{ preset }}
+              </q-chip>
+            </div>
+          </div>
+
+          <!-- Email Recipients Input with Quick Tokenization -->
+          <div>
+            <q-select
+              v-model="emailRecipients"
+              :label="isThai ? 'รายชื่อผู้รับรายงาน (Recipients Email)' : 'Recipients Email'"
+              use-input
+              use-chips
+              multiple
+              input-debounce="0"
+              new-value-mode="add-unique"
+              :options="filteredRecipientOptions"
+              @filter="filterRecipients"
+              @new-value="addEmailRecipient"
+              dense
+              outlined
+              bg-color="white"
+              :hint="isThai ? 'พิมพ์อีเมลแล้วกด Enter, จุลภาค (,) หรือคลิกที่ปุ่มเลือกด่วนด้านบน' : 'Type email and press Enter, comma (,) or click presets above'"
+            >
+              <template v-slot:selected-item="scope">
+                <q-chip
+                  removable
+                  dense
+                  @remove="scope.removeAtIndex(scope.index)"
+                  :tabindex="scope.tabindex"
+                  color="blue-1"
+                  text-color="primary"
+                  class="q-my-none"
+                >
+                  {{ scope.opt }}
+                </q-chip>
+              </template>
+            </q-select>
+          </div>
+
           <q-input
             v-model="emailCustomNotes"
             :label="isThai ? 'ข้อความเพิ่มเติมใน Email' : 'Additional Email Notes'"
-            type="textarea" rows="2"
-            dense outlined bg-color="white"
+            type="textarea"
+            rows="2"
+            dense
+            outlined
+            bg-color="white"
+            :placeholder="isThai ? 'เช่น รายงานการผลิตเรียบร้อยดี, ส่งกะเรียบร้อย' : 'e.g. Shift handover completed, machinery running normally'"
           />
         </q-card-section>
-        <q-card-actions align="right" class="q-pa-md">
+        <q-card-actions align="right" class="q-pa-md bg-grey-1">
           <q-btn flat :label="isThai ? 'ยกเลิก' : 'Cancel'" color="grey-7" v-close-popup />
-          <q-btn unelevated :label="isThai ? 'ส่ง Email ทันที' : 'Send Email Now'" color="primary" class="text-weight-bold" :loading="sendingEmail" @click="dispatchEmailReport" />
+          <q-btn unelevated :label="isThai ? 'ส่ง Email ทันที' : 'Send Email Now'" color="primary" class="text-weight-bold q-px-md" :loading="sendingEmail" @click="dispatchEmailReport" />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -753,8 +805,50 @@ const materialForm = ref({
 })
 
 const showEmailDialog = ref<boolean>(false)
-const emailRecipients = ref<string[]>(['production-leads@mitrphol.com', 'maintenance@mitrphol.com'])
+const emailRecipients = ref<string[]>(['xdev.0777@gmail.com', 'production-leads@mitrphol.com'])
 const emailCustomNotes = ref<string>('')
+
+const presetRecipientList = [
+  'xdev.0777@gmail.com',
+  'production-leads@mitrphol.com',
+  'maintenance@mitrphol.com',
+  'plant.manager@mitrphol.com',
+  'supervisor@mitrphol.com',
+  'qa.lead@mitrphol.com'
+]
+const filteredRecipientOptions = ref<string[]>([...presetRecipientList])
+
+const filterRecipients = (val: string, update: any) => {
+  update(() => {
+    if (val === '') {
+      filteredRecipientOptions.value = [...presetRecipientList]
+    } else {
+      const needle = val.toLowerCase()
+      filteredRecipientOptions.value = presetRecipientList.filter(v => v.toLowerCase().indexOf(needle) > -1)
+    }
+  })
+}
+
+const addEmailRecipient = (val: string, done: any) => {
+  if (val && val.length > 0) {
+    const emails = val.split(/[,;\s]+/).filter(e => e.trim().length > 0)
+    for (const em of emails) {
+      if (!emailRecipients.value.includes(em)) {
+        emailRecipients.value.push(em)
+      }
+    }
+    done(null)
+  }
+}
+
+const toggleRecipientChip = (email: string) => {
+  const idx = emailRecipients.value.indexOf(email)
+  if (idx >= 0) {
+    emailRecipients.value.splice(idx, 1)
+  } else {
+    emailRecipients.value.push(email)
+  }
+}
 
 const showAcknowledgeDialog = ref<boolean>(false)
 const incomingNameInput = ref<string>('')
