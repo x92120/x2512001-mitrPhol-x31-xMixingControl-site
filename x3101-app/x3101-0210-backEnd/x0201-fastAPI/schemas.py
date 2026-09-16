@@ -5,7 +5,7 @@ from datetime import datetime, date
 class LoginRequest(BaseModel):
     """Login request with validation"""
     username_or_email: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=1, max_length=255)
+    password: Optional[str] = Field(None, max_length=255)
 
 class UserBase(BaseModel):
     """Base user model"""
@@ -59,7 +59,7 @@ class UserUpdate(BaseModel):
 class BadgeLoginRequest(BaseModel):
     """QR Badge login — username + 4-8 digit PIN"""
     username: str = Field(..., min_length=1, max_length=50)
-    badge_pin: str = Field(..., min_length=4, max_length=8)
+    badge_pin: Optional[str] = Field(None, max_length=8)
 
 class User(UserBase):
     """User response model"""

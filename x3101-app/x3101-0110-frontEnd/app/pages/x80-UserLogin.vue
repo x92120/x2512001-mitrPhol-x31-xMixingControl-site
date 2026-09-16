@@ -17,14 +17,9 @@ const showPassword = ref(false)
 const isLoading = ref(false)
 const errorMessage = ref('')
 
-// ── Badge QR Login ────────────────────────────────────────────────────────
+// ── Badge QR Auto-Scan Login ──────────────────────────────────────────────
 const badgeScanInput = ref('')
-const badgePin = ref('')
-const scannedBadgeUser = ref<string | null>(null)  // username from QR
-const showPinDialog = ref(false)
-const badgePinLoading = ref(false)
 const badgeInputRef = ref<any>(null)
-const pinFieldRef = ref<any>(null)
 let _badgeDebounce: ReturnType<typeof setTimeout> | null = null
 
 // Auto-submit badge scan when scanner stops typing (150ms debounce)
@@ -45,63 +40,52 @@ onMounted(() => {
 })
 
 const onBadgeScanSubmit = async () => {
-  const val = badgeScanInput.value.trim()
-  if (!val) return
+  const rawVal = badgeScanInput.value.trim()
+  if (!rawVal) return
   badgeScanInput.value = ''
   errorMessage.value = ''
-  scannedBadgeUser.value = val
-  showPinDialog.value = true
-  await nextTick()
-  pinFieldRef.value?.focus()
-}
 
-const handleBadgeLogin = async () => {
-  if (!scannedBadgeUser.value || badgePin.value.length < 4) {
-    errorMessage.value = 'Please enter your 4-8 digit PIN'
-    $q.notify({ type: 'negative', message: errorMessage.value, position: 'top' })
-    return
-  }
-  badgePinLoading.value = true
-  errorMessage.value = ''
+  const username = rawVal.startsWith('@') ? rawVal.substring(1).trim() : rawVal.trim()
+  if (!username) return
+
+  isLoading.value = true
   try {
     const response = await fetch(`${appConfig.apiBaseUrl}/auth/badge-login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: scannedBadgeUser.value, badge_pin: badgePin.value })
+      body: JSON.stringify({ username })
     })
     if (response.ok) {
       const data = await response.json()
       authLogin(data.user, data.access_token)
-      showPinDialog.value = false
-      $q.notify({ type: 'positive', icon: 'how_to_reg', message: `Welcome, ${data.user.full_name || data.user.username}!`, position: 'top', timeout: 1500 })
+      $q.notify({
+        type: 'positive',
+        icon: 'how_to_reg',
+        message: `Welcome, ${data.user.full_name || data.user.username}!`,
+        position: 'top',
+        timeout: 1500
+      })
       const redirectPath = (route.query.redirect as string) || '/'
       await router.replace(redirectPath)
     } else {
       const err = await response.json().catch(() => ({}))
-      const msg = err.detail || t('login.invalidPin')
+      const msg = err.detail || t('login.invalidCredentials')
       errorMessage.value = msg
-      $q.notify({ type: 'negative', icon: 'lock', message: msg, position: 'top' })
-      badgePin.value = ''
-      pinFieldRef.value?.focus()
+      $q.notify({ type: 'negative', icon: 'error', message: msg, position: 'top' })
     }
-  } catch {
+  } catch (error: any) {
     errorMessage.value = t('login.cannotConnect')
     $q.notify({ type: 'negative', message: errorMessage.value, position: 'top' })
   } finally {
-    badgePinLoading.value = false
+    isLoading.value = false
+    await nextTick()
+    badgeInputRef.value?.focus()
   }
 }
 
-const closePinDialog = () => {
-  showPinDialog.value = false
-  scannedBadgeUser.value = null
-  badgePin.value = ''
-  focusBadgeScanner()
-}
-
-// ── Regular Login ────────────────────────────────────────────────────────
+// ── Regular Manual Login ──────────────────────────────────────────────────
 const handleLogin = async () => {
-  if (!email.value || !password.value) {
+  if (!email.value || !email.value.trim()) {
     errorMessage.value = t('login.fillFields')
     $q.notify({ type: 'negative', message: errorMessage.value, position: 'top' })
     return
@@ -112,7 +96,10 @@ const handleLogin = async () => {
     const response = await fetch(`${appConfig.apiBaseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username_or_email: email.value, password: password.value }),
+      body: JSON.stringify({
+        username_or_email: email.value.trim(),
+        password: password.value ? password.value : ''
+      }),
     })
     if (response.ok) {
       const data = await response.json()
@@ -122,11 +109,12 @@ const handleLogin = async () => {
       await router.replace(redirectPath)
     } else {
       const errorData = await response.json().catch(() => ({}))
-      errorMessage.value = errorData.detail || t('login.invalidCredentials')
-      $q.notify({ type: 'negative', message: errorMessage.value, position: 'top' })
+      const msg = errorData.detail || t('login.invalidCredentials')
+      errorMessage.value = msg
+      $q.notify({ type: 'negative', message: msg, position: 'top' })
     }
   } catch (error: any) {
-    errorMessage.value = `${t('login.cannotConnect')} (${appConfig.apiBaseUrl}). ${error.message || ''}`
+    errorMessage.value = `${t('login.cannotConnect')} (${appConfig.apiBaseUrl}). Error: ${error.message}`
     $q.notify({ type: 'negative', message: errorMessage.value, position: 'top', timeout: 5000 })
   } finally {
     isLoading.value = false
@@ -247,49 +235,6 @@ const closeLogin = () => router.replace('/')
         </q-card-section>
       </q-card>
     </div>
-
-    <!-- ── Badge PIN Dialog ── -->
-    <q-dialog v-model="showPinDialog" persistent>
-      <q-card style="min-width: 360px; border-radius: 16px; overflow: hidden; background: #1e293b; color: white;">
-        <!-- Header -->
-        <q-card-section class="bg-deep-purple-8 text-white text-center q-py-lg">
-          <q-icon name="how_to_reg" size="48px" class="q-mb-sm" />
-          <div class="text-h6 text-weight-bold">{{ t('login.badgeLoginDialogTitle') }}</div>
-          <div class="text-body2 opacity-80 q-mt-xs">
-            <q-icon name="person" size="sm" class="q-mr-xs" />
-            <strong>{{ scannedBadgeUser }}</strong>
-          </div>
-        </q-card-section>
-
-        <!-- PIN Input -->
-        <q-card-section class="q-pa-lg text-center">
-          <div class="text-body2 text-grey-4 q-mb-md">{{ t('login.enterBadgePin') }}</div>
-          <q-input
-            ref="pinFieldRef"
-            v-model="badgePin"
-            type="password"
-            outlined
-            dense
-            dark
-            bg-color="grey-10"
-            :placeholder="t('login.badgePinPlaceholder')"
-            maxlength="8"
-            style="font-size: 24px; letter-spacing: 8px; text-align: center;"
-            @keyup.enter="handleBadgeLogin"
-            input-class="text-center"
-            autofocus
-          >
-            <template v-slot:prepend><q-icon name="pin" color="deep-purple-3" /></template>
-          </q-input>
-        </q-card-section>
-
-        <!-- Actions -->
-        <q-card-actions class="q-px-lg q-pb-lg row q-gutter-sm">
-          <q-btn flat class="col" :label="t('common.cancel')" color="grey-4" @click="closePinDialog" />
-          <q-btn class="col" :label="t('login.loginButton')" color="deep-purple-7" unelevated :loading="badgePinLoading" @click="handleBadgeLogin" />
-        </q-card-actions>
-      </q-card>
-    </q-dialog>
   </q-page>
 </template>
 

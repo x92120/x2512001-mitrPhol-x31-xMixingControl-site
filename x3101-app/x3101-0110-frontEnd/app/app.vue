@@ -137,6 +137,13 @@ const checkShiftCutoff = () => {
     setTimeout(() => {
       if (cutoffQrInputRef.value) cutoffQrInputRef.value.focus()
     }, 300)
+
+    // Auto-reload to clear memory if unattended after shift end
+    setTimeout(() => {
+      if (showShiftCutoffDialog.value && import.meta.client) {
+        window.location.href = '/x80-UserLogin?reason=shift_cutoff'
+      }
+    }, 90000)
   }
 }
 
@@ -229,6 +236,14 @@ onUnmounted(() => {
   }
 })
 
+const goToLogin = () => {
+  if (import.meta.client) {
+    window.location.href = '/x80-UserLogin'
+  } else {
+    navigateTo('/x80-UserLogin')
+  }
+}
+
 const handleLogout = async () => {
   showShiftCutoffDialog.value = false
   await logout()
@@ -237,7 +252,7 @@ const handleLogout = async () => {
     message: t('nav.loggedOut'),
     position: 'top',
   })
-  navigateTo('/x80-UserLogin')
+  if (import.meta.client) { window.location.href = '/x80-UserLogin' } else { navigateTo('/x80-UserLogin') }
 }
 
 const printScreen = () => {
@@ -252,7 +267,7 @@ const goToPlant = (plant: number) => {
 
 <template>
   <q-layout view="hHh lpR fFf" class="bg-grey-2">
-    <q-header elevated class="bg-primary text-white" height-hint="98">
+    <q-header v-if="$route.path !== '/x80-UserLogin'" elevated class="bg-primary text-white" height-hint="98">
       <q-toolbar>
         <q-toolbar-title>
           <div class="row items-center q-gutter-sm">
@@ -294,7 +309,7 @@ const goToPlant = (plant: number) => {
             <q-tooltip>{{ t('nav.logout') }}</q-tooltip>
           </q-btn>
         </template>
-        <q-btn v-else flat round dense icon="login" @click="navigateTo('/x80-UserLogin')">
+        <q-btn v-else flat round dense icon="login" @click="goToLogin">
           <q-tooltip>{{ t('nav.login') }}</q-tooltip>
         </q-btn>
       </q-toolbar>

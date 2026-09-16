@@ -507,6 +507,31 @@ def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
         target = read_recipe_from_plc(recipe_db)
         actual = read_full_actuals(int(plant_id))
 
+        
+                # ── Enrich SKU Name & Plan Details from Database ─────────────────────
+        if target:
+            bid = target.get("batch_id") or (actual or {}).get("batch_id")
+            sid = target.get("sku_id")
+            if bid and bid not in ("-", "", "0"):
+                try:
+                    b_row = db.execute(sa_text("SELECT plan_id, batch_size, sku_name, sku_id FROM production_batches WHERE batch_id = :bid"), {"bid": bid}).fetchone()
+                    if b_row:
+                        target["plan_id"] = b_row[0]
+                        target["batch_size"] = b_row[1]
+                        if b_row[2]:
+                            target["sku_name"] = b_row[2]
+                        if not sid and b_row[3]:
+                            target["sku_id"] = b_row[3]
+                except Exception as err:
+                    logger.warning(f"[RecipeStatus] Batch lookup failed: {err}")
+
+            if (not target.get("sku_name") or target.get("sku_name") == "-") and sid and sid not in ("-", "", "0"):
+                try:
+                    sku_row = db.execute(sa_text("SELECT sku_name FROM sku_masters WHERE sku_id = :sid"), {"sid": sid}).fetchone()
+                    if sku_row and sku_row[0]:
+                        target["sku_name"] = sku_row[0]
+                except Exception as err:
+                    logger.warning(f"[RecipeStatus] SKU lookup failed: {err}")
         # ── Free-Scan Restore: check pending FH/SPP prebatch items ─────────
         # Used when server crashes mid Free-Scan so operator can resume scanning
         free_scan_progress = None
@@ -1081,3 +1106,263 @@ def api_set_step_complete(plant_id: int):
         return {"status": "success", "message": f"Step_complete set to True for Plant {plant_id}"}
     else:
         raise HTTPException(status_code=500, detail="Failed to write to PLC Handshake DB")
+
+import time
+import logging
+import re
+from sqlalchemy import text as sa_text
+
+_plants_overview_cache = {}
+
+def _extract_num(s):
+    if s is None: return None
+    if isinstance(s, int): return s
+    m = re.search(r'\d+', str(s))
+    return int(m.group()) if m else None
+
+import time
+import logging
+import re
+from sqlalchemy import text as sa_text
+
+_plants_overview_cache = {}
+_recipe_target_cache = {}
+
+def _extract_num(s):
+    if s is None: return None
+    if isinstance(s, int): return s
+    m = re.search(r'\d+', str(s))
+    return int(m.group()) if m else None
+
+def _get_cached_plant_target(pid: int, db: Session):
+    global _recipe_target_cache
+    now = time.time()
+    cached = _recipe_target_cache.get(pid)
+    if cached and (now - cached.get("ts", 0)) < 15.0 and cached.get("data"):
+        return cached["data"]
+        
+    try:
+        from plc_service import get_db_number
+        recipe_db = get_db_number('full_recipe', pid)
+        target = read_recipe_from_plc(recipe_db) or {}
+        bid = target.get("batch_id")
+        sid = target.get("sku_id")
+        
+        if bid and bid not in ("-", "", "0"):
+            try:
+                b_row = db.execute(sa_text("SELECT plan_id, batch_size, sku_id FROM production_batches WHERE batch_id = :bid"), {"bid": bid}).fetchone()
+                if b_row:
+                    target["plan_id"] = b_row[0]
+                    target["batch_size"] = b_row[1]
+                    if not sid and b_row[2]:
+                        target["sku_id"] = b_row[2]
+                        sid = b_row[2]
+            except Exception as err:
+                logging.warning(f"[RecipeTarget] Batch lookup failed: {err}")
+
+        if sid and sid not in ("-", "", "0"):
+            try:
+                sku_row = db.execute(sa_text("SELECT sku_name FROM sku_masters WHERE sku_id = :sid"), {"sid": sid}).fetchone()
+                if sku_row and sku_row[0]:
+                    target["sku_name"] = sku_row[0]
+            except Exception as err:
+                logging.warning(f"[RecipeTarget] SKU lookup failed: {err}")
+                
+        _recipe_target_cache[pid] = {"ts": now, "data": target}
+        return target
+    except Exception as e:
+        if cached and cached.get("data"):
+            return cached["data"]
+        return {}
+
+import time
+import logging
+import re
+from sqlalchemy import text as sa_text
+
+_plants_overview_cache = {}
+_recipe_target_cache = {}
+
+def _extract_num(s):
+    if s is None: return None
+    if isinstance(s, int): return s
+    m = re.search(r'\d+', str(s))
+    return int(m.group()) if m else None
+
+def _get_cached_plant_target(pid: int, db: Session):
+    global _recipe_target_cache
+    now = time.time()
+    cached = _recipe_target_cache.get(pid)
+    if cached and (now - cached.get("ts", 0)) < 15.0 and cached.get("data"):
+        return cached["data"]
+        
+    try:
+        from plc_service import get_db_number
+        recipe_db = get_db_number('full_recipe', pid)
+        target = read_recipe_from_plc(recipe_db) or {}
+        bid = target.get("batch_id")
+        sid = target.get("sku_id")
+        
+        if bid and bid not in ("-", "", "0"):
+            try:
+                b_row = db.execute(sa_text("SELECT plan_id, batch_size, sku_id FROM production_batches WHERE batch_id = :bid"), {"bid": bid}).fetchone()
+                if b_row:
+                    target["plan_id"] = b_row[0]
+                    target["batch_size"] = b_row[1]
+                    if not sid and b_row[2]:
+                        target["sku_id"] = b_row[2]
+                        sid = b_row[2]
+            except Exception as err:
+                logging.warning(f"[RecipeTarget] Batch lookup failed: {err}")
+
+        if sid and sid not in ("-", "", "0"):
+            try:
+                sku_row = db.execute(sa_text("SELECT sku_name FROM sku_masters WHERE sku_id = :sid"), {"sid": sid}).fetchone()
+                if sku_row and sku_row[0]:
+                    target["sku_name"] = sku_row[0]
+            except Exception as err:
+                logging.warning(f"[RecipeTarget] SKU lookup failed: {err}")
+                
+        _recipe_target_cache[pid] = {"ts": now, "data": target}
+        return target
+    except Exception as e:
+        if cached and cached.get("data"):
+            return cached["data"]
+        return {}
+
+@router.get("/plants/overview-summary")
+def get_all_plants_overview_summary(db: Session = Depends(get_db)):
+    global _plants_overview_cache
+    now = time.time()
+    
+    # 0.8s TTL cache for the full overview response
+    if _plants_overview_cache and (now - _plants_overview_cache.get("ts", 0)) < 0.8 and _plants_overview_cache.get("data"):
+        return _plants_overview_cache["data"]
+
+    result = {}
+    for pid in [1, 2, 3]:
+        try:
+            target = _get_cached_plant_target(pid, db)
+            bid = target.get("batch_id") or ""
+            steps = target.get("steps") or []
+            
+            telem = {}
+            try:
+                telem = get_plant_telemetry_live(str(pid))
+            except Exception as te_err:
+                logging.warning(f"[OverviewSummary] Telem error plant {pid}: {te_err}")
+
+            active_step_0idx = 0
+            cur_phase = "p000"
+            cur_desc = "Standby / Clean"
+            logs_count = 0
+            is_scan_wait = False
+            is_qc_wait = False
+            pending_scan_items = []
+            
+            if bid and bid not in ("-", "0", "") and steps:
+                # Fast MySQL query for completed logs
+                logs = db.execute(sa_text(
+                    "SELECT phase_id, step_id, completed_at, re_code FROM production_step_logs WHERE batch_id = :bid ORDER BY completed_at ASC"
+                ), {"bid": bid}).fetchall()
+                logs_count = len(logs)
+                
+                last_completed_idx = -1
+                for i in range(len(steps) - 1, -1, -1):
+                    s = steps[i]
+                    s_p = _extract_num(s.get("phase_no") or s.get("phase_number"))
+                    s_sub = _extract_num(s.get("sub_step") or s.get("step_id") or 10)
+                    
+                    for lg in logs:
+                        lg_p = _extract_num(lg[0])
+                        lg_sub = _extract_num(lg[1])
+                        if lg_p is not None and lg_sub is not None and lg_p == s_p and lg_sub == s_sub:
+                            last_completed_idx = i
+                            break
+                    if last_completed_idx != -1:
+                        break
+                        
+                if last_completed_idx != -1:
+                    active_step_0idx = min(len(steps) - 1, last_completed_idx + 1)
+                else:
+                    active_step_0idx = 0
+                    
+                cur_step_obj = steps[active_step_0idx] if steps else {}
+                p_no = cur_step_obj.get("phase_no")
+                cur_phase = cur_step_obj.get("phase_number") or (f"p{p_no:03d}" if p_no else "p000")
+                cur_desc = cur_step_obj.get("description") or cur_step_obj.get("action_name") or cur_step_obj.get("re_code") or f"Step {active_step_0idx+1}"
+                
+                # Check QC wait
+                is_qc_wait = bool(
+                    cur_step_obj.get("brix_sp") or cur_step_obj.get("ph_sp") or
+                    cur_step_obj.get("operation_brix_record") or cur_step_obj.get("operation_ph_record") or
+                    str(cur_step_obj.get("action_code")) == "40010" or
+                    "qc" in str(cur_desc).lower()
+                )
+                
+                # Check Ingredients Scan wait for the current active phase STRICTLY
+                cur_phase_num = _extract_num(p_no or cur_phase)
+                
+                def _is_scan_ind(s):
+                    if not s: return False
+                    rc = str(s.get("re_code") or "").strip()
+                    if not rc or rc in ("-", "0"): return False
+                    rc_low = rc.lower()
+                    if any(w in rc_low for w in ["ro-water", "ro water", "liquid sugar", "ls in line"]): return False
+                    ac = str(s.get("action_code") or "")
+                    if ac.startswith("3") and any(k in rc_low for k in ["heat", "circulate", "mix", "agitator", "pasteurize", "cool", "drain", "transfer", "holding"]): return False
+                    if not ac.startswith("2") and not ac.startswith("3"): return False
+                    req = float(s.get("target_weight") or s.get("require") or 0)
+                    return req > 0
+
+                # Strict phase match by integer phase number
+                current_phase_scan_steps = [
+                    s for s in steps
+                    if _extract_num(s.get("phase_no") or s.get("phase_number")) == cur_phase_num and _is_scan_ind(s)
+                ]
+                
+                if current_phase_scan_steps:
+                    completed_step_keys = set(f"{_extract_num(lg[0])}_{_extract_num(lg[1])}" for lg in logs)
+                    pending_steps = [
+                        s for s in current_phase_scan_steps
+                        if f"{_extract_num(s.get('phase_no') or s.get('phase_number'))}_{_extract_num(s.get('sub_step') or s.get('step_id') or 10)}" not in completed_step_keys
+                    ]
+                    if pending_steps:
+                        is_scan_wait = True
+                        pending_scan_items = [
+                            {
+                                "re_code": str(s.get("re_code") or ""),
+                                "name": s.get("description") or s.get("action_name") or s.get("re_code") or "",
+                                "weight": float(s.get("target_weight") or s.get("require") or 0),
+                                "wh": s.get("phase_id") or "SPP"
+                            }
+                            for s in pending_steps
+                        ]
+            
+            result[str(pid)] = {
+                "success": True,
+                "target": target,
+                "overview": {
+                    "active_step_index": active_step_0idx,
+                    "active_step_seq": active_step_0idx + 1 if (bid and steps) else 0,
+                    "current_phase": cur_phase,
+                    "current_step_desc": cur_desc,
+                    "total_steps": len(steps),
+                    "completed_steps_count": logs_count,
+                    "live_telemetry": telem,
+                    "is_scan_wait": is_scan_wait,
+                    "is_qc_wait": is_qc_wait,
+                    "pending_scan_items": pending_scan_items
+                }
+            }
+        except Exception as err:
+            logging.warning(f"[OverviewSummary] Error reading plant {pid}: {err}")
+            result[str(pid)] = {"success": False, "error": str(err)}
+
+    res_payload = {
+        "success": True,
+        "timestamp": now,
+        "plants": result
+    }
+    _plants_overview_cache = {"ts": now, "data": res_payload}
+    return res_payload

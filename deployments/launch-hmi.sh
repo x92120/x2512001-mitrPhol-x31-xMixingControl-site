@@ -1,5 +1,5 @@
 #!/bin/bash
-# launch-hmi.sh - Safely launch HMI after checking backend/frontend availability
+# launch-hmi.sh - Safely launch HMI with Memory Management & GPU Acceleration
 
 URL="http://localhost:3031"
 LOGFILE="/home/x-root/.xmixing-hmi-launch.log"
@@ -23,12 +23,28 @@ else
   BROWSER="chromium"
 fi
 
-echo "Nuxt Frontend is online! Launching $BROWSER in Kiosk mode..." >> "$LOGFILE"
+echo "Nuxt Frontend is online! Launching $BROWSER in optimized Kiosk mode..." >> "$LOGFILE"
 
 # Disable screen saver blanking
-xset s off
+xset s off 2>/dev/null
 # Disable DPMS (Energy Star) standby/suspend/off timeouts
-xset -dpms
+xset -dpms 2>/dev/null
 
-# Launch Browser with Kiosk flags
-exec "$BROWSER" --kiosk --noerrdialogs --disable-infobars --check-for-update-interval=31536000 --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' "$URL"
+# Launch Browser with Kiosk flags and aggressive memory/GPU optimization
+exec "$BROWSER" \
+  --kiosk \
+  --app="$URL" \
+  --js-flags="--max-old-space-size=512" \
+  --disk-cache-size=1 \
+  --media-cache-size=1 \
+  --disable-dev-shm-usage \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
+  --noerrdialogs \
+  --disable-infobars \
+  --no-first-run \
+  --check-for-update-interval=31536000 \
+  --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
+  --disable-pinch \
+  --overscroll-history-navigation=0 \
+  "$URL"

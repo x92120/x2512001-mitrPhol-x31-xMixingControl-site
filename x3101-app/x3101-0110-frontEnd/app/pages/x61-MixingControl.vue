@@ -283,6 +283,41 @@ const handshakeStatus = computed(() => {
 
 const explicitPlantTarget = ref<number | null>(null)
 
+// ── Color & Identity Helpers (Plant-Specific Safety Themes) ──
+const getPlantAccent = (p: number) => {
+    if (p === 1) return { color: 'blue-8', hex: '#1976D2', light: '#E3F2FD', dark: '#0D47A1', badge: 'bg-blue-9', border: '#2563eb', label: 'Sapphire Blue' }
+    if (p === 2) return { color: 'teal-8', hex: '#00897B', light: '#E0F2F1', dark: '#004D40', badge: 'bg-teal-8', border: '#0d9488', label: 'Emerald Teal' }
+    if (p === 3) return { color: 'deep-purple-7', hex: '#5E35B1', light: '#EDE7F6', dark: '#311B92', badge: 'bg-deep-purple-8', border: '#7c3aed', label: 'Royal Purple' }
+    return { color: 'amber-8', hex: '#F59E0B', light: '#FEF3C7', dark: '#78350F', badge: 'bg-amber-9', border: '#d97706', label: 'Amber Gold' }
+}
+
+const setScanTargetPlant = async (pid: number) => {
+    explicitPlantTarget.value = pid
+    activePlantId.value = String(pid)
+
+    // Seamless non-destructive target switch (preserves all plants' running state in overview)
+    const newQuery = { ...route.query, plant: String(pid) }
+    delete (newQuery as any).batch_id
+    delete (newQuery as any).sku_id
+    delete (newQuery as any).plan_id
+    delete (newQuery as any).sku_name
+    delete (newQuery as any).batch_size
+
+    await router.replace({ query: newQuery })
+    await fetchBatchInfo()
+
+    $q.notify({
+        type: 'positive',
+        icon: 'qr_code_scanner',
+        message: isThai.value ? `🎯 ตั้งเป้าหมายการยิงบาร์โค้ดเป็น PLANT ${pid} เรียบร้อย` : `🎯 Set barcode scan target to PLANT ${pid}`,
+        position: 'top',
+        timeout: 1200
+    })
+
+    // Immediately refresh multi-plant summary cards
+    fetchMultiPlantSummary()
+}
+
 const activePlantId = computed({
     get() {
         if (explicitPlantTarget.value !== null) {
@@ -1116,48 +1151,54 @@ const reRunPasteurize = async () => {
 }
 
 const confirmQcCheck = async () => {
-    if (pendingQcStep.value?.operation_brix_record && !actualBrix.value) {
-        $q.notify({ type: 'warning', message: 'Please input Actual Brix' }); return;
+    const needBrix = Boolean(pendingQcStep.value?.operation_brix_record || pendingQcStep.value?.brix_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spBrix)
+    const needPh = Boolean(pendingQcStep.value?.operation_ph_record || pendingQcStep.value?.ph_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spPh)
+
+    if (needBrix && (actualBrix.value === '' || actualBrix.value == null)) {
+        $q.notify({ type: 'warning', message: isThai.value ? 'กรุณากรอกค่า Actual Brix' : 'Please input Actual Brix' }); return;
     }
-    if (pendingQcStep.value?.operation_ph_record && !actualPh.value) {
-        $q.notify({ type: 'warning', message: 'Please input Actual pH' }); return;
+    if (needPh && (actualPh.value === '' || actualPh.value == null)) {
+        $q.notify({ type: 'warning', message: isThai.value ? 'กรุณากรอกค่า Actual pH' : 'Please input Actual pH' }); return;
     }
 
     // REQ-8: Save to production_qc_records via API
     qcSaving.value = true
     let qcSaveOk = false
-    try {
-        const step = pendingQcStep.value
-        await $fetch<any>(`${appConfig.apiBaseUrl}/production-batches/${selectedBatchId.value}/qc-record`, {
-            method: 'POST',
-            headers: getAuthHeader() as Record<string, string>,
-            body: {
-                step_id: step?.sub_step ?? null,
-                brix_target: parseSP(step?.brix_sp) > 0 ? parseSP(step.brix_sp) : null,
-                brix_actual: actualBrix.value !== '' ? Number(actualBrix.value) : null,
-                ph_target:   parseSP(step?.ph_sp) > 0 ? parseSP(step.ph_sp) : null,
-                ph_actual:   actualPh.value !== '' ? Number(actualPh.value) : null,
-                operator: currentMixOperator.value, operator2: cookOperator.value?.username || null
-            }
-        })
-        $q.notify({ type: 'positive', message: '✅ QC Data Saved!', icon: 'check_circle', timeout: 2000 })
-        qcSaveOk = true
-    } catch (e: any) {
-        console.error('[QC] Save failed:', e)
-        // e.data may be a Pydantic validation error object or array — extract readable message
-        const detail = e?.data?.detail
-        const errMsg = Array.isArray(detail)
-            ? detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join(', ')
-            : (typeof detail === 'string' ? detail : (e.message || 'Unknown error'))
-        $q.notify({ type: 'negative', message: `QC save failed: ${errMsg}`, timeout: 5000 })
-        // Don't block production even if save fails — just log it
-    } finally {
+    const targetBatchId = selectedBatchId.value || batchInfo.value?.batch_id || multiPlantSummary.value[Number(activePlantId.value)]?.batchId
+
+    if (targetBatchId && targetBatchId !== '-') {
+        try {
+            const step = pendingQcStep.value
+            await $fetch<any>(`${appConfig.apiBaseUrl}/production-batches/${targetBatchId}/qc-record`, {
+                method: 'POST',
+                headers: getAuthHeader() as Record<string, string>,
+                body: {
+                    step_id: step?.sub_step ?? null,
+                    brix_target: parseSP(step?.brix_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spBrix) > 0 ? parseSP(step?.brix_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spBrix) : null,
+                    brix_actual: actualBrix.value !== '' ? Number(actualBrix.value) : null,
+                    ph_target:   parseSP(step?.ph_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spPh) > 0 ? parseSP(step?.ph_sp || multiPlantSummary.value[Number(activePlantId.value)]?.spPh) : null,
+                    ph_actual:   actualPh.value !== '' ? Number(actualPh.value) : null,
+                    operator: currentMixOperator.value || 'Operator',
+                    operator2: cookOperator.value?.username || null
+                }
+            })
+            $q.notify({ type: 'positive', message: '✅ QC Data Saved!', icon: 'check_circle', timeout: 2000 })
+            qcSaveOk = true
+        } catch (e: any) {
+            console.error('[QC] Save failed:', e)
+            const detail = e?.data?.detail
+            const errMsg = Array.isArray(detail)
+                ? detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join(', ')
+                : (typeof detail === 'string' ? detail : (e.message || 'Unknown error'))
+            $q.notify({ type: 'negative', message: `QC save failed: ${errMsg}`, timeout: 5000 })
+        } finally {
+            qcSaving.value = false
+        }
+    } else {
         qcSaving.value = false
     }
 
     // ── "Confirm & Continue" = QC recorded + step confirmed ──────────────────
-    // Close dialog FIRST, then advance step with current actualBrix/actualPh still set.
-    // skipToleranceCheck=true because QC dialog IS the interlock gate for Brix/pH steps.
     const stepToConfirm = pendingQcStep.value
     qcDialog.value = false
     pendingQcStep.value = null
@@ -1165,7 +1206,6 @@ const confirmQcCheck = async () => {
     if (plcHmiCommand.value === 0) plcHmiCommand.value = 2  // ensure HOLD not Abort
 
     if (stepToConfirm) {
-        // Advance step — skip tolerance checks (weight was already confirmed before QC dialog)
         confirmStepFromRow(stepToConfirm, true)  // true = skipToleranceCheck
     }
 
@@ -1173,20 +1213,20 @@ const confirmQcCheck = async () => {
     actualBrix.value = ''
     actualPh.value   = ''
 
-
-    
+    // Refresh multi-plant summary immediately to update overview status
+    await fetchMultiPlantSummary()
 
     // Resume after QC (display only — PLC drives itself)
     if (localStepIndex.value < skuSteps.value.length) {
-        // [PLC-DRIVE MODE] App does not send step cmd back — PLC fires next step itself
-        // setTimeout(() => sendStepToPLC(localStepIndex.value), 500)
         $q.notify({ type: 'info', message: `Resuming: Step ${localStepIndex.value + 1} active on PLC`, position: 'top', timeout: 1000 })
     } else {
         batchRunning.value = false
         $q.notify({ type: 'positive', message: `🎉 BATCH COMPLETE!`, position: 'center', timeout: 4000 })
         setTimeout(() => {
-            router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
-        }, 2000)
+            if (viewMode.value === 'focus') {
+                router.push({ path: '/x70-ProductionReport', query: { batch_id: selectedBatchId.value || '' } })
+            }
+        }, 1500)
     }
 }
 
@@ -1661,553 +1701,8 @@ const openInNewWindow = (plantId: number) => {
     window.open(url, '_blank')
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 🌐 3-Plant Multi-Control & Overview Grid States
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Overview vs Focus View Mode ──
 const viewMode = ref<'focus' | 'overview'>('focus')
-
-interface PlantOverviewInfo {
-    plantId: number
-    name: string
-    batchId: string
-    skuId: string
-    skuName: string
-    planId: string
-    batchSize: number
-    currentStepIndex: number
-    totalSteps: number
-    currentPhase: string
-    currentStepDesc: string
-    status: 'Running' | 'Standby' | 'QC Wait' | 'Paused' | 'Complete'
-    isQcWait: boolean
-    isScanWait: boolean
-    scanCountText: string
-    pendingIngredients: Array<{
-        re_code: string
-        name: string
-        weight: number
-        wh?: string
-    }>
-    isAlarm: boolean
-    temp: number
-    spTemp: number
-    weight: number
-    spWeight: number
-    agitator: number
-    spAgitator: number
-    highShear: number
-    spHighShear: number
-    brix: number
-    spBrix: string | number
-    ph: number
-    spPh: string | number
-    timer: number
-    spTimer: number
-    progressPercent: number
-}
-
-const multiPlantSummary = ref<Record<number, PlantOverviewInfo>>({
-    1: { plantId: 1, name: 'Mixing 1', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
-    2: { plantId: 2, name: 'Mixing 2', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 },
-    3: { plantId: 3, name: 'Mixing 3', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: '', currentStepDesc: '', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, weight: 0, agitator: 0, highShear: 0, progressPercent: 0 }
-})
-
-let multiPlantPollInterval: any = null
-
-const fetchMultiPlantSummary = async () => {
-    if (typeof document !== 'undefined' && document.hidden) return
-    const baseUrl = appConfig.apiBaseUrl
-
-    for (const pid of [1, 2, 3]) {
-        // Sync telemetry from plantsData (which receives live MQTT / telemetry-live)
-        const pLive = plantsData.value[String(pid)] || {}
-        const curTemp = pLive.Mixing_Tank_Temperature ?? 0
-        const curWeight = pLive.Mixing_Tank_Volume ?? 0
-        const curAgitator = pLive.MixingTank_Agitator_Speed ?? 0
-        const curHighShear = pLive.HighShare_Speed ?? 0
-
-        // If this is the currently active plant and we have loaded batch locally, use local truth
-        // Local in-memory batch state ONLY applies to the plant that actually loaded it
-        const isLocalBatch = selectedBatchId.value &&
-            batchInfo.value &&
-            Number(String(batchInfo.value.plant || '').replace(/\D/g, '')) === pid
-
-        if (isLocalBatch) {
-            const total = skuSteps.value.length
-            const curIdx = currentStepIndex.value
-            const step = skuSteps.value[curIdx]
-            let desc = step?.description || step?.action_name || (curIdx >= total ? 'Complete' : 'Processing')
-            if (desc === 'Processing' && step?.re_code) {
-                desc = formatActionText(step.action_name, step.re_code)
-            }
-            const isQc = String(desc).toLowerCase().includes('qc') || String(step?.action_code) === '40010'
-            const percent = total > 0 ? Math.min(100, Math.round(((curIdx + 1) / total) * 100)) : 0
-
-            // ── Extract Live Scanning Ingredients for Active Plant ──
-            let isScanWait = false
-            let scanCountText = ''
-            let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
-
-            const freeScan = activeFreeScanPhaseGroup.value
-            if (freeScan && freeScan.pending && freeScan.pending.length > 0) {
-                isScanWait = true
-                scanCountText = isThai.value ? `(สแกนแล้ว ${freeScan.scanned}/${freeScan.total} ถุง)` : `(Scanned ${freeScan.scanned}/${freeScan.total} bags)`
-                pendingInds = freeScan.pending.map((s: any) => ({
-                    re_code: s.re_code,
-                    name: s.description || s.action_name || s.re_code,
-                    weight: productionRequire(s),
-                    wh: getStepWh(s)
-                }))
-            } else if (step) {
-                const aCode = String(step.action_code || '')
-                const isManualScan = (aCode.startsWith('2') || aCode.startsWith('3')) && step.re_code && !step.re_code.toLowerCase().includes('ro-water') && productionRequire(step) > 0
-                if (isManualScan) {
-                    isScanWait = true
-                    scanCountText = isThai.value ? `(รอสแกน 1 ถุง)` : `(Pending 1 bag)`
-                    pendingInds = [{
-                        re_code: step.re_code,
-                        name: step.description || step.action_name || step.re_code,
-                        weight: productionRequire(step),
-                        wh: getStepWh(step)
-                    }]
-                }
-            }
-
-            const curSpTemp = Number(step?.temperature || 0)
-            const curSpWeight = Number(step?.target_weight || productionRequire(step) || 0)
-            const curSpAgitator = Number(step?.agitator_rpm || 0)
-            const curSpHighShear = Number(step?.high_shear_rpm || 0)
-            const curSpBrix = step?.brix_sp || ''
-            const curSpPh = step?.ph_sp || ''
-            const curSpTimer = Number(step?.step_time || 0)
-
-            multiPlantSummary.value[pid] = {
-                plantId: pid,
-                name: `Mixing ${pid}`,
-                batchId: selectedBatchId.value,
-                skuId: selectedSkuId.value || batchInfo.value?.sku_id || '',
-                skuName: batchInfo.value?.sku_name || selectedSkuId.value || '',
-                planId: batchInfo.value?.plan_id || '',
-                batchSize: batchInfo.value?.batch_size || 0,
-                currentStepIndex: curIdx + 1,
-                totalSteps: total,
-                currentPhase: step?.phase_number || (curIdx >= total ? 'pDone' : 'p000'),
-                currentStepDesc: desc,
-                status: isQc ? 'QC Wait' : (batchRunning.value ? 'Running' : 'Paused'),
-                isQcWait: isQc,
-                isScanWait: isScanWait,
-                scanCountText: scanCountText,
-                pendingIngredients: pendingInds,
-                isAlarm: false,
-                temp: curTemp,
-                spTemp: curSpTemp,
-                weight: curWeight,
-                spWeight: curSpWeight,
-                agitator: curAgitator,
-                spAgitator: curSpAgitator,
-                highShear: curHighShear,
-                spHighShear: curSpHighShear,
-                brix: Number(pLive.Brix_Actual ?? pLive.brix_actual ?? actualBrix.value ?? 0),
-                spBrix: curSpBrix,
-                ph: Number(pLive.PH_Actual ?? pLive.ph_actual ?? actualPh.value ?? 0),
-                spPh: curSpPh,
-                timer: Number(pLive.Step_Timer ?? pLive.step_timer ?? 0),
-                spTimer: curSpTimer,
-                progressPercent: percent
-            }
-            continue
-        }
-
-        // For other plants, query remote recipe status
-        try {
-            const res = await $fetch<any>(`${baseUrl}/plc/plant/${pid}/recipe-status`, { timeout: 10000 }).catch(() => null)
-            if (res?.success && res.target?.batch_id && res.target.batch_id !== '-' && res.target.batch_id !== '0') {
-                const bId = res.target.batch_id
-                const sku = res.target.sku_name || res.target.sku_id || ''
-                const steps = res.target.steps || []
-                const total = steps.length
-                const curIdx = Number(res.target.current_step || res.actual?.current_step || 1)
-                const curStepObj = steps[Math.max(0, curIdx - 1)] || {}
-                let desc = curStepObj.description || curStepObj.action_name || `Step ${curIdx}`
-                if (curStepObj.re_code && (!desc || desc.startsWith('Step'))) {
-                    desc = formatActionText(curStepObj.action_name, curStepObj.re_code)
-                }
-                const isQc = String(desc).toLowerCase().includes('qc') || String(curStepObj.action_code) === '40010'
-                const percent = total > 0 ? Math.min(100, Math.round((curIdx / total) * 100)) : 0
-
-                // ── Extract Scanning Ingredients for Remote Plant ──
-                let isScanWait = false
-                let scanCountText = ''
-                let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
-
-                // ── Check if API provided live Free-Scan restore progress ──
-                if (res?.free_scan_progress?.items && res.free_scan_progress.items.length > 0) {
-                    const pending = res.free_scan_progress.items.filter((it: any) => it.status !== 2)
-                    if (pending.length > 0) {
-                        isScanWait = true
-                        const scanned = (res.free_scan_progress.total_items || 0) - pending.length
-                        scanCountText = isThai.value ? `(สแกนแล้ว ${scanned}/${res.free_scan_progress.total_items} ถุง)` : `(Scanned ${scanned}/${res.free_scan_progress.total_items} bags)`
-                        pendingInds = pending.map((it: any) => ({
-                            re_code: it.re_code,
-                            name: it.re_code,
-                            weight: Number(it.require || 0),
-                            wh: it.wh || 'SPP'
-                        }))
-                    }
-                } else {
-                    const curPhaseNo = curStepObj.phase_no
-                    if (curPhaseNo) {
-                        const phaseSteps = steps.filter((s: any) => s.phase_no === curPhaseNo)
-                        const phaseScanSteps = phaseSteps.filter((s: any) => {
-                            const aCode = String(s.action_code || '')
-                            return (aCode.startsWith('2') || aCode.startsWith('3')) && s.re_code && !String(s.re_code).toLowerCase().includes('ro-water') && (Number(s.target_weight || s.require || 0) > 0)
-                        })
-
-                        if (phaseScanSteps.length > 0) {
-                            isScanWait = true
-                            scanCountText = isThai.value ? `(รอสแกน ${phaseScanSteps.length} รายการ)` : `(Pending ${phaseScanSteps.length} items)`
-                            pendingInds = phaseScanSteps.map((s: any) => ({
-                                re_code: s.re_code,
-                                name: s.description || s.action_name || s.re_code,
-                                weight: Number(s.target_weight || s.require || 0),
-                                wh: s.phase_id || 'SPP'
-                            }))
-                        }
-                    }
-                }
-                if (!isScanWait && curStepObj) {
-                    const aCode = String(curStepObj.action_code || '')
-                    if ((aCode.startsWith('2') || aCode.startsWith('3')) && curStepObj.re_code && !String(curStepObj.re_code).toLowerCase().includes('ro-water')) {
-                        isScanWait = true
-                        scanCountText = isThai.value ? `(รอสแกน 1 รายการ)` : `(Pending 1 item)`
-                        pendingInds = [{
-                            re_code: curStepObj.re_code,
-                            name: curStepObj.description || curStepObj.action_name || curStepObj.re_code,
-                            weight: Number(curStepObj.target_weight || curStepObj.require || 0),
-                            wh: curStepObj.phase_id || 'SPP'
-                        }]
-                    }
-                }
-
-                const remoteSpTemp = Number(curStepObj?.temp_sp || curStepObj?.temperature || 0)
-                const remoteSpWeight = Number(curStepObj?.target_weight || curStepObj?.require || 0)
-                const remoteSpAgitator = Number(curStepObj?.agitator_sp || curStepObj?.agitator_rpm || 0)
-                const remoteSpHighShear = Number(curStepObj?.highshear_sp || curStepObj?.high_shear_rpm || 0)
-                const remoteSpBrix = curStepObj?.brix_sp || ''
-                const remoteSpPh = curStepObj?.ph_sp || ''
-                const remoteSpTimer = Number(curStepObj?.step_time || 0)
-
-                multiPlantSummary.value[pid] = {
-                    plantId: pid,
-                    name: `Mixing ${pid}`,
-                    batchId: bId,
-                    skuId: res.target.sku_id || '',
-                    skuName: sku,
-                    planId: res.target.plan_id || '',
-                    batchSize: res.target.batch_size || 0,
-                    currentStepIndex: curIdx,
-                    totalSteps: total,
-                    currentPhase: curStepObj.phase_no ? `p${String(curStepObj.phase_no).padStart(3, '0')}` : 'p000',
-                    currentStepDesc: desc,
-                    status: isQc ? 'QC Wait' : 'Running',
-                    isQcWait: isQc,
-                    isScanWait: isScanWait,
-                    scanCountText: scanCountText,
-                    pendingIngredients: pendingInds,
-                    isAlarm: false,
-                    temp: curTemp,
-                    spTemp: remoteSpTemp,
-                    weight: curWeight,
-                    spWeight: remoteSpWeight,
-                    agitator: curAgitator,
-                    spAgitator: remoteSpAgitator,
-                    highShear: curHighShear,
-                    spHighShear: remoteSpHighShear,
-                    brix: Number(pLive.Brix_Actual ?? pLive.brix_actual ?? 0),
-                    spBrix: remoteSpBrix,
-                    ph: Number(pLive.PH_Actual ?? pLive.ph_actual ?? 0),
-                    spPh: remoteSpPh,
-                    timer: Number(pLive.Step_Timer ?? pLive.step_timer ?? 0),
-                    spTimer: remoteSpTimer,
-                    progressPercent: percent
-                }
-            } else {
-                multiPlantSummary.value[pid] = {
-                    plantId: pid,
-                    name: `Mixing ${pid}`,
-                    batchId: '',
-                    skuId: '',
-                    skuName: '',
-                    planId: '',
-                    batchSize: 0,
-                    currentStepIndex: 0,
-                    totalSteps: 0,
-                    currentPhase: 'p000',
-                    currentStepDesc: 'Standby / Clean',
-                    status: 'Standby',
-                    isQcWait: false,
-                    isScanWait: false,
-                    scanCountText: '',
-                    pendingIngredients: [],
-                    isAlarm: false,
-                    temp: curTemp,
-                    weight: curWeight,
-                    agitator: curAgitator,
-                    highShear: curHighShear,
-                    progressPercent: 0
-                }
-            }
-        } catch {
-            // Keep previous values on transient network error
-        }
-    }
-}
-
-// ── Color & Identity Helpers (Plant-Specific Safety Themes) ──
-const getPlantAccent = (p: number) => {
-    if (p === 1) return { color: 'blue-8', hex: '#1976D2', light: '#E3F2FD', dark: '#0D47A1', badge: 'bg-blue-9', border: '#2563eb', label: 'Sapphire Blue' }
-    if (p === 2) return { color: 'teal-8', hex: '#00897B', light: '#E0F2F1', dark: '#004D40', badge: 'bg-teal-8', border: '#0d9488', label: 'Emerald Teal' }
-    if (p === 3) return { color: 'deep-purple-7', hex: '#5E35B1', light: '#EDE7F6', dark: '#311B92', badge: 'bg-deep-purple-8', border: '#7c3aed', label: 'Royal Purple' }
-    return { color: 'amber-8', hex: '#F59E0B', light: '#FEF3C7', dark: '#78350F', badge: 'bg-amber-9', border: '#d97706', label: 'Amber Gold' }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 🚀 Multi-Plant Direct Actions & Barcode Auto-Routing
-// ─────────────────────────────────────────────────────────────────────────────
-const sendDirectPlantCommand = async (pid: number, cmd: 'START' | 'PAUSE' | 'NEXT_STEP' | 'ABORT') => {
-    const pStr = String(pid)
-    console.log(`[Direct Plant Action] Sending ${cmd} to Plant ${pid}`)
-    
-    if (cmd === 'ABORT') {
-        $q.dialog({
-            title: `🚨 ยืนยัน ABORT (หยุดฉุกเฉิน) PLANT ${pid}`,
-            message: `คุณกำลังจะสั่ง ABORT ถังผสม Plant ${pid} (Batch: ${multiPlantSummary.value[pid]?.batchId || 'N/A'}) แน่ใจหรือไม่?`,
-            cancel: true,
-            persistent: true,
-            ok: { label: `ยืนยัน ABORT PLANT ${pid}`, color: 'negative', unelevated: true }
-        }).onOk(async () => {
-            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'ABORT' })
-            $q.notify({ type: 'negative', icon: 'stop', message: `🚨 สั่งหยุดฉุกเฉิน Plant ${pid} เรียบร้อย`, position: 'top' })
-            fetchMultiPlantSummary()
-        })
-        return
-    }
-
-    if (cmd === 'PAUSE') {
-        publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'PAUSE' })
-        $q.notify({ type: 'warning', icon: 'pause', message: isThai.value ? `⏸ สั่ง Pause การทำงาน Plant ${pid}` : `⏸ Paused Plant ${pid}`, position: 'top' })
-        fetchMultiPlantSummary()
-        return
-    }
-
-    if (cmd === 'START') {
-        if (Number(activePlantId.value) === pid) {
-            await sendCommand('START')
-        } else {
-            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'START' })
-            $q.notify({ type: 'positive', icon: 'play_arrow', message: isThai.value ? `▶ สั่ง START Plant ${pid}` : `▶ Started Plant ${pid}`, position: 'top' })
-        }
-        fetchMultiPlantSummary()
-        return
-    }
-
-    if (cmd === 'NEXT_STEP') {
-        if (Number(activePlantId.value) === pid) {
-            await sendCommand('NEXT_STEP')
-        } else {
-            publishMessage(simCmdTopic(pStr, 'cmd'), { command: 'NEXT_STEP' })
-            $q.notify({ type: 'info', icon: 'skip_next', message: isThai.value ? `⏭ สั่ง Force Next Step Plant ${pid}` : `⏭ Next step sent for Plant ${pid}`, position: 'top' })
-        }
-        fetchMultiPlantSummary()
-        return
-    }
-}
-
-const directPlantQcConfirm = async (pid: number) => {
-    if (Number(activePlantId.value) !== pid) {
-        await switchPlant(pid)
-    }
-    qcDialog.value = true
-}
-
-const setScanTargetPlant = async (pid: number) => {
-    explicitPlantTarget.value = pid
-    activePlantId.value = String(pid)
-    
-    // Update router query so state persists and top badges stay reactive
-    const { ...newQuery } = route.query
-    newQuery.plant = String(pid)
-    await router.replace({ query: newQuery })
-    
-    $q.notify({
-        type: 'positive',
-        icon: 'qr_code_scanner',
-        message: isThai.value ? `🎯 ตั้งเป้าหมายการยิงบาร์โค้ดเป็น PLANT ${pid} เรียบร้อย` : `🎯 Barcode scan target set to PLANT ${pid}`,
-        position: 'top',
-        timeout: 1500
-    })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 🎨 Multi-Plant Realtime Sensor Status & Tolerance Colors (Act vs Set Point)
-// ─────────────────────────────────────────────────────────────────────────────
-const getPlantTempColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const sp = summary?.spTemp || 0
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.Mixing_Tank_Temperature ?? summary?.temp ?? 0)
-
-    if (sp <= 0) {
-        return { color: '#fbbf24', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    // In tolerance if within +/- 3.0°C or reached heating target
-    const isOk = act >= (sp - 3.0) && act <= (sp + 5.0)
-    return {
-        color: isOk ? '#4ade80' : '#ef4444',
-        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantWeightColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const sp = summary?.spWeight || 0
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.Mixing_Tank_Volume ?? summary?.weight ?? 0)
-
-    if (sp <= 0) {
-        return { color: '#67e8f9', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    // In tolerance if within 98% of target weight
-    const isOk = act >= (sp * 0.98) && act <= (sp * 1.05)
-    return {
-        color: isOk ? '#4ade80' : '#ef4444',
-        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantHighShearColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const sp = Number(summary?.spHighShear || 0)
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.HighShare_Speed ?? pLive.highshear_act ?? summary?.highShear ?? 0)
-
-    if (sp <= 0) {
-        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    const isOk = act >= (sp * 0.88)
-    return {
-        color: isOk ? '#4ade80' : '#f59e0b',
-        border: isOk ? '1px solid #22c55e' : '1px solid #f59e0b',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantBrixColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const spRaw = summary?.spBrix
-    const spNum = parseFloat(String(spRaw || '0'))
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.Brix_Actual ?? pLive.brix_actual ?? summary?.brix ?? (Number(activePlantId.value) === pid ? actualBrix.value : 0) ?? 0)
-
-    if (!spRaw || spRaw === '-' || spNum <= 0) {
-        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    const isOk = act > 0 && Math.abs(act - spNum) <= 0.5
-    return {
-        color: isOk ? '#4ade80' : '#ef4444',
-        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantPhColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const spRaw = summary?.spPh
-    const spNum = parseFloat(String(spRaw || '0'))
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.PH_Actual ?? pLive.ph_actual ?? summary?.ph ?? (Number(activePlantId.value) === pid ? actualPh.value : 0) ?? 0)
-
-    if (!spRaw || spRaw === '-' || spNum <= 0) {
-        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    const isOk = act > 0 && Math.abs(act - spNum) <= 0.3
-    return {
-        color: isOk ? '#4ade80' : '#ef4444',
-        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantTimerColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const sp = Number(summary?.spTimer || 0)
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.Step_Timer ?? pLive.step_timer ?? summary?.timer ?? 0)
-
-    if (sp <= 0) {
-        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    const isOk = act >= sp
-    return {
-        color: isOk ? '#4ade80' : (act > 0 ? '#38bdf8' : '#ef4444'),
-        border: isOk ? '1px solid #22c55e' : '1px solid #38bdf8',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantAgitatorColor = (pid: number) => {
-    const summary = multiPlantSummary.value[pid]
-    const sp = summary?.spAgitator || 0
-    const pLive = plantsData.value[String(pid)] || {}
-    const act = Number(pLive.MixingTank_Agitator_Speed ?? summary?.agitator ?? 0)
-
-    if (sp <= 0) {
-        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
-    }
-    // In tolerance if agitator is running at target speed (+/- 10%)
-    const isOk = act >= (sp * 0.88)
-    return {
-        color: isOk ? '#4ade80' : '#f59e0b',
-        border: isOk ? '1px solid #22c55e' : '1px solid #f59e0b',
-        isOk,
-        hasSp: true
-    }
-}
-
-const getPlantShortBadge = (p: number) => {
-    const summary = multiPlantSummary.value[p]
-    if (!summary || summary.status === 'Standby') return 'Standby'
-    if (summary.isQcWait) return 'QC Wait ⚠'
-    return `Step ${summary.currentStepIndex}/${summary.totalSteps || '?'}`
-}
-
-const getPlantBadgeColor = (p: number) => {
-    const summary = multiPlantSummary.value[p]
-    if (!summary || summary.status === 'Standby') return 'grey-6'
-    if (summary.isQcWait) return 'negative'
-    return 'green-7'
-}
-
-const toggleViewMode = () => {
-    viewMode.value = viewMode.value === 'overview' ? 'focus' : 'overview'
-    if (viewMode.value === 'overview') {
-        fetchMultiPlantSummary()
-    }
-}
-
-const selectPlantFromOverview = async (p: number) => {
-    explicitPlantTarget.value = p
-    activePlantId.value = String(p)
-    await switchPlant(p)
-}
 
 const isWeightInTolerance = (step: any, actualWeight: number) => {
     const requiredWeight = productionRequire(step)
@@ -3551,6 +3046,552 @@ const weightProgress = computed(() => {
     return totalActualWeight.value / totalRequireWeight.value
 })
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🌐 3-Plant Multi-Control & Overview Grid States & Methods
+// ─────────────────────────────────────────────────────────────────────────────
+interface PlantOverviewInfo {
+    plantId: number
+    name: string
+    batchId: string
+    skuId: string
+    skuName: string
+    planId: string
+    batchSize: number
+    currentStepIndex: number
+    totalSteps: number
+    currentPhase: string
+    currentStepDesc: string
+    status: 'Running' | 'Standby' | 'QC Wait' | 'Paused' | 'Complete'
+    isQcWait: boolean
+    isScanWait: boolean
+    scanCountText: string
+    pendingIngredients: Array<{
+        re_code: string
+        name: string
+        weight: number
+        wh?: string
+    }>
+    isAlarm: boolean
+    temp: number
+    spTemp: number
+    weight: number
+    spWeight: number
+    agitator: number
+    spAgitator: number
+    highShear: number
+    spHighShear: number
+    brix: number
+    spBrix: string | number
+    ph: number
+    spPh: string | number
+    timer: number
+    spTimer: number
+    progressPercent: number
+}
+
+const multiPlantSummary = ref<Record<number, PlantOverviewInfo>>({
+    1: { plantId: 1, name: 'Mixing 1', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: 'p000', currentStepDesc: 'Standby / Clean', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, spTemp: 0, weight: 0, spWeight: 0, agitator: 0, spAgitator: 0, highShear: 0, spHighShear: 0, brix: 0, spBrix: '', ph: 0, spPh: '', timer: 0, spTimer: 0, progressPercent: 0 },
+    2: { plantId: 2, name: 'Mixing 2', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: 'p000', currentStepDesc: 'Standby / Clean', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, spTemp: 0, weight: 0, spWeight: 0, agitator: 0, spAgitator: 0, highShear: 0, spHighShear: 0, brix: 0, spBrix: '', ph: 0, spPh: '', timer: 0, spTimer: 0, progressPercent: 0 },
+    3: { plantId: 3, name: 'Mixing 3', batchId: '', skuId: '', skuName: '', planId: '', batchSize: 0, currentStepIndex: 0, totalSteps: 0, currentPhase: 'p000', currentStepDesc: 'Standby / Clean', status: 'Standby', isQcWait: false, isScanWait: false, scanCountText: '', pendingIngredients: [], isAlarm: false, temp: 0, spTemp: 0, weight: 0, spWeight: 0, agitator: 0, spAgitator: 0, highShear: 0, spHighShear: 0, brix: 0, spBrix: '', ph: 0, spPh: '', timer: 0, spTimer: 0, progressPercent: 0 }
+})
+
+let multiPlantPollInterval: any = null
+
+let _isMultiPlantPolling = false
+const plantStepCache = ref<Record<number, { batchId: string; skuId: string; skuName: string; planId: string; batchSize: number; steps: any[] }>>({})
+
+const fetchMultiPlantSummary = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    if (_isMultiPlantPolling) return
+    _isMultiPlantPolling = true
+
+    const baseUrl = appConfig.apiBaseUrl
+
+    try {
+        // 🚀 Unified Single-Flight Endpoint for all 3 Plants (Zero Network Skew)
+        let allPlantsRes: any = null
+        try {
+            allPlantsRes = await $fetch<any>(`${baseUrl}/plc/plants/overview-summary`, {
+                headers: getAuthHeader() as Record<string, string>,
+                timeout: 5000
+            })
+        } catch (netErr) {
+            // Fallback gracefully
+        }
+
+        const plantsDict = allPlantsRes?.plants || {}
+
+        const getPhaseNum = (s: any) => {
+            if (!s) return null
+            if (s.phase_no != null && !isNaN(Number(s.phase_no))) return Number(s.phase_no)
+            const raw = String(s.phase_number || s.phase || '').trim()
+            const m = raw.match(/\d+/)
+            return m ? parseInt(m[0], 10) : null
+        }
+
+        for (const pid of [1, 2, 3]) {
+            const isCurrentActivePlant = Number(activePlantId.value) === pid
+            const res = plantsDict[String(pid)] || null
+            const ov = res?.overview || null
+            const telem = ov?.live_telemetry || {}
+            const pLive = plantsData.value[String(pid)] || {}
+
+            const curTemp = Number(telem.mix_tank_temp ?? pLive.Mixing_Tank_Temperature ?? 0)
+            const curWeight = Number(telem.mix_tank_weight ?? pLive.Mixing_Tank_Volume ?? 0)
+            const curAgitator = Number(telem.agitator_act ?? pLive.MixingTank_Agitator_Speed ?? 0)
+            const curHighShear = Number(telem.highshear_act ?? pLive.HighShare_Speed ?? 0)
+            const curBrix = Number(telem.brix_actual ?? pLive.Brix_Actual ?? pLive.brix_actual ?? 0)
+            const curPh = Number(telem.ph_actual ?? pLive.PH_Actual ?? pLive.ph_actual ?? 0)
+            const curTimer = Number(telem.step_timer ?? pLive.Step_Timer ?? pLive.step_timer ?? 0)
+            const curState = Number(telem.current_step ? 1 : (pLive.PLC_State ?? pLive.State ?? pLive.state ?? 1))
+
+            let bId = res?.target?.batch_id
+            let isBatchValid = Boolean(res?.success && bId && bId !== '-' && bId !== '0')
+
+            // If active plant has in-memory batch, maintain it
+            if (!isBatchValid && isCurrentActivePlant && selectedBatchId.value) {
+                bId = selectedBatchId.value
+                isBatchValid = true
+            }
+
+            if (isBatchValid && bId) {
+                let steps = res?.target?.steps || []
+                if (steps.length === 0 && isCurrentActivePlant && skuSteps.value.length > 0) {
+                    steps = skuSteps.value
+                }
+
+                // Cache steps for this plant
+                if (steps.length > 0) {
+                    plantStepCache.value[pid] = {
+                        batchId: bId,
+                        skuId: res?.target?.sku_id || (isCurrentActivePlant ? (selectedSkuId.value || '') : '') || '',
+                        skuName: res?.target?.sku_name || (isCurrentActivePlant ? (batchInfo.value?.sku_name || '') : '') || '',
+                        planId: res?.target?.plan_id || (isCurrentActivePlant ? (batchInfo.value?.plan_id || '') : '') || '',
+                        batchSize: res?.target?.batch_size || (isCurrentActivePlant ? (batchInfo.value?.batch_size || 0) : 0) || 0,
+                        steps: steps
+                    }
+                }
+
+                const cached = plantStepCache.value[pid] || { steps: [] }
+                const activeSteps = (steps && steps.length > 0) ? steps : (cached.steps || [])
+                const total = activeSteps.length
+
+                // ── Accurate Current Step Index Resolution (Focus View is the Master Truth) ──
+                let curStep0Idx = 0
+
+                if (isCurrentActivePlant) {
+                    curStep0Idx = currentStepIndex.value
+                } else if (ov && typeof ov.active_step_index === 'number') {
+                    curStep0Idx = Math.max(0, Math.min(total > 0 ? total - 1 : 0, ov.active_step_index))
+                } else {
+                    curStep0Idx = 0
+                }
+
+                const curIdx = total > 0 ? curStep0Idx + 1 : 0
+                const curStepObj = activeSteps[curStep0Idx] || {}
+                let desc = curStepObj.description || curStepObj.action_description || curStepObj.action_name || curStepObj.re_code || (ov?.current_step_desc) || (curIdx > total ? 'Complete' : `Step ${curIdx}`)
+                if (curStepObj.re_code && (!desc || desc.startsWith('Step'))) {
+                    desc = formatActionText(curStepObj.action_name, curStepObj.re_code)
+                }
+
+                // Determine QC requirement
+                const isQcStep = Boolean(
+                    ov ? ov.is_qc_wait : (
+                        curStepObj?.brix_sp || curStepObj?.ph_sp ||
+                        curStepObj?.operation_brix_record || curStepObj?.operation_ph_record ||
+                        String(curStepObj?.action_code) === '40010' ||
+                        String(desc).toLowerCase().includes('qc')
+                    )
+                )
+                const isQc = isQcStep
+
+                const percent = total > 0 ? Math.min(100, Math.round((curIdx / total) * 100)) : 0
+
+                // ── INGREDIENTS SCAN WAIT DETECTION (SHOW ALL INGREDIENTS IN THE ACTIVE PHASE) ──
+                let isScanWait = false
+                let scanCountText = ''
+                let pendingInds: Array<{ re_code: string; name: string; weight: number; wh?: string }> = []
+
+                const curPhaseNo = curStepObj.phase_no
+                const curPhaseNum = curStepObj.phase_number || (curPhaseNo ? `p${String(curPhaseNo).padStart(3, '0')}` : (ov?.current_phase || 'p000'))
+                const curPhaseNumInt = getPhaseNum(curStepObj)
+
+                const isScanInd = (s: any) => {
+                    if (!s) return false
+                    const rc = String(s.re_code || '').trim()
+                    if (!rc || rc === '-' || rc === '0') return false
+                    const rcLower = rc.toLowerCase()
+                    if (rcLower.includes('ro-water') || rcLower.includes('ro water') || rcLower.includes('liquid sugar') || rcLower.includes('ls in line')) return false
+                    const aCode = String(s.action_code || '')
+                    if (aCode.startsWith('3') && ['heat', 'circulate', 'mix', 'agitator', 'pasteurize', 'cool', 'drain', 'transfer', 'holding'].some(k => rcLower.includes(k))) return false
+                    if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
+                    const req = Number(s.target_weight || s.require || 0)
+                    return req > 0
+                }
+
+                // Strict phase matching by integer phase number (Free-Scan across ALL ingredients in active phase)
+                const currentPhaseScanSteps = activeSteps.filter((s: any) => {
+                    const sPhaseNumInt = getPhaseNum(s)
+                    return sPhaseNumInt !== null && curPhaseNumInt !== null && sPhaseNumInt === curPhaseNumInt && isScanInd(s)
+                })
+
+                if (isCurrentActivePlant) {
+                    if (currentPhaseScanSteps.length > 0) {
+                        const pendingInCurrentPhase = currentPhaseScanSteps.filter((s: any) => {
+                            const phaseScanKey = `${s.phase_number || curPhaseNum}|${s.re_code}`
+                            const rawKey = s.re_code
+                            const isScanned = scannedVolumeMap.value[phaseScanKey] != null || scannedVolumeMap.value[rawKey] != null
+                            return !isScanned
+                        })
+                        if (pendingInCurrentPhase.length > 0) {
+                            isScanWait = true
+                            const scannedCount = currentPhaseScanSteps.length - pendingInCurrentPhase.length
+                            scanCountText = isThai.value
+                                ? `(สแกนแล้ว ${scannedCount}/${currentPhaseScanSteps.length} รายการ)`
+                                : `(Scanned ${scannedCount}/${currentPhaseScanSteps.length} items)`
+                            pendingInds = pendingInCurrentPhase.map((s: any) => ({
+                                re_code: s.re_code,
+                                name: s.description || s.action_description || s.action_name || s.re_code,
+                                weight: Number(s.target_weight || s.require || 0),
+                                wh: s.phase_id || 'SPP'
+                            }))
+                        }
+                    }
+                } else if (ov) {
+                    isScanWait = Boolean(ov.is_scan_wait)
+                    pendingInds = ov.pending_scan_items || []
+                    if (isScanWait && pendingInds.length > 0) {
+                        const totalPhaseScan = currentPhaseScanSteps.length || pendingInds.length
+                        const scannedCount = Math.max(0, totalPhaseScan - pendingInds.length)
+                        scanCountText = isThai.value
+                            ? `(สแกนแล้ว ${scannedCount}/${totalPhaseScan} รายการ)`
+                            : `(Scanned ${scannedCount}/${totalPhaseScan} items)`
+                    }
+                }
+
+                const spTemp = Number(curStepObj?.temp_sp || curStepObj?.temperature || 0)
+                const spWeight = Number(curStepObj?.target_weight || curStepObj?.require || 0)
+                const spAgitator = Number(curStepObj?.agitator_sp || curStepObj?.agitator_rpm || 0)
+                const spHighShear = Number(curStepObj?.highshear_sp || curStepObj?.high_shear_rpm || 0)
+                const spBrix = curStepObj?.brix_sp || ''
+                const spPh = curStepObj?.ph_sp || ''
+                const spTimer = Number(curStepObj?.step_time || 0)
+
+                multiPlantSummary.value[pid] = {
+                    plantId: pid,
+                    name: `Mixing ${pid}`,
+                    batchId: bId,
+                    skuId: cached.skuId || res?.target?.sku_id || '',
+                    skuName: cached.skuName || res?.target?.sku_name || '',
+                    planId: cached.planId || res?.target?.plan_id || '',
+                    batchSize: cached.batchSize || res?.target?.batch_size || 0,
+                    currentStepIndex: curIdx,
+                    totalSteps: total,
+                    currentPhase: curPhaseNum,
+                    currentStepDesc: desc,
+                    status: isQc ? 'QC Wait' : (curState === 0 ? 'Standby' : 'Running'),
+                    isQcWait: isQc,
+                    isScanWait: isScanWait,
+                    scanCountText: scanCountText,
+                    pendingIngredients: pendingInds,
+                    isAlarm: false,
+                    temp: curTemp,
+                    spTemp: spTemp,
+                    weight: curWeight,
+                    spWeight: spWeight,
+                    agitator: curAgitator,
+                    spAgitator: spAgitator,
+                    highShear: curHighShear,
+                    spHighShear: spHighShear,
+                    brix: isCurrentActivePlant && actualBrix.value !== '' ? Number(actualBrix.value) : curBrix,
+                    spBrix: spBrix,
+                    ph: isCurrentActivePlant && actualPh.value !== '' ? Number(actualPh.value) : curPh,
+                    spPh: spPh,
+                    timer: curTimer,
+                    spTimer: spTimer,
+                    progressPercent: percent
+                }
+            } else {
+                delete plantStepCache.value[pid]
+                multiPlantSummary.value[pid] = {
+                    plantId: pid,
+                    name: `Mixing ${pid}`,
+                    batchId: '',
+                    skuId: '',
+                    skuName: '',
+                    planId: '',
+                    batchSize: 0,
+                    currentStepIndex: 0,
+                    totalSteps: 0,
+                    currentPhase: 'p000',
+                    currentStepDesc: 'Standby / Clean',
+                    status: 'Standby',
+                    isQcWait: false,
+                    isScanWait: false,
+                    scanCountText: '',
+                    pendingIngredients: [],
+                    isAlarm: false,
+                    temp: curTemp,
+                    spTemp: 0,
+                    weight: curWeight,
+                    spWeight: 0,
+                    agitator: curAgitator,
+                    spAgitator: 0,
+                    highShear: curHighShear,
+                    spHighShear: 0,
+                    brix: curBrix,
+                    spBrix: '',
+                    ph: curPh,
+                    spPh: '',
+                    timer: curTimer,
+                    spTimer: 0,
+                    progressPercent: 0
+                }
+            }
+        }
+    } finally {
+        _isMultiPlantPolling = false
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🎛 Direct Mini-HMI Actions (Multi-Plant Operation Deck)
+// ─────────────────────────────────────────────────────────────────────────────
+const sendDirectPlantCommand = async (pid: number, action: 'START' | 'PAUSE' | 'NEXT_STEP' | 'ABORT') => {
+    const isTargetActive = Number(activePlantId.value) === pid
+    if (isTargetActive) {
+        if (action === 'START') await sendCommand('START')
+        else if (action === 'PAUSE') await sendCommand('PAUSE')
+        else if (action === 'NEXT_STEP') await sendCommand('NEXT_STEP')
+        else if (action === 'ABORT') await resetBatch()
+        fetchMultiPlantSummary()
+        return
+    }
+
+    try {
+        const baseUrl = appConfig.apiBaseUrl
+        const actionCodeMap: Record<string, number> = {
+            'START': 1,
+            'PAUSE': 2,
+            'NEXT_STEP': 1,
+            'ABORT': 0
+        }
+        const cmdVal = actionCodeMap[action] ?? 2
+        await $fetch<any>(`${baseUrl}/plc/plant/${pid}/hmi-command?cmd=${cmdVal}`, { method: 'POST', timeout: 5000 })
+        
+        $q.notify({
+            type: action === 'ABORT' ? 'negative' : (action === 'START' ? 'positive' : 'warning'),
+            icon: action === 'START' ? 'play_arrow' : (action === 'PAUSE' ? 'pause' : 'skip_next'),
+            message: `ส่งคำสั่ง ${action} ไปยัง Plant ${pid} สำเร็จ`,
+            position: 'top',
+            timeout: 1500
+        })
+        setTimeout(fetchMultiPlantSummary, 800)
+    } catch (e: any) {
+        $q.notify({
+            type: 'negative',
+            message: `ไม่สามารถส่งคำสั่ง ${action} ไปยัง Plant ${pid} ได้: ${e.message}`,
+            position: 'top',
+            timeout: 3000
+        })
+    }
+}
+
+const directPlantQcConfirm = async (pid: number) => {
+    explicitPlantTarget.value = pid
+    activePlantId.value = String(pid)
+    await fetchBatchInfo()
+
+    const summ = multiPlantSummary.value[pid]
+    if (!selectedBatchId.value && summ?.batchId) {
+        selectedBatchId.value = summ.batchId
+    }
+
+    const step = currentStep.value || (skuSteps.value && skuSteps.value[currentStepIndex.value])
+    if (step) {
+        pendingQcStep.value = step
+        actualBrix.value = step?.actual_brix ?? (actualBrix.value !== '' ? actualBrix.value : '')
+        actualPh.value = step?.actual_ph ?? (actualPh.value !== '' ? actualPh.value : '')
+    } else {
+        pendingQcStep.value = {
+            phase_number: summ?.currentPhase || 'p000',
+            phase_id: 'QC',
+            brix_sp: summ?.spBrix || '',
+            ph_sp: summ?.spPh || '',
+            operation_brix_record: Boolean(summ?.spBrix),
+            operation_ph_record: Boolean(summ?.spPh)
+        }
+    }
+
+    qcDialog.value = true
+    $q.notify({
+        type: 'info',
+        icon: 'science',
+        message: isThai.value ? `เปิดหน้าต่างบันทึกผล QC สำหรับ Plant ${pid}` : `Opened QC record dialog for Plant ${pid}`,
+        position: 'top',
+        timeout: 1500
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🎨 Multi-Plant Realtime Sensor Status & Tolerance Colors (Act vs Set Point)
+// ─────────────────────────────────────────────────────────────────────────────
+const getPlantTempColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = summary?.spTemp || 0
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Mixing_Tank_Temperature ?? summary?.temp ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#fbbf24', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= (sp - 3.0) && act <= (sp + 5.0)
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantWeightColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = summary?.spWeight || 0
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Mixing_Tank_Volume ?? summary?.weight ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#67e8f9', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= (sp * 0.98) && act <= (sp * 1.05)
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantHighShearColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = Number(summary?.spHighShear || 0)
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.HighShare_Speed ?? pLive.highshear_act ?? summary?.highShear ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= (sp * 0.88)
+    return {
+        color: isOk ? '#4ade80' : '#f59e0b',
+        border: isOk ? '1px solid #22c55e' : '1px solid #f59e0b',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantBrixColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const spRaw = summary?.spBrix
+    const spNum = parseFloat(String(spRaw || '0'))
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Brix_Actual ?? pLive.brix_actual ?? summary?.brix ?? (Number(activePlantId.value) === pid ? actualBrix.value : 0) ?? 0)
+
+    if (!spRaw || spRaw === '-' || spNum <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act > 0 && Math.abs(act - spNum) <= 0.5
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantPhColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const spRaw = summary?.spPh
+    const spNum = parseFloat(String(spRaw || '0'))
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.PH_Actual ?? pLive.ph_actual ?? summary?.ph ?? (Number(activePlantId.value) === pid ? actualPh.value : 0) ?? 0)
+
+    if (!spRaw || spRaw === '-' || spNum <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act > 0 && Math.abs(act - spNum) <= 0.3
+    return {
+        color: isOk ? '#4ade80' : '#ef4444',
+        border: isOk ? '1px solid #22c55e' : '1px solid #ef4444',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantTimerColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = Number(summary?.spTimer || 0)
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.Step_Timer ?? pLive.step_timer ?? summary?.timer ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= sp
+    return {
+        color: isOk ? '#4ade80' : (act > 0 ? '#38bdf8' : '#ef4444'),
+        border: isOk ? '1px solid #22c55e' : '1px solid #38bdf8',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantAgitatorColor = (pid: number) => {
+    const summary = multiPlantSummary.value[pid]
+    const sp = summary?.spAgitator || 0
+    const pLive = plantsData.value[String(pid)] || {}
+    const act = Number(pLive.MixingTank_Agitator_Speed ?? summary?.agitator ?? 0)
+
+    if (sp <= 0) {
+        return { color: '#94a3b8', border: '1px solid #334155', isOk: false, hasSp: false }
+    }
+    const isOk = act >= (sp * 0.88)
+    return {
+        color: isOk ? '#4ade80' : '#f59e0b',
+        border: isOk ? '1px solid #22c55e' : '1px solid #f59e0b',
+        isOk,
+        hasSp: true
+    }
+}
+
+const getPlantShortBadge = (p: number) => {
+    const summary = multiPlantSummary.value[p]
+    if (!summary || summary.status === 'Standby') return 'Standby'
+    if (summary.isQcWait) return 'QC Wait ⚠'
+    return `Step ${summary.currentStepIndex}/${summary.totalSteps || '?'}`
+}
+
+const getPlantBadgeColor = (p: number) => {
+    const summary = multiPlantSummary.value[p]
+    if (!summary || summary.status === 'Standby') return 'grey-6'
+    if (summary.isQcWait) return 'negative'
+    return 'green-7'
+}
+
+const toggleViewMode = () => {
+    viewMode.value = viewMode.value === 'overview' ? 'focus' : 'overview'
+    if (viewMode.value === 'overview') {
+        fetchMultiPlantSummary()
+    }
+}
+
+const selectPlantFromOverview = async (p: number) => {
+    explicitPlantTarget.value = p
+    activePlantId.value = String(p)
+    await switchPlant(p)
+}
+
+
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null
 let _telemetryPollInterval: ReturnType<typeof setInterval> | null = null
 let _stepSyncInterval: ReturnType<typeof setInterval> | null = null
@@ -4655,7 +4696,7 @@ onMounted(() => {
     // Multi-plant summary poll (for subheader badges & overview grid)
     fetchMultiPlantSummary()
     if (multiPlantPollInterval) clearInterval(multiPlantPollInterval)
-    multiPlantPollInterval = setInterval(fetchMultiPlantSummary, 4000)
+    multiPlantPollInterval = setInterval(fetchMultiPlantSummary, 1500)
 
 })
 
@@ -5080,10 +5121,10 @@ onUnmounted(() => {
                      <div class="row items-center justify-between no-wrap q-mb-xs">
                         <div class="row items-center q-gutter-x-xs no-wrap">
                            <q-icon name="qr_code_scanner" color="amber-3" size="16px" />
-                           <span class="text-weight-bolder text-amber-3" style="font-size: 11px;">⚡ {{ isThai ? "สแกน IND:" : "Scan IND:" }} {{ multiPlantSummary[pid]?.scanCountText }}</span>
+                           <span class="text-weight-bolder text-amber-3" style="font-size: 11px;">⚡ {{ isThai ? "สแกนวัตถุดิบ (Ingredients):" : "Scan Ingredients:" }} {{ multiPlantSummary[pid]?.scanCountText }}</span>
                         </div>
                         <q-badge color="amber-8" text-color="dark" class="text-weight-bolder" style="font-size: 10px;">
-                           {{ multiPlantSummary[pid]?.pendingIngredients?.length }} {{ isThai ? 'ถุงรอสแกน' : 'bags pending' }}
+                           {{ multiPlantSummary[pid]?.pendingIngredients?.length }} {{ isThai ? 'รายการรอสแกน' : 'pending' }}
                         </q-badge>
                      </div>
 
@@ -5107,9 +5148,12 @@ onUnmounted(() => {
                   </div>
 
                   <!-- Prompt / Alert Banner if QC Wait -->
-                  <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-xs rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 1px solid #ef4444;">
-                     <div class="text-weight-bold text-caption"><q-icon name="warning" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
-                     <q-btn unelevated dense color="white" text-color="red-10" icon="fact_check" :label="(isThai ? 'อนุมัติ QC (Plant ' : 'Approve QC (Plant ') + pid + ')'" class="text-weight-bolder q-mt-xs full-width" style="font-size: 11px; height: 26px;" @click="directPlantQcConfirm(pid)" />
+                  <div v-if="multiPlantSummary[pid]?.isQcWait" class="q-pa-xs rounded-borders bg-red-10 text-white text-center shadow-2 pulse-alarm" style="border: 2px solid #ef4444;">
+                     <div class="text-weight-bold text-caption"><q-icon name="science" class="q-mr-xs" /> ACTION REQUIRED: QC CONFIRM</div>
+                     <div class="text-caption text-amber-2 q-my-xs" style="font-size: 10px;">
+                        BRIX SP: <span class="text-white text-weight-bold">{{ multiPlantSummary[pid]?.spBrix || '-' }}</span> | pH SP: <span class="text-white text-weight-bold">{{ multiPlantSummary[pid]?.spPh || '-' }}</span>
+                     </div>
+                     <q-btn unelevated dense color="positive" text-color="white" icon="edit_note" :label="(isThai ? '🧪 กรอกผล & อนุมัติ QC (Plant ' : '🧪 Record & Approve QC (Plant ') + pid + ')'" class="text-weight-bolder q-mt-xs full-width shadow-2" style="font-size: 11px; height: 28px;" @click="directPlantQcConfirm(pid)" />
                   </div>
 
                   <!-- DIRECT MINI-HMI QUICK ACTIONS (Multi-Plant Operation Deck) -->
@@ -5606,43 +5650,212 @@ onUnmounted(() => {
     </q-dialog>
 
     <!-- THE QC TRAP DIALOG -->
-    <q-dialog v-model="qcDialog" persistent backdrop-filter="blur(4px)">
-      <q-card style="width: 400px; max-width: 90vw; border-radius: 12px; border: 2px solid orange;">
-        <q-card-section class="bg-orange-1 text-orange-10 row items-center">
-          <q-icon name="warning" size="2rem" class="q-mr-sm"/>
-          <div class="text-h6 text-weight-bold">QC Record Required</div>
-        </q-card-section>
+    <!-- ═══════════════════════════════════════════════════════════════════════ -->
+    <!-- 🧪 THE QC RECORD & APPROVAL DIALOG (PLANT IDENTITY BRANDED)          -->
+    <!-- ═══════════════════════════════════════════════════════════════════════ -->
+    <q-dialog v-model="qcDialog" persistent backdrop-filter="blur(6px)">
+      <q-card
+        :style="{
+          width: '520px',
+          maxWidth: '95vw',
+          borderRadius: '16px',
+          border: `3px solid ${getPlantAccent(Number(activePlantId)).hex}`,
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255,255,255,0.1)',
+          overflow: 'hidden'
+        }"
+        class="bg-white"
+      >
+        <!-- Top Plant Header Banner -->
+        <div
+          :style="{
+            background: `linear-gradient(135deg, ${getPlantAccent(Number(activePlantId)).dark} 0%, ${getPlantAccent(Number(activePlantId)).hex} 100%)`,
+            color: 'white',
+            padding: '16px 20px',
+            position: 'relative'
+          }"
+        >
+          <div class="row items-center justify-between no-wrap">
+            <div class="row items-center no-wrap" style="gap: 14px;">
+              <div
+                class="row items-center justify-center shadow-3"
+                :style="{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1.5px solid rgba(255, 255, 255, 0.4)'
+                }"
+              >
+                <q-icon name="science" size="28px" color="white" />
+              </div>
+              <div>
+                <div class="text-h6 text-weight-bolder row items-center" style="line-height: 1.2; letter-spacing: 0.3px;">
+                  QC Record Required
+                </div>
+                <div class="text-caption text-weight-bold row items-center text-amber-3 q-mt-xs" style="font-size: 12px; letter-spacing: 0.5px;">
+                  🏢 PLANT {{ activePlantId }} &bull; Batch: {{ selectedBatchId || batchInfo?.batch_id || multiPlantSummary[Number(activePlantId)]?.batchId || '-' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Plant Identification Badge -->
+            <div class="column items-end">
+              <q-badge
+                color="white"
+                :text-color="getPlantAccent(Number(activePlantId)).color"
+                class="text-weight-bolder shadow-2"
+                style="font-size: 12px; padding: 4px 10px; border-radius: 8px; letter-spacing: 0.5px;"
+              >
+                🏢 PLANT {{ activePlantId }}
+              </q-badge>
+              <div class="text-white text-caption q-mt-xs" style="font-size: 10px; opacity: 0.9; font-weight: 600;">
+                {{ getPlantAccent(Number(activePlantId)).label }}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <q-separator />
 
+        <!-- Sub-header: SKU & Phase Details Card -->
+        <div class="q-pa-md bg-grey-1" style="border-bottom: 1px solid #e2e8f0;">
+          <div class="row items-center justify-between q-col-gutter-sm">
+            <div class="col-12 col-sm-7">
+              <div class="text-caption text-grey-7 text-weight-bold">PRODUCT / SKU:</div>
+              <div class="text-subtitle2 text-weight-bolder text-grey-9 ellipsis" :title="batchInfo?.sku_name || multiPlantSummary[Number(activePlantId)]?.skuName || '-'">
+                {{ batchInfo?.sku_name || multiPlantSummary[Number(activePlantId)]?.skuName || '-' }}
+              </div>
+            </div>
+            <div class="col-12 col-sm-5 text-sm-right">
+              <div class="text-caption text-grey-7 text-weight-bold">CURRENT PHASE:</div>
+              <q-badge
+                :color="getPlantAccent(Number(activePlantId)).color"
+                text-color="white"
+                class="text-weight-bolder q-px-sm q-py-xs"
+                style="font-size: 12px; border-radius: 6px;"
+              >
+                {{ pendingQcStep?.phase_number || multiPlantSummary[Number(activePlantId)]?.currentPhase || '-' }}
+                <span v-if="pendingQcStep?.phase_id" class="q-ml-xs">({{ pendingQcStep?.phase_id }})</span>
+              </q-badge>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main QC Value Entry Section -->
         <q-card-section class="q-pa-md">
-          <div class="text-subtitle1 q-mb-md">Phase: <strong>{{ pendingQcStep?.phase_number }} ({{ pendingQcStep?.phase_id }})</strong></div>
-          <p class="text-grey-8">Please record the actual QC values before continuing to the next step.</p>
-          
-          <div v-if="pendingQcStep?.operation_brix_record" class="q-mt-sm">
-             <div class="text-weight-bold">Target Brix: <span class="text-indigo">{{ pendingQcStep?.brix_sp }}</span></div>
-             <q-input v-model="actualBrix" outlined dense autofocus placeholder="Enter Actual Brix" type="number" step="0.1" class="q-mt-xs">
-                <template v-slot:append><div style="font-size: 14px;">Brix</div></template>
-             </q-input>
+          <div class="text-caption text-grey-7 q-mb-md">
+            {{ isThai ? 'กรุณากรอกและตรวจสอบผลแล็บ (Brix / pH) ให้ตรงตามเกณฑ์ก่อนอนุมัติสเต็ปถัดไป:' : 'Please enter actual lab values (Brix / pH) against target setpoints to approve:' }}
           </div>
 
-          <div v-if="pendingQcStep?.operation_ph_record" class="q-mt-md">
-             <div class="text-weight-bold">Target pH: <span class="text-indigo">{{ pendingQcStep?.ph_sp }}</span></div>
-             <q-input v-model="actualPh" outlined dense placeholder="Enter Actual pH" type="number" step="0.01" class="q-mt-xs">
-                <template v-slot:append><div style="font-size: 14px;">pH</div></template>
-             </q-input>
+          <!-- Brix Input Card -->
+          <div
+            v-if="pendingQcStep?.operation_brix_record || pendingQcStep?.brix_sp || multiPlantSummary[Number(activePlantId)]?.spBrix"
+            class="q-pa-sm q-mb-md rounded-borders"
+            style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px;"
+          >
+            <div class="row items-center justify-between q-mb-xs">
+              <div class="row items-center text-weight-bolder text-grey-9" style="font-size: 13px;">
+                <q-icon name="opacity" color="orange-8" size="18px" class="q-mr-xs" />
+                Brix Setpoint (Target):
+              </div>
+              <div class="text-h6 text-weight-bolder text-orange-9">
+                {{ pendingQcStep?.brix_sp || multiPlantSummary[Number(activePlantId)]?.spBrix || '-' }} <span style="font-size: 12px;">°Bx</span>
+              </div>
+            </div>
+            <q-input
+              v-model="actualBrix"
+              outlined
+              dense
+              autofocus
+              placeholder="Enter Actual Brix (e.g. 65.0)"
+              type="number"
+              step="0.1"
+              class="q-mt-xs bg-white text-h6 text-weight-bolder"
+              style="font-size: 16px;"
+            >
+              <template v-slot:prepend>
+                <q-icon name="edit" color="orange-8" size="18px" />
+              </template>
+              <template v-slot:append>
+                <div class="text-weight-bold text-orange-9" style="font-size: 13px;">°Bx</div>
+              </template>
+            </q-input>
+          </div>
+
+          <!-- pH Input Card -->
+          <div
+            v-if="pendingQcStep?.operation_ph_record || pendingQcStep?.ph_sp || multiPlantSummary[Number(activePlantId)]?.spPh"
+            class="q-pa-sm rounded-borders"
+            style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px;"
+          >
+            <div class="row items-center justify-between q-mb-xs">
+              <div class="row items-center text-weight-bolder text-grey-9" style="font-size: 13px;">
+                <q-icon name="biotech" color="teal-8" size="18px" class="q-mr-xs" />
+                pH Setpoint (Target):
+              </div>
+              <div class="text-h6 text-weight-bolder text-teal-9">
+                {{ pendingQcStep?.ph_sp || multiPlantSummary[Number(activePlantId)]?.spPh || '-' }} <span style="font-size: 12px;">pH</span>
+              </div>
+            </div>
+            <q-input
+              v-model="actualPh"
+              outlined
+              dense
+              placeholder="Enter Actual pH (e.g. 3.45)"
+              type="number"
+              step="0.01"
+              class="q-mt-xs bg-white text-h6 text-weight-bolder"
+              style="font-size: 16px;"
+            >
+              <template v-slot:prepend>
+                <q-icon name="edit" color="teal-8" size="18px" />
+              </template>
+              <template v-slot:append>
+                <div class="text-weight-bold text-teal-9" style="font-size: 13px;">pH</div>
+              </template>
+            </q-input>
           </div>
         </q-card-section>
 
         <q-separator />
 
+        <!-- Footer Actions -->
         <q-card-actions align="between" class="bg-grey-1 q-pa-md">
-          <q-btn unelevated label="Re-Pasteurize" color="deep-orange-9" icon="local_fire_department" @click="reRunPasteurize">
-            <q-tooltip class="bg-dark text-body2">{{ isThai ? "สั่งให้ PLC วิ่งกลับไปต้มฆ่าเชื้อซ้ำอีก 1 รอบ" : "Order PLC to re-run pasteurization loop" }}</q-tooltip>
+          <q-btn
+            outline
+            color="deep-orange-9"
+            icon="local_fire_department"
+            :label="isThai ? 'ต้มซ้ำ (Re-Pasteurize)' : 'Re-Pasteurize'"
+            class="text-weight-bold"
+            style="border-radius: 8px; font-size: 12px;"
+            @click="reRunPasteurize"
+          >
+            <q-tooltip class="bg-dark text-body2">
+              {{ isThai ? 'สั่งให้ PLC วิ่งกลับไปต้มฆ่าเชื้อซ้ำอีก 1 รอบ' : 'Order PLC to re-run pasteurization loop' }}
+            </q-tooltip>
           </q-btn>
+
           <div class="row q-gutter-sm items-center">
-            <q-btn flat label="Pause" color="grey-8" @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }" />
-            <q-btn unelevated label="Confirm & Pass" color="positive" icon="check_circle" :loading="qcSaving" @click="confirmQcCheck" />
+            <q-btn
+              flat
+              label="Pause"
+              color="grey-8"
+              class="text-weight-bold"
+              style="border-radius: 8px;"
+              @click="() => { qcDialog.value = false; sendCommand('PAUSE'); }"
+            />
+            <q-btn
+              unelevated
+              :color="getPlantAccent(Number(activePlantId)).color"
+              text-color="white"
+              icon="check_circle"
+              :label="isThai ? 'บันทึก & อนุมัติ QC' : 'Confirm & Approve QC'"
+              class="text-weight-bolder shadow-2"
+              style="border-radius: 8px; padding: 6px 16px; font-size: 13px;"
+              :loading="qcSaving"
+              @click="confirmQcCheck"
+            />
           </div>
         </q-card-actions>
       </q-card>
