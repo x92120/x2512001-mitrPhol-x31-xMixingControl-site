@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { appConfig } from '~/appConfig/config'
 import { useAuth } from '~/composables/useAuth'
+import { useI18n } from '~/composables/useI18n'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,27 +23,182 @@ const badgeScanInput = ref('')
 const badgeInputRef = ref<any>(null)
 let _badgeDebounce: ReturnType<typeof setTimeout> | null = null
 
-// Auto-submit badge scan when scanner stops typing (150ms debounce)
+// Auto-submit badge scan when scanner types directly into focused field
 watch(badgeScanInput, (val) => {
   if (!val) return
   if (_badgeDebounce) clearTimeout(_badgeDebounce)
   _badgeDebounce = setTimeout(() => {
     if (badgeScanInput.value.trim()) onBadgeScanSubmit()
-  }, 150)
+  }, 120)
 })
 
 const focusBadgeScanner = () => {
-  badgeInputRef.value?.focus()
+  if (!import.meta.client) return
+  nextTick(() => {
+    const inputEl = badgeInputRef.value?.$el?.querySelector('input') || badgeInputRef.value
+    inputEl?.focus?.()
+  })
+}
+
+// ── Universal Zero-Click Barcode Scanner Capture Engine ────────────────────────
+let globalScannerBuffer = ''
+let lastScanKeyTime = 0
+let _scannerBurstTimer: ReturnType<typeof setTimeout> | null = null
+
+// Physical key to ASCII mapper: Hardware scan codes (e.code) - Immune to Thai keyboard layout!
+const physicalKeyToAscii = (e: KeyboardEvent): string => {
+  const s = e.shiftKey
+  const c = e.code
+
+  // Digit row: 0-9 and shifted symbols (@, #, $, etc.)
+  if (c.startsWith('Digit')) {
+    const d = c.slice(5)
+    const shiftDigits = ')!@#$%^&*('
+    return s ? (shiftDigits[parseInt(d, 10)] ?? d) : d
+  }
+  // Letter keys: always produce Latin a-z / A-Z
+  if (c.startsWith('Key')) {
+    const letter = c.slice(3)
+    return s ? letter.toUpperCase() : letter.toLowerCase()
+  }
+  // Numpad keys
+  if (c.startsWith('Numpad')) {
+    const numMap: Record<string, string> = {
+      Numpad0: '0', Numpad1: '1', Numpad2: '2', Numpad3: '3', Numpad4: '4',
+      Numpad5: '5', Numpad6: '6', Numpad7: '7', Numpad8: '8', Numpad9: '9',
+      NumpadDecimal: '.', NumpadDivide: '/', NumpadMultiply: '*',
+      NumpadSubtract: '-', NumpadAdd: '+'
+    }
+    return numMap[c] ?? ''
+  }
+  // Punctuation & JSON symbols
+  const puncMap: Record<string, [string, string]> = {
+    BracketLeft:  ['[', '{'],
+    BracketRight: [']', '}'],
+    Quote:        ["'", '"'],
+    Semicolon:    [';', ':'],
+    Comma:        [',', '<'],
+    Period:       ['.', '>'],
+    Slash:        ['/', '?'],
+    Minus:        ['-', '_'],
+    Equal:        ['=', '+'],
+    Backslash:    ['\\', '|'],
+    Backquote:    ['`', '~'],
+    Space:        [' ', ' ']
+  }
+  if (puncMap[c]) {
+    return s ? puncMap[c][1] : puncMap[c][0]
+  }
+  
+  // Direct ASCII fallback
+  if (e.key && e.key.length === 1 && e.key.charCodeAt(0) >= 32 && e.key.charCodeAt(0) <= 126) {
+    return e.key
+  }
+  return ''
+}
+
+const handleGlobalScanKeydown = (e: KeyboardEvent) => {
+  // Ignore browser shortcuts
+  if (e.ctrlKey || e.altKey || e.metaKey) return
+
+  const isEnter = e.key === 'Enter' || e.key === 'Tab' || e.code === 'Enter' || e.code === 'NumpadEnter'
+  if (e.key.length > 1 && !isEnter) return
+
+  const now = Date.now()
+  const delta = now - lastScanKeyTime
+  lastScanKeyTime = now
+
+  // Barcode scanners type with < 60ms between characters. If pause > 150ms, start fresh buffer.
+  if (delta > 150) {
+    globalScannerBuffer = ''
+  }
+
+  const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement) : null
+  const mainInputEl = badgeInputRef.value?.$el?.querySelector('input')
+  const isManualAuthField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') && activeEl !== mainInputEl
+
+  if (isEnter) {
+    if (_scannerBurstTimer) { clearTimeout(_scannerBurstTimer); _scannerBurstTimer = null }
+
+    // If user is manually typing in username/password field and buffer is short, allow manual form submission
+    if (isManualAuthField && globalScannerBuffer.length < 3 && !globalScannerBuffer.startsWith('@')) {
+      return
+    }
+
+    const codeToProcess = (globalScannerBuffer.trim() || badgeScanInput.value.trim())
+    if (codeToProcess && codeToProcess.length >= 2) {
+      e.preventDefault()
+      e.stopPropagation()
+
+      // Clean up manual inputs if scanner typed into them
+      if (isManualAuthField && activeEl) {
+        try {
+          const inputEl = activeEl as HTMLInputElement
+          if (inputEl.value && globalScannerBuffer && inputEl.value.endsWith(globalScannerBuffer)) {
+            inputEl.value = inputEl.value.slice(0, -globalScannerBuffer.length)
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+          }
+          inputEl.blur()
+        } catch {}
+      }
+
+      globalScannerBuffer = ''
+      badgeScanInput.value = ''
+      onBadgeScanSubmit(codeToProcess)
+    }
+  } else {
+    const char = physicalKeyToAscii(e)
+    if (char) {
+      globalScannerBuffer += char
+
+      // Auto-submit safety timer: If scanner does not send Enter, auto-process after 120ms burst
+      if (_scannerBurstTimer) clearTimeout(_scannerBurstTimer)
+      _scannerBurstTimer = setTimeout(() => {
+        const codeToProcess = globalScannerBuffer.trim()
+        if (codeToProcess.length >= 3 && (codeToProcess.startsWith('@') || !isManualAuthField)) {
+          globalScannerBuffer = ''
+          badgeScanInput.value = ''
+          console.log('[Zero-Click Badge Burst Timeout]', codeToProcess)
+          onBadgeScanSubmit(codeToProcess)
+        }
+      }, 120)
+    }
+  }
+}
+
+// Keep scanner focused when clicking anywhere on background
+const handleGlobalDocClick = (e: MouseEvent) => {
+  if (!import.meta.client) return
+  const target = e.target as HTMLElement
+  const isInteractive = target?.closest('input, textarea, select, .q-field--focused, button, .q-btn, .q-dialog, .q-menu, a')
+  if (!isInteractive) {
+    focusBadgeScanner()
+  }
 }
 
 onMounted(() => {
   focusBadgeScanner()
+  if (import.meta.client) {
+    window.addEventListener('keydown', handleGlobalScanKeydown, { capture: true })
+    document.addEventListener('click', handleGlobalDocClick, { capture: true })
+    window.addEventListener('focus', focusBadgeScanner)
+  }
 })
 
-const onBadgeScanSubmit = async () => {
-  const rawVal = badgeScanInput.value.trim()
+onUnmounted(() => {
+  if (import.meta.client) {
+    window.removeEventListener('keydown', handleGlobalScanKeydown, { capture: true })
+    document.removeEventListener('click', handleGlobalDocClick, { capture: true })
+    window.removeEventListener('focus', focusBadgeScanner)
+  }
+  if (_scannerBurstTimer) clearTimeout(_scannerBurstTimer)
+})
+
+const onBadgeScanSubmit = async (scannedCode?: string) => {
+  const rawVal = (typeof scannedCode === 'string' && scannedCode ? scannedCode : badgeScanInput.value).trim()
   if (!rawVal) return
   badgeScanInput.value = ''
+  globalScannerBuffer = ''
   errorMessage.value = ''
 
   const username = rawVal.startsWith('@') ? rawVal.substring(1).trim() : rawVal.trim()
@@ -79,7 +235,7 @@ const onBadgeScanSubmit = async () => {
   } finally {
     isLoading.value = false
     await nextTick()
-    badgeInputRef.value?.focus()
+    focusBadgeScanner()
   }
 }
 
