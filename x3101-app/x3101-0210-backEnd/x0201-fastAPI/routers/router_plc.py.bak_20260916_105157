@@ -607,12 +607,9 @@ def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")
     # Clear DB15x7 (Actuals)
     clear_actuals_in_plc(plant_id)
 
-    # Clear telemetry and overview cache
+    # Clear telemetry cache
     if plant_id in _telem_cache:
         _telem_cache.pop(plant_id, None)
-    global _recipe_target_cache, _plants_overview_cache
-    _recipe_target_cache.pop(plant_id, None)
-    _plants_overview_cache.clear()
 
     if not success:
         raise HTTPException(status_code=500, detail=f"Failed to clear recipe in PLC DB15{plant_id}1")
@@ -689,12 +686,9 @@ def complete_batch_and_release_plant(
     except Exception as e:
         results["reset_worker_state"] = f"warning: {e}"
 
-    # 6. Clear Telemetry & Overview Cache
+    # 6. Clear Telemetry Cache
     if plant_id in _telem_cache:
         _telem_cache.pop(plant_id, None)
-    global _recipe_target_cache, _plants_overview_cache
-    _recipe_target_cache.pop(plant_id, None)
-    _plants_overview_cache.clear()
 
     all_ok = all(v.startswith("ok") for v in results.values())
     return {
@@ -1368,8 +1362,7 @@ def get_all_plants_overview_summary(db: Session = Depends(get_db)):
     res_payload = {
         "success": True,
         "timestamp": now,
-        "plants": result,
-        **result
+        "plants": result
     }
     _plants_overview_cache = {"ts": now, "data": res_payload}
     return res_payload

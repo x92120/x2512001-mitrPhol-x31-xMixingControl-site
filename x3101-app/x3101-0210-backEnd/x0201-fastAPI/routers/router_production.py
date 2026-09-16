@@ -5,6 +5,7 @@ Production plans, batches, and related endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from typing import List, Optional
@@ -24,6 +25,19 @@ class RecheckBagRequest(BaseModel):
     operator: str
 
 logger = logging.getLogger(__name__)
+
+def _serialize_dt(val):
+    if val is not None and hasattr(val, 'isoformat'):
+        return val.isoformat()
+    return val
+
+def _format_batch_dict(m):
+    d = dict(m)
+    for k in ('created_at', 'updated_at', 'fh_boxed_at', 'spp_boxed_at', 'fh_delivered_at', 'spp_delivered_at', 'start_time', 'end_time'):
+        if k in d:
+            d[k] = _serialize_dt(d[k])
+    return d
+
 router = APIRouter(tags=["Production"])
 
 
@@ -32,7 +46,7 @@ router = APIRouter(tags=["Production"])
 # =============================================================================
 
 @router.get("/production-plans/")
-def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str] = None, db: Session = Depends(get_db)):
+def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str] = None, lean: bool = False, db: Session = Depends(get_db)):
     """Get production plans with server-side pagination and status filter.
     status='active' excludes Cancelled and Done. status='all' shows everything.
     Returns {plans: [...], total: N}.
@@ -63,6 +77,63 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
     """), params).fetchall()
     
     plan_ids = [p.id for p in plans]
+
+    # LEAN MODE: Fast response for UI lists and tree selectors without heavy logs, stats, and recipes
+    if lean:
+        batches_by_plan = {}
+        if plan_ids:
+            batches = db.execute(
+                sql_text("""
+                    SELECT id, plan_id, batch_id, sku_id, plant, batch_size, status,
+                           flavour_house, spp, batch_prepare, ready_to_product, production, done,
+                           fh_boxed_at, spp_boxed_at, created_at, updated_at
+                    FROM production_batches
+                    WHERE plan_id IN :plan_ids
+                """).bindparams(bindparam("plan_ids", expanding=True)),
+                {"plan_ids": plan_ids}
+            ).fetchall()
+            for b in batches:
+                pid = b.plan_id
+                if pid not in batches_by_plan:
+                    batches_by_plan[pid] = []
+                batches_by_plan[pid].append({
+                    "id": b.id, "plan_id": b.plan_id, "batch_id": b.batch_id,
+                    "sku_id": b.sku_id, "plant": b.plant, "batch_size": float(b.batch_size or 0),
+                    "status": b.status, "flavour_house": bool(b.flavour_house),
+                    "spp": bool(b.spp), "batch_prepare": bool(b.batch_prepare),
+                    "ready_to_product": bool(b.ready_to_product),
+                    "production": bool(b.production), "done": bool(b.done),
+                    "fh_boxed_at": _serialize_dt(b.fh_boxed_at),
+                    "spp_boxed_at": _serialize_dt(b.spp_boxed_at),
+                    "created_at": _serialize_dt(b.created_at),
+                    "updated_at": _serialize_dt(b.updated_at)
+                })
+        
+        result_plans = []
+        for p in plans:
+            result_plans.append({
+                "id": p.id,
+                "plan_id": p.plan_id,
+                "sku_id": p.sku_id,
+                "sku_name": p.sku_name,
+                "plant": p.plant,
+                "total_volume": float(p.total_volume or 0),
+                "total_plan_volume": float(p.total_plan_volume or 0),
+                "batch_size": float(p.batch_size or 0),
+                "num_batches": p.num_batches,
+                "start_date": _serialize_dt(p.start_date),
+                "finish_date": _serialize_dt(p.finish_date),
+                "status": p.status,
+                "flavour_house": bool(p.flavour_house),
+                "spp": bool(p.spp),
+                "created_by": p.created_by,
+                "updated_by": p.updated_by,
+                "created_at": _serialize_dt(p.created_at),
+                "updated_at": _serialize_dt(p.updated_at),
+                "batches": batches_by_plan.get(p.id, []),
+                "ingredients": []
+            })
+        return JSONResponse(content={"plans": result_plans, "total": total})
     
     # 2. Fetch batches for these plans (single query)
     batches_by_plan: dict = {}
@@ -190,17 +261,20 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
                 "qc_passed": qc_passed
             })
     
-    # 2b. Fetch recheck/packing stats per batch from prebatch_recs, split by warehouse
+    # 2b. Fetch recheck/packing stats per batch in 1 single fast aggregation
     recheck_map = {}
     if plan_ids:
-        # Overall recheck stats using plan_ids to reduce IN clause size
         rc_rows = db.execute(sql_text("""
             SELECT 
                 q.batch_id AS bid,
                 COUNT(r.id) AS total,
                 SUM(CASE WHEN r.recheck_status = 1 THEN 1 ELSE 0 END) AS recheck_ok,
                 SUM(CASE WHEN r.recheck_status = 2 THEN 1 ELSE 0 END) AS recheck_err,
-                SUM(CASE WHEN r.packing_status = 1 THEN 1 ELSE 0 END) AS packed
+                SUM(CASE WHEN r.packing_status = 1 THEN 1 ELSE 0 END) AS packed,
+                SUM(CASE WHEN UPPER(COALESCE(q.wh, '')) = 'FH' AND r.packing_status = 1 THEN 1 ELSE 0 END) AS fh_packed,
+                SUM(CASE WHEN UPPER(COALESCE(q.wh, '')) = 'FH' THEN 1 ELSE 0 END) AS fh_total,
+                SUM(CASE WHEN UPPER(COALESCE(q.wh, '')) = 'SPP' AND r.packing_status = 1 THEN 1 ELSE 0 END) AS spp_packed,
+                SUM(CASE WHEN UPPER(COALESCE(q.wh, '')) = 'SPP' THEN 1 ELSE 0 END) AS spp_total
             FROM prebatch_recs r
             JOIN prebatch_reqs q ON r.req_id = q.id
             JOIN production_batches b ON q.batch_id = b.batch_id
@@ -208,34 +282,17 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             GROUP BY q.batch_id
         """).bindparams(bindparam("plan_ids", expanding=True)), {"plan_ids": plan_ids}).fetchall()
         for r in rc_rows:
-            recheck_map[r.bid] = {
-                'total': int(r.total), 'recheck_ok': int(r.recheck_ok),
-                'recheck_err': int(r.recheck_err), 'packed': int(r.packed),
-                'fh_packed': 0, 'spp_packed': 0, 'fh_total': 0, 'spp_total': 0,
+            m = r._mapping
+            recheck_map[m['bid']] = {
+                'total': int(m['total'] or 0),
+                'recheck_ok': int(m['recheck_ok'] or 0),
+                'recheck_err': int(m['recheck_err'] or 0),
+                'packed': int(m['packed'] or 0),
+                'fh_packed': int(m['fh_packed'] or 0),
+                'fh_total': int(m['fh_total'] or 0),
+                'spp_packed': int(m['spp_packed'] or 0),
+                'spp_total': int(m['spp_total'] or 0),
             }
-        
-        # Per-warehouse packed counts
-        wh_rows = db.execute(sql_text("""
-            SELECT 
-                q.batch_id AS bid,
-                COALESCE(q.wh, 'Mix') AS wh,
-                COUNT(r.id) AS total,
-                SUM(CASE WHEN r.packing_status = 1 THEN 1 ELSE 0 END) AS packed
-            FROM prebatch_recs r
-            JOIN prebatch_reqs q ON r.req_id = q.id
-            JOIN production_batches b ON q.batch_id = b.batch_id
-            WHERE b.plan_id IN :plan_ids
-            GROUP BY q.batch_id, wh
-        """).bindparams(bindparam("plan_ids", expanding=True)), {"plan_ids": plan_ids}).fetchall()
-        for r in wh_rows:
-            if r.bid in recheck_map:
-                w = (r.wh or '').upper()
-                if w == 'FH':
-                    recheck_map[r.bid]['fh_packed'] = int(r.packed)
-                    recheck_map[r.bid]['fh_total'] = int(r.total)
-                elif w == 'SPP':
-                    recheck_map[r.bid]['spp_packed'] = int(r.packed)
-                    recheck_map[r.bid]['spp_total'] = int(r.total)
     
     # Inject recheck stats into batch dicts
     empty_rc = {'total': 0, 'recheck_ok': 0, 'recheck_err': 0, 'packed': 0,
@@ -325,7 +382,14 @@ def get_production_plans(skip: int = 0, limit: int = 1000, status: Optional[str]
             "ingredients": plan_ingredients,
         })
     
-    return {"plans": result, "total": total}
+    for p in result:
+        p["start_date"] = _serialize_dt(p.get("start_date"))
+        p["finish_date"] = _serialize_dt(p.get("finish_date"))
+        p["created_at"] = _serialize_dt(p.get("created_at"))
+        p["updated_at"] = _serialize_dt(p.get("updated_at"))
+        if "batches" in p:
+            p["batches"] = [_format_batch_dict(b) for b in p["batches"]]
+    return JSONResponse(content={"plans": result, "total": total})
 
 
 @router.get("/production-plans/{plan_id}", response_model=schemas.ProductionPlan)
@@ -461,10 +525,20 @@ def get_all_done_batches(db: Session = Depends(get_db)):
         for r in rows
     ]
 
-@router.get("/production-batches/", response_model=List[schemas.ProductionBatch])
+@router.get("/production-batches/")
 def get_production_batches(skip: int = 0, limit: int = 1000, db: Session = Depends(get_db)):
-    """Get all production batches."""
-    return crud.get_production_batches(db, skip=skip, limit=limit)
+    """Get all production batches with fast lean query."""
+    from sqlalchemy import text as _sql_t
+    rows = db.execute(_sql_t("""
+        SELECT id, plan_id, batch_id, sku_id, plant, batch_size, status,
+               flavour_house, spp, batch_prepare, ready_to_product, production, done,
+               fh_boxed_at, spp_boxed_at, fh_delivered_at, fh_delivered_by,
+               spp_delivered_at, spp_delivered_by, created_at, updated_at
+        FROM production_batches
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :skip
+    """), {"limit": limit, "skip": skip}).fetchall()
+    return JSONResponse(content=[_format_batch_dict(r._mapping) for r in rows])
 
 # NOTE: This must come BEFORE /production-batches/{batch_id} to avoid route conflict
 @router.get("/production-batches/done-all")

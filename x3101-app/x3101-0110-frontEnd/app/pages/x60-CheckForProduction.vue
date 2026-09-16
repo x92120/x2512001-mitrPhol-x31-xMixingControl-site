@@ -537,6 +537,7 @@ const allBatches = ref<any[]>([])
 
 
 const rawPlans = ref<any[]>([])
+const loadingPlans = ref(false)
 
 const selectedPlantFilter = ref('All Plants')
 
@@ -2177,25 +2178,18 @@ const getWhStatus = (wh: string) => {
 
 
 const fetchPlansAndBatches = async () => {
-
+    loadingPlans.value = true
     try {
-
-        const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active&limit=100`, {
-
+        const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active&lean=true&limit=100`, {
             headers: getAuthHeader() as Record<string, string>
-
         })
-
         rawPlans.value = resp.plans || resp || []
-
         applyPlantFilter()
-
     } catch (err) {
-
         console.error('Error fetching batches:', err)
-
+    } finally {
+        loadingPlans.value = false
     }
-
 }
 
 
@@ -5311,7 +5305,11 @@ onUnmounted(() => {
 
           <!-- ═══ LEFT PANE: Production Plan Tree ═══ -->
 
-          <div class="col-4" style="height: 100%; overflow: auto; border-right: 1px solid #e0e0e0;">
+          <div class="col-4" style="height: 100%; overflow: auto; border-right: 1px solid #e0e0e0; position: relative;">
+            <q-inner-loading :showing="loadingPlans" style="z-index: 10;">
+              <q-spinner-dots size="42px" color="primary" />
+              <div class="text-caption text-primary q-mt-xs text-weight-bold">Loading Plans...</div>
+            </q-inner-loading>
 
             <div class="q-pa-xs bg-indigo-1 text-indigo-9 text-weight-bold row items-center q-gutter-xs" style="font-size: 12px; position: sticky; top: 0; z-index: 2;">
 

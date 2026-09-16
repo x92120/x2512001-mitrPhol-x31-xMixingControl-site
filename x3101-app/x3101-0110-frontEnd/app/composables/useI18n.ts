@@ -61,6 +61,7 @@ export const useI18n = () => {
      * Fetch translations from API
      */
     const fetchTranslations = async () => {
+        if (isLoaded.value && Object.keys(liveDictionary.value).length > 0) return
         try {
             const data = await $fetch<Record<string, Record<string, string>>>(`${appConfig.apiBaseUrl}/translations/`)
             if (data) {
@@ -106,7 +107,10 @@ export const useI18n = () => {
         if (import.meta.client) localStorage.setItem('app_locale', newLocale)
     }
 
-    const reloadTranslations = () => fetchTranslations()
+    const reloadTranslations = () => {
+        isLoaded.value = false
+        return fetchTranslations()
+    }
     const localeName = computed(() => locale.value === 'en' ? 'English' : 'ไทย')
     const localeFlag = computed(() => locale.value === 'en' ? '🇬🇧' : '🇹🇭')
     const isThai = computed(() => locale.value === 'th')

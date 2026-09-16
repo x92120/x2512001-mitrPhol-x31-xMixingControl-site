@@ -125,7 +125,7 @@ export function usePreBatchProduction(deps: ProductionDeps) {
     const fetchProductionPlans = async () => {
         try {
             isLoading.value = true
-            const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active`, {
+            const resp = await $fetch<any>(`${appConfig.apiBaseUrl}/production-plans/?status=active&lean=true`, {
                 headers: getAuthHeader() as Record<string, string>
             })
             const plans = resp.plans || resp || []

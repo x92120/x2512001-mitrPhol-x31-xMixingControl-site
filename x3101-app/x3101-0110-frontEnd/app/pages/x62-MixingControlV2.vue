@@ -985,16 +985,38 @@ const prebatchWeightMap = ref<Record<string, number>>({})
 const prebatchIdMap = ref<Record<string, string>>({})
 const prebatchWhMap = ref<Record<string, string>>({})
 
-const getStepWh = (step: any): string => {
-    const rc = (step.re_code || '').trim()
+const normAlpha = (s: string) => s ? String(s).toLowerCase().replace(/[^a-z0-9]/g, '') : ''
+
+const findPrebatchKey = (rc: string): string => {
     if (!rc) return ''
-    if (prebatchWhMap.value[rc]) return prebatchWhMap.value[rc]
-    const lower = rc.toLowerCase()
-    if (prebatchWhMap.value[lower]) return prebatchWhMap.value[lower]
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const rcNorm = norm(rc)
-    const key = Object.keys(prebatchWhMap.value).find(k => norm(k) === rcNorm)
-    return key ? prebatchWhMap.value[key] : ''
+    const rcTrim = rc.trim()
+    const allKeys = Object.keys(prebatchWhMap.value || {})
+    if (allKeys.length === 0) return ''
+    if (prebatchWhMap.value[rcTrim] != null) return rcTrim
+    const lower = rcTrim.toLowerCase()
+    const exactLower = allKeys.find(k => k.toLowerCase() === lower)
+    if (exactLower) return exactLower
+    const rcNorm = normAlpha(rcTrim)
+    if (!rcNorm) return ''
+    const normMatch = allKeys.find(k => normAlpha(k) === rcNorm)
+    if (normMatch) return normMatch
+    const prefixMatch = allKeys.find(k => {
+        const kn = normAlpha(k)
+        if (!kn) return false
+        return (rcNorm.length >= 4 && kn.startsWith(rcNorm)) ||
+               (kn.length >= 4 && rcNorm.startsWith(kn)) ||
+               (rcNorm.length >= 5 && kn.includes(rcNorm)) ||
+               (kn.length >= 5 && rcNorm.includes(kn))
+    })
+    return prefixMatch || ''
+}
+
+const getStepWh = (step: any): string => {
+    const rc = (step?.re_code || '').trim()
+    if (!rc) return ''
+    const key = findPrebatchKey(rc)
+    if (key && prebatchWhMap.value[key]) return prebatchWhMap.value[key]
+    return prebatchWhMap.value[rc] || ''
 }
 
 const fetchPrebatchWeights = async (batchId: string) => {

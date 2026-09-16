@@ -714,18 +714,6 @@ const fetchStampTimes = async (batchId: string) => {
                 }
             }
         })
-
-        // Restore scannedVolumeMap from stamped logs
-        const restoredMap: Record<string, number> = { ...scannedVolumeMap.value }
-        for (const s of skuSteps.value) {
-            if ((s.stamp_time != null && s.stamp_time !== '-') || (s.actual_volume != null && Number(s.actual_volume) > 0)) {
-                const pKey = `${s.phase_number}|${s.re_code}`
-                const val = s.actual_volume != null ? Number(s.actual_volume) : (productionRequire(s) || 1)
-                restoredMap[pKey] = val
-                if (s.re_code) restoredMap[s.re_code] = val
-            }
-        }
-        scannedVolumeMap.value = restoredMap
         console.log('[StampTime] Keys in DB:', Object.keys(stampByKey), '| Actuals:', actualByKey)
     } catch (e) {
         console.warn('[StampTime] Failed to fetch step logs:', e)
@@ -1896,42 +1884,42 @@ const isStepAllGreen = (step: any): { ok: boolean; failed: string[] } => {
 
     // 7. QR Scan Requirement check
     const isFree = isFreeScanPhase(step.phase_number)
-    const aCode = String(step.action_code || '')
-    const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
-    const rcLower = (step.re_code || '').toLowerCase()
-    const isExcludedRe = rcLower.includes('ro-water') || rcLower.includes('ro water') || rcLower.includes('liquid sugar') || rcLower.includes('ls in line')
-    const stepIsScanning = (aCode.startsWith('2') || aCode.startsWith('3')) && hasReCode && !isExcludedRe && productionRequire(step) > 0
-
-    const isStepDone = (s: any) => {
-        const phaseScanKey = `${s.phase_number}|${s.re_code}`
-        return (scannedVolumeMap.value[phaseScanKey] != null) ||
-               (scannedVolumeMap.value[s.re_code] != null) ||
-               (s.stamp_time != null && s.stamp_time !== '-') ||
-               (s.actual_volume != null && Number(s.actual_volume) > 0)
-    }
-
-    if (isFree) {
+    const stepIsScanning = (String(step.action_code || '').startsWith('2') || String(step.action_code || '').startsWith('3')) &&
+        step.re_code && step.re_code !== '-' && step.re_code.trim() !== '' &&
+        (prebatchWhMap.value[step.re_code] === 'SPP' || prebatchWhMap.value[step.re_code] === 'FH')
+    const hasScanSteps = skuSteps.value.some((s: any) =>
+        s.phase_number === step.phase_number &&
+        (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+        s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+        (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+    )
+    if (isFree && hasScanSteps && stepIsScanning) {
+        // FREE-SCAN Phase: only check scan-completion for steps that ARE scan steps.
+        // Non-scan steps (RO-Water, Mixing, etc.) in the same phase proceed normally.
         const matchedPhase = step.phase_number
-        const allFreeScan = skuSteps.value.filter((s: any) => {
-            if (s.phase_number !== matchedPhase) return false
-            const saCode = String(s.action_code || '')
-            if (!saCode.startsWith('2') && !saCode.startsWith('3')) return false
-            if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
-            const srcLower = s.re_code.toLowerCase()
-            if (srcLower.includes('ro-water') || srcLower.includes('ro water') || srcLower.includes('liquid sugar') || srcLower.includes('ls in line')) return false
-            return productionRequire(s) > 0
-        })
-
-        if (allFreeScan.length > 0 && stepIsScanning) {
-            const scannedCount = allFreeScan.filter(isStepDone).length
-            if (scannedCount < allFreeScan.length) {
-                failed.push(`${matchedPhase} QR: only ${scannedCount}/${allFreeScan.length} ingredients scanned`)
-            }
+        const allFreeScan = skuSteps.value.filter((s: any) =>
+            s.phase_number === matchedPhase &&
+            (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+            s.re_code && s.re_code !== '-' && s.re_code.trim() !== '' &&
+            (prebatchWhMap.value[s.re_code] === 'SPP' || prebatchWhMap.value[s.re_code] === 'FH')
+        )
+        const scannedCount = allFreeScan.filter((s: any) => {
+            return (scannedVolumeMap.value[s.re_code] != null) || (s.stamp_time != null && s.stamp_time !== '-')
+        }).length
+        if (scannedCount < allFreeScan.length) {
+            failed.push(`${matchedPhase} QR: only ${scannedCount}/${allFreeScan.length} ingredients scanned`)
         }
-    } else {
-        // Standard (non-free-scan) step
-        if (stepIsScanning && !isStepDone(step)) {
-            failed.push(`Barcode: Ingredient ${step.re_code} must be scanned`)
+    } else if (!isFree || !hasScanSteps) {
+        // Standard (non-free-scan) steps: check this specific step's ingredient only
+        const hasReCode = step.re_code && step.re_code !== '-' && step.re_code.trim() !== ''
+        if (hasReCode) {
+            const whType = prebatchWhMap.value[step.re_code] || ''
+            if (whType === 'SPP' || whType === 'FH') {
+                const isScanned = (scannedVolumeMap.value[step.re_code] != null) || (step.stamp_time != null && step.stamp_time !== '-')
+                if (!isScanned) {
+                    failed.push(`Barcode: Ingredient ${step.re_code} must be scanned`)
+                }
+            }
         }
     }
 
@@ -2228,16 +2216,15 @@ const activeFreeScanPhaseGroup = computed(() => {
 
     if (phaseScanSteps.length === 0) return null
 
-    const isStepDone = (s: any) => {
+    const scannedSteps = phaseScanSteps.filter((s: any) => {
         const phaseScanKey = `${s.phase_number}|${s.re_code}`
-        return scannedVolumeMap.value[phaseScanKey] != null ||
-               scannedVolumeMap.value[s.re_code] != null ||
-               (s.stamp_time != null && s.stamp_time !== '-') ||
-               (s.actual_volume != null && Number(s.actual_volume) > 0)
-    }
+        return scannedVolumeMap.value[phaseScanKey] != null
+    })
 
-    const scannedSteps = phaseScanSteps.filter(isStepDone)
-    const pendingSteps = phaseScanSteps.filter(s => !isStepDone(s))
+    const pendingSteps = phaseScanSteps.filter((s: any) => {
+        const phaseScanKey = `${s.phase_number}|${s.re_code}`
+        return scannedVolumeMap.value[phaseScanKey] == null
+    })
 
     return {
         phase: curPhase,
@@ -2720,66 +2707,22 @@ const fetchPrebatchWeights = async (batchId: string) => {
     }
 }
 
-const normAlpha = (s: string) => s ? String(s).toLowerCase().replace(/[^a-z0-9]/g, '') : ''
-
-/** Fuzzy/prefix matcher connecting truncated PLC re_code names (e.g. "Frozen  Lemon Concen")
- * with full Prebatch master names (e.g. "Frozen  Lemon Concentrate") */
-const findPrebatchKey = (rc: string): string => {
-    if (!rc) return ''
-    const rcTrim = rc.trim()
-    const allKeys = Object.keys(prebatchWhMap.value || {})
-    if (allKeys.length === 0) return ''
-
-    // 1. Exact match
-    if (prebatchWhMap.value[rcTrim] != null) return rcTrim
-    
-    // 2. Case-insensitive match
-    const lower = rcTrim.toLowerCase()
-    const exactLower = allKeys.find(k => k.toLowerCase() === lower)
-    if (exactLower) return exactLower
-
-    // 3. Alphanumeric normalized exact match
-    const rcNorm = normAlpha(rcTrim)
-    if (!rcNorm) return ''
-    const normMatch = allKeys.find(k => normAlpha(k) === rcNorm)
-    if (normMatch) return normMatch
-
-    // 4. Prefix / Substring match (handles truncated strings like "Frozen Tangerine Con" vs "Frozen Tangerine Concentrate")
-    const prefixMatch = allKeys.find(k => {
-        const kn = normAlpha(k)
-        if (!kn) return false
-        return (rcNorm.length >= 4 && kn.startsWith(rcNorm)) ||
-               (kn.length >= 4 && rcNorm.startsWith(kn)) ||
-               (rcNorm.length >= 5 && kn.includes(rcNorm)) ||
-               (kn.length >= 5 && rcNorm.includes(kn))
-    })
-    if (prefixMatch) return prefixMatch
-
-    return ''
-}
-
+/** Lookup WH for a step with case-insensitive + alphanumeric-normalized fallback.
+ * Handles re_code mismatches like "Kelcogel (Gellan Gum" vs "Kelcogel (Gellan Gum)" */
 const getStepWh = (step: any): string => {
-    const rc = (step?.re_code || '').trim()
+    const rc = (step.re_code || '').trim()
     if (!rc) return ''
-    const key = findPrebatchKey(rc)
-    if (key && prebatchWhMap.value[key]) return prebatchWhMap.value[key]
-    return prebatchWhMap.value[rc] || ''
-}
-
-const getStepPrebatchId = (step: any): string => {
-    const rc = (step?.re_code || '').trim()
-    if (!rc) return '-'
-    const key = findPrebatchKey(rc)
-    if (key && prebatchIdMap.value[key]) return prebatchIdMap.value[key]
-    return prebatchIdMap.value[rc] || '-'
-}
-
-const getStepPrebatchWeight = (step: any): number | null => {
-    const rc = (step?.re_code || '').trim()
-    if (!rc) return null
-    const key = findPrebatchKey(rc)
-    if (key && prebatchWeightMap.value[key] != null) return prebatchWeightMap.value[key]
-    return prebatchWeightMap.value[rc] ?? null
+    // 1. Exact match
+    if (prebatchWhMap.value[rc]) return prebatchWhMap.value[rc]
+    // 2. Case-insensitive match (also catches lowercase keys stored in whMapFinal)
+    const lower = rc.toLowerCase()
+    if (prebatchWhMap.value[lower]) return prebatchWhMap.value[lower]
+    // 3. Alphanumeric-normalized match: strips ALL non-alphanum chars
+    //    catches "Kelcogel (Gellan Gum" vs "Kelcogel (Gellan Gum)" (missing closing paren)
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const rcNorm = norm(rc)
+    const key = Object.keys(prebatchWhMap.value).find(k => norm(k) === rcNorm)
+    return key ? prebatchWhMap.value[key] : ''
 }
 
 // ── Restore Batch from PLC ──
@@ -3176,7 +3119,7 @@ const fetchMultiPlantSummary = async () => {
             // Fallback gracefully
         }
 
-        const plantsDict = allPlantsRes?.plants || (allPlantsRes?.['1'] || allPlantsRes?.['2'] || allPlantsRes?.['3'] ? allPlantsRes : (allPlantsRes || {}))
+        const plantsDict = allPlantsRes?.plants || {}
 
         const getPhaseNum = (s: any) => {
             if (!s) return null
@@ -3297,10 +3240,7 @@ const fetchMultiPlantSummary = async () => {
                         const pendingInCurrentPhase = currentPhaseScanSteps.filter((s: any) => {
                             const phaseScanKey = `${s.phase_number || curPhaseNum}|${s.re_code}`
                             const rawKey = s.re_code
-                            const isScanned = scannedVolumeMap.value[phaseScanKey] != null ||
-                                              scannedVolumeMap.value[rawKey] != null ||
-                                              (s.stamp_time != null && s.stamp_time !== '-') ||
-                                              (s.actual_volume != null && Number(s.actual_volume) > 0)
+                            const isScanned = scannedVolumeMap.value[phaseScanKey] != null || scannedVolumeMap.value[rawKey] != null
                             return !isScanned
                         })
                         if (pendingInCurrentPhase.length > 0) {
@@ -3825,23 +3765,16 @@ const handleScan = (scannedText: string) => {
                         }, 1000)
 
                         // ✅ Same logic as primary free-scan block (keep in sync!)
-                        const allFreeScanSteps2 = skuSteps.value.filter((s: any) => {
-                            if (s.phase_number !== matchedPhase2) return false
-                            const aCode = String(s.action_code || '')
-                            if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
-                            if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
-                            const rcLower = s.re_code.toLowerCase()
-                            if (rcLower.includes('ro-water') || rcLower.includes('ro water') || rcLower.includes('liquid sugar') || rcLower.includes('ls in line')) return false
-                            return productionRequire(s) > 0
-                        })
-                        const isFreeStepDone2 = (s: any) => {
+                        const allFreeScanSteps2 = skuSteps.value.filter((s: any) =>
+                            s.phase_number === matchedPhase2 &&
+                            (String(s.action_code || '').startsWith('2') || String(s.action_code || '').startsWith('3')) &&
+                            s.re_code && s.re_code !== '-' && s.re_code.trim() !== ''
+                        )
+                        const scannedCount2 = allFreeScanSteps2.filter((s: any) => {
+                            // Phase-scoped key — no stamp_time to avoid cross-phase/historical contamination
                             const phaseScanKey2 = `${s.phase_number}|${s.re_code}`
-                            return scannedVolumeMap.value[phaseScanKey2] != null ||
-                                   scannedVolumeMap.value[s.re_code] != null ||
-                                   (s.stamp_time != null && s.stamp_time !== '-') ||
-                                   (s.actual_volume != null && Number(s.actual_volume) > 0)
-                        }
-                        const scannedCount2 = allFreeScanSteps2.filter(isFreeStepDone2).length
+                            return scannedVolumeMap.value[phaseScanKey2] != null
+                        }).length
                         const allScanned2 = scannedCount2 >= allFreeScanSteps2.length && allFreeScanSteps2.length > 0
                         console.log(`[FreeScan2] Phase ${matchedPhase2}: ${scannedCount2}/${allFreeScanSteps2.length} scanned | allScanned2=${allScanned2}`,
                             allFreeScanSteps2.map((s: any) => {
@@ -3958,24 +3891,25 @@ const handleScan = (scannedText: string) => {
                 }
             }, 1000)
 
-            // 2. All manual-scan steps in this phase
+            // 2. All SPP/FH manual-scan steps in this phase (WH-based — correct business logic)
+            //    Now that backend returns correct WH from Ingredient master, this is reliable.
+            //    MIX ingredients use action_code 1x → excluded by action_code check above.
             const allFreeScanSteps = skuSteps.value.filter((s: any) => {
                 if (s.phase_number !== matchedPhase) return false
                 const aCode = String(s.action_code || '')
                 if (!aCode.startsWith('2') && !aCode.startsWith('3')) return false
                 if (!s.re_code || s.re_code === '-' || !s.re_code.trim()) return false
-                const rcLower = s.re_code.toLowerCase()
-                if (rcLower.includes('ro-water') || rcLower.includes('ro water') || rcLower.includes('liquid sugar') || rcLower.includes('ls in line')) return false
-                return productionRequire(s) > 0
+                // Only require scan for ingredients actually required in this batch (require > 0)
+                const req = productionRequire(s)
+                if (req <= 0) return false
+                const wh = getStepWh(s)
+                return wh === 'SPP' || wh === 'FH'
             })
-            const isFreeStepDone = (s: any) => {
+            const scannedCount = allFreeScanSteps.filter((s: any) => {
+                // Phase-scoped key: phase_number|re_code prevents cross-phase false-positives
                 const phaseScanKey = `${s.phase_number}|${s.re_code}`
-                return scannedVolumeMap.value[phaseScanKey] != null ||
-                       scannedVolumeMap.value[s.re_code] != null ||
-                       (s.stamp_time != null && s.stamp_time !== '-') ||
-                       (s.actual_volume != null && Number(s.actual_volume) > 0)
-            }
-            const scannedCount = allFreeScanSteps.filter(isFreeStepDone).length
+                return scannedVolumeMap.value[phaseScanKey] != null
+            }).length
             const allScanned = scannedCount >= allFreeScanSteps.length && allFreeScanSteps.length > 0
             console.log(`[FreeScan] Phase ${matchedPhase}: ${scannedCount}/${allFreeScanSteps.length} scanned | allScanned=${allScanned}`,
                 allFreeScanSteps.map((s: any) => {
@@ -4043,14 +3977,6 @@ const handleScan = (scannedText: string) => {
                     }
                 }
                 
-                try {
-                    $fetch(`${appConfig.apiBaseUrl}/plc/plant/${activePlantId.value || 1}/step-complete`, {
-                        method: 'POST',
-                        headers: getAuthHeader() as Record<string, string>
-                    }).catch(() => {})
-                    console.log(`[FreeScan] Triggered Step_complete for plant ${activePlantId.value || 1}`)
-                } catch (e) {}
-
                 // Advance PLC to NEXT_STEP and send new setpoints
                 setTimeout(async () => {
                     await sendCommand('NEXT_STEP')
@@ -5505,7 +5431,7 @@ onUnmounted(() => {
                       </td>
                       <td>{{ dbActionMap[step.action_code] || step.action_description || step.action || '-' }}</td>
                       <td class="text-weight-bold text-indigo">{{ step.re_code || '-' }}</td>
-                      <td class="text-caption text-grey-8" style="font-family: monospace;">{{ getStepPrebatchId(step) }}</td>
+                      <td class="text-caption text-grey-8" style="font-family: monospace;">{{ prebatchIdMap[step.re_code] || '-' }}</td>
                       <td class="text-center">
                         <q-badge v-if="getStepWh(step)" :color="getStepWh(step) === 'FH' ? 'amber-9' : getStepWh(step) === 'SPP' ? 'blue-8' : 'green-8'">{{ getStepWh(step) }}</q-badge>
                         <span v-else>-</span>
@@ -5514,11 +5440,11 @@ onUnmounted(() => {
                       <!-- Require / Volume -->
                       <td class="text-right">
                         <template v-if="currentStep && (step.id === currentStep.id || (step.phase_number === currentStep.phase_number && step.sub_step === currentStep.sub_step))">
-                          <!-- Scan step with confirmed scan: show scan volume, not load cell -->
-                          <template v-if="((getStepWh(step) === 'SPP' || getStepWh(step) === 'FH') || (String(step.action_code || '').startsWith('2') || String(step.action_code || '').startsWith('3'))) && (scannedVolumeMap[`${step.phase_number}|${step.re_code}`] != null || scannedVolumeMap[step.re_code] != null || (step.stamp_time != null && step.stamp_time !== '-'))">
-                            <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[`${step.phase_number}|${step.re_code}`] || scannedVolumeMap[step.re_code] || step.actual_volume || productionRequire(step)).toFixed(2) }}</span>
+                          <!-- SPP/FH with confirmed scan: show scan volume, not load cell -->
+                          <template v-if="(getStepWh(step) === 'SPP' || getStepWh(step) === 'FH') && scannedVolumeMap[`${step.phase_number}|${step.re_code}`] != null">
+                            <span class="act-num text-green-8" title="Volume confirmed from scan">✔ {{ Number(scannedVolumeMap[`${step.phase_number}|${step.re_code}`]).toFixed(3) }}</span>
                             <span class="slash">/</span>
-                            <span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(2) : '-' }}</span>
+                            <span class="req-num">{{ productionRequire(step) != null ? Number(productionRequire(step)).toFixed(3) : '-' }}</span>
                           </template>
                           <!-- Default: LIVE Hopper scale vs required -->
                           <template v-else>
@@ -5699,7 +5625,7 @@ onUnmounted(() => {
           <div>
             <div class="text-h6 text-weight-bold">Scan Label</div>
             <div class="text-caption" style="opacity:0.85;">
-              {{ qrScanStep ? `${getStepWh(qrScanStep) || 'WH'} — ${qrScanStep.re_code}` : '' }}
+              {{ qrScanStep ? `${prebatchWhMap[qrScanStep.re_code] || 'WH'} — ${qrScanStep.re_code}` : '' }}
             </div>
           </div>
         </q-card-section>
