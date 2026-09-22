@@ -514,12 +514,12 @@ def get_plant_recipe_status(plant_id: str, db: Session = Depends(get_db)):
             sid = target.get("sku_id")
             if bid and bid not in ("-", "", "0"):
                 try:
-                    b_row = db.execute(sa_text("SELECT plan_id, batch_size, sku_name, sku_id FROM production_batches WHERE batch_id = :bid"), {"bid": bid}).fetchone()
+                    b_row = db.execute(sa_text("SELECT plan_id, batch_size, sku_id FROM production_batches WHERE batch_id = :bid"), {"bid": bid}).fetchone()
                     if b_row:
                         target["plan_id"] = b_row[0]
                         target["batch_size"] = b_row[1]
-                        if b_row[2]:
-                            target["sku_name"] = b_row[2]
+                        if not sid and b_row[2]:
+                            target["sku_id"] = b_row[2]
                         if not sid and b_row[3]:
                             target["sku_id"] = b_row[3]
                 except Exception as err:
@@ -586,15 +586,13 @@ def clear_recipe_in_plc(plant_id: int = Path(..., title="Plant ID (1, 2, or 3)")
     """
     Clear the recipe in the PLC by writing an empty array (zeros), clear Step Cmd (DB15x0), Actuals (DB15x7), and reset Batch ID.
     """
-    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, clear_plc_step_cmd, get_db_number, plc
     
     # Clear DB15x0 (Step CMD)
     try:
-        db_cmd_number = get_db_number('step_cmd', plant_id)
-        zeros_cmd = b'\x00' * 88
-        plc.db_write(db_cmd_number, 0, zeros_cmd)
+        clear_plc_step_cmd(plant_id)
     except Exception as ce:
-        logger.warning(f"[ClearRecipe] Failed to zero DB15{plant_id}0: {ce}")
+        logger.warning(f"[ClearRecipe] Failed to clear DB15{plant_id}0: {ce}")
 
     # Clear DB15x1 (Recipe)
     success = write_full_recipe_to_plc(
@@ -636,7 +634,7 @@ def complete_batch_and_release_plant(
       5. Reset worker_handshake state  — Reset in-memory trackers (_last_batch_id, _last_finished_step)
       6. Clear telemetry cache        — Invalidate cache so UI sees clean standby
     """
-    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, clear_plc_step_cmd, get_db_number, plc
     from sqlalchemy import text as _text
 
     results = {}
@@ -661,9 +659,7 @@ def complete_batch_and_release_plant(
 
     # 2. Clear DB15x0 (Step Command)
     try:
-        db_cmd_number = get_db_number('step_cmd', plant_id)
-        zeros_cmd = b'\x00' * 88
-        r0 = plc.db_write(db_cmd_number, 0, zeros_cmd)
+        r0 = clear_plc_step_cmd(plant_id)
         results["clear_step_cmd_db1510"] = "ok" if r0 else "failed"
         logger.info(f"[Complete&Release] DB15{plant_id}0 clear: {results['clear_step_cmd_db1510']}")
     except Exception as cmd_err:
@@ -721,16 +717,14 @@ def reset_batch_soft(
       4. Reset batch status → Pending — Batch can be restarted from Check-for-Production
     Prebatch records (FH/SPP boxes) are intentionally preserved.
     """
-    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, get_db_number, plc
+    from plc_service import write_full_recipe_to_plc, clear_actuals_in_plc, clear_plc_step_cmd, get_db_number, plc
     from sqlalchemy import text as _text
 
     results = {}
 
     # ── 0. Clear DB15x0 (Step Command) ────────────────────────────────────────
     try:
-        db_cmd_number = get_db_number('step_cmd', plant_id)
-        zeros_cmd = b'\x00' * 88
-        r0 = plc.db_write(db_cmd_number, 0, zeros_cmd)
+        r0 = clear_plc_step_cmd(plant_id)
         results["clear_step_cmd_db1510"] = "ok" if r0 else "failed"
         logger.info(f"[Reset] DB15{plant_id}0 clear: {results['clear_step_cmd_db1510']}")
     except Exception as cmd_err:

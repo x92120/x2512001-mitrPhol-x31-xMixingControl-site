@@ -66,7 +66,7 @@
               <table style="width:100%;border-collapse:collapse">
                 <tr><td style="color:#555;white-space:nowrap">Date NO. :</td><td style="font-weight:600">{{ reportData.date_no }}</td><td style="color:#555">Operation Time :</td><td style="font-weight:700;color:#c62828">{{ reportData.operation_time }}</td></tr>
                 <tr><td style="color:#555">Batch Ref. NO. :</td><td colspan="3" style="font-weight:700;color:#1565c0">{{ selectedBatch.batch_id }}</td></tr>
-                <tr><td style="color:#555">Mixing Tank :</td><td style="font-weight:600">{{ selectedBatch.plant }}</td><td style="color:#555">Batch ID Name :</td><td style="font-weight:600">{{ selectedBatch.sku_id }}</td></tr>
+                <tr><td style="color:#555">Mixing Tank :</td><td style="font-weight:600">{{ selectedBatch.plant }}</td><td style="color:#555">SKU ID :</td><td style="font-weight:600">{{ selectedBatch.sku_id }}</td></tr>
                 <tr><td style="color:#555">Batch Size :</td><td style="font-weight:600">{{ (selectedBatch.batch_size||0).toLocaleString() }} Kg</td><td style="color:#555">Operator Name :</td><td>{{ reportData.operator || '—' }}</td></tr>
                 <tr><td style="color:#555">SKU :</td><td colspan="3" style="font-weight:700">{{ selectedBatch.sku_name }}</td></tr>
                 <tr>
@@ -230,16 +230,20 @@ const materials = computed(() => {
 })
 
 const processSteps = computed(() => {
-  // Sort all logs by completed_at ascending (already sorted, but ensure)
-  const sortedLogs = [...rawLogs.value].sort((a, b) =>
-    (a.completed_at || '') < (b.completed_at || '') ? -1 : 1
-  )
+  // Filter out invalid/empty logs and sort by completed_at ascending
+  const sortedLogs = [...rawLogs.value]
+    .filter(l => l.completed_at && (l.phase_id || '').trim().length > 0)
+    .sort((a, b) =>
+      new Date(a.completed_at).getTime() - new Date(b.completed_at).getTime()
+    )
+
+  if (!sortedLogs.length) return []
 
   // Group by phase_id: track start/stop (ms epoch) + sum step_time
   const phaseMap: Record<string, any> = {}
   for (const l of sortedLogs) {
-    const pid = l.phase_id || '—'
-    const ts  = l.completed_at ? new Date(l.completed_at).getTime() : 0
+    const pid = l.phase_id
+    const ts  = new Date(l.completed_at).getTime()
     if (!phaseMap[pid]) {
       phaseMap[pid] = {
         label:       l.phase_description ? `${pid} - ${l.phase_description}` : pid,
@@ -255,19 +259,19 @@ const processSteps = computed(() => {
         phaseMap[pid].stopMs  = ts
         phaseMap[pid].stopRaw = l.completed_at
       }
+      if (ts < phaseMap[pid].startMs) {
+        phaseMap[pid].startMs  = ts
+        phaseMap[pid].startRaw = l.completed_at
+      }
       phaseMap[pid].totalSec += Number(l.step_time || 0)
     }
   }
 
-  // Sort phases by stopMs (MAX completed_at) — ensures interleaved phases
-  // like A1020 (which overlaps p059) are ordered by actual completion time.
   const phaseEntries = Object.entries(phaseMap).sort(
     ([, a], [, b]) => a.stopMs - b.stopMs
   )
 
-  // ── FIX v3: Start of each phase = Stop of the previous phase ─────────────
-  // Phases are sorted by stopMs so interleaved steps (e.g. A1020 inside p059)
-  // are in the correct completion order. prev.stopMs is always <= cur.stopMs.
+  // Start of each phase = Stop of the previous phase
   for (let i = 1; i < phaseEntries.length; i++) {
     const [, cur]  = phaseEntries[i]
     const [, prev] = phaseEntries[i - 1]
@@ -277,14 +281,17 @@ const processSteps = computed(() => {
     }
   }
 
-  // Infer duration for single-log phases (startMs===stopMs after fix)
-  // Calculates duration as actual time gap since the previous phase ended.
-  for (let i = 1; i < phaseEntries.length; i++) {
-    const [, cur]  = phaseEntries[i]
-    const [, prev] = phaseEntries[i - 1]
-    if (cur.startMs === cur.stopMs && prev.stopMs) {
+  // Infer duration
+  for (let i = 0; i < phaseEntries.length; i++) {
+    const [, cur] = phaseEntries[i]
+    if (i === 0) {
+      // First phase duration: elapsed or recipe time or 0
+      const sec = Math.round((cur.stopMs - cur.startMs) / 1000)
+      cur.inferredSec = sec > 0 ? sec : (cur.totalSec > 0 ? cur.totalSec : 0)
+    } else {
+      const [, prev] = phaseEntries[i - 1]
       const inferredSec = Math.round((cur.stopMs - prev.stopMs) / 1000)
-      if (inferredSec > 0 && inferredSec < 86400) {   // sanity: < 24 h
+      if (inferredSec >= 0 && inferredSec < 86400) {
         cur.inferredSec = inferredSec
       }
     }
@@ -353,17 +360,21 @@ const processSteps = computed(() => {
 const reportData_computed = computed(() => {
   if (!selectedBatch.value || !rawLogs.value.length) return null
   const done = rawLogs.value.filter(l => l.completed_at)
-  const first = done.length ? done[0].completed_at : null
-  const last  = done.length ? done[done.length-1].completed_at : null
+  if (!done.length) return null
+  const timestamps = done
+    .map(l => new Date(l.completed_at).getTime())
+    .filter(t => !isNaN(t))
+    .sort((a, b) => a - b)
   let opTime = '—'
-  if (first && last) {
-    const sec = Math.round((new Date(last).getTime() - new Date(first).getTime()) / 1000)
-    const h = Math.floor(sec/3600)
-    const m = Math.floor((sec%3600)/60)
+  if (timestamps.length >= 2) {
+    const sec = Math.max(0, Math.round((timestamps[timestamps.length - 1] - timestamps[0]) / 1000))
     opTime = fmtHMS(sec)
+  } else if (timestamps.length === 1) {
+    opTime = '00:00:00'
   }
+  const firstDate = timestamps.length ? new Date(timestamps[0]).toISOString() : null
   return {
-    date_no:        first ? fmtDate(first) : '—',
+    date_no:        firstDate ? fmtDate(firstDate) : '—',
     operation_time: opTime,
     operator:       done[0]?.operator2 || done[0]?.operator || '—'
   }
@@ -374,13 +385,13 @@ function fmtDate(dt: string) {
   try {
     const d = new Date(dt)
     const p = (n: number) => String(n).padStart(2,'0')
-    return `${p(d.getDate())}/${p(d.getMonth()+1)}/${String(d.getFullYear()).slice(-2)}`
+    return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()}`
   } catch { return dt }
 }
 function fmtHM(dt: string) {
   try {
     const d = new Date(dt)
-    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`
   } catch { return '—' }
 }
 function fmtHMS(sec: number) {

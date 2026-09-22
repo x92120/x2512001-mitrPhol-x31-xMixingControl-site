@@ -126,12 +126,13 @@ class PLCConnection:
                     ba = bytearray(data)
                     # Write the entire data in one shot if it is small enough, 
                     # or in 240-byte chunks with a small sleep to avoid TCP flooding the S7 CPU
-                    import time
-                    chunk_size = 100
-                    for offset in range(0, len(ba), chunk_size):
-                        chunk = ba[offset : offset + chunk_size]
-                        self._client.db_write(db_number, start + offset, chunk)
-                        time.sleep(0.05) # 50ms delay between chunks to let PLC breathe
+                    if len(ba) <= 240:
+                        self._client.db_write(db_number, start, ba)
+                    else:
+                        chunk_size = 200
+                        for offset in range(0, len(ba), chunk_size):
+                            chunk = ba[offset : offset + chunk_size]
+                            self._client.db_write(db_number, start + offset, chunk)
                     logger.info(f"✅ PLC db_write OK: DB{db_number}, offset={start}, size={len(data)}")
                     return True
             except Exception as e:
@@ -739,29 +740,44 @@ def clear_actuals_in_plc(plant_id: int = 1) -> bool:
 
 def clear_plc_step_cmd(plant_id: int = 1) -> bool:
     """
-    Write HMI_Command=9 (RESET) + Step_No=0 + Batch_ID="" to DB15x0.
-    Called after batch Done to signal PLC to return to IDLE state.
+    Write clean 98-byte Standby payload to DB15x0 on both Central PLC (210) and Process PLC (51):
+      - Batch_ID String[20] = '' (max_len=20, act_len=0)
+      - HMI_Command = 0 (Standby)
+      - Step_No = 0
+      - phase_ID String[10] = '' (max_len=10, act_len=0)
+      - Re_Code String[20]  = '' (max_len=20, act_len=0)
+      - Target_Weight, Temp_SP, Temp_Low, Temp_High, Agitator_SP, Highsheer_SP = 0.0
+      - Step_Time = 0, CMD_NewStep = False, Free-Scan = False, PHASE_TYPE = 0
+      - Step_OF_PLC = 0, z = 0, STEP_DONE = False, INTERLOCK_OK = False, TIMER_REMAINING = 0
     """
     db_number = get_db_number("step_cmd", plant_id)   # DB1510/1520/1530
+    payload = bytearray(98)
+    payload[0] = 20   # Batch_ID max_len
+    payload[1] = 0    # Batch_ID act_len
+    payload[26] = 10  # phase_ID max_len
+    payload[27] = 0   # phase_ID act_len
+    payload[38] = 20  # Re_Code max_len
+    payload[39] = 0   # Re_Code act_len
+    
+    r1 = False
     try:
-        # Build 94-byte payload: all zeros except HMI_Command=9 (RESET) at +22
-        payload = bytearray(94)
-        # +0  Batch_ID String[20](22 bytes) — fill with S7 string header + empty
-        payload[0] = 20   # max_len
-        payload[1] = 0    # actual_len = 0 (empty string)
-        # +22 HMI_Command = 9 (RESET)
-        struct.pack_into(">h", payload, 22, 9)
-        # +24 Step_No = 0 (already 0)
-        # +26 Phase_ID empty, +38 Re_Code empty, rest zeros
-        result = plc.db_write(db_number, 0, bytes(payload))
-        if result:
-            logger.info(f"✅ [ClearCmd] DB{db_number} Plant{plant_id} reset to IDLE (HMI_Command=9, Step_No=0)")
-        else:
-            logger.warning(f"[ClearCmd] DB{db_number} write failed")
-        return result
+        r1 = plc.db_write(db_number, 0, bytes(payload))
+        if r1:
+            logger.info(f"✅ [ClearCmd] DB{db_number} Plant {plant_id} cleared on Central PLC (210)")
     except Exception as e:
-        logger.error(f"[ClearCmd] DB{db_number} error: {e}")
-        return False
+        logger.error(f"[ClearCmd] DB{db_number} Central PLC error: {e}")
+        
+    try:
+        if not proc_plc.is_connected:
+            proc_plc.connect()
+        if proc_plc.is_connected:
+            proc_plc.db_write(db_number, 0, bytes(payload))
+            logger.info(f"✅ [ClearCmd] DB{db_number} Plant {plant_id} cleared on Process PLC (51)")
+    except Exception as pe:
+        logger.warning(f"[ClearCmd] DB{db_number} Process PLC write warning: {pe}")
+        
+    return r1
+
 
 def set_step_complete_in_plc(plant_id: int) -> bool:
     """

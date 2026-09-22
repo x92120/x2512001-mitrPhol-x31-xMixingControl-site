@@ -36,17 +36,16 @@ _last_finished_step: Dict[int, int] = {1: -1, 2: -1, 3: -1}
 _last_step_complete: Dict[int, bool] = {1: False, 2: False, 3: False}  # rising-edge tracking
 _last_batch_id: Dict[int, str] = {1: "", 2: "", 3: ""}  # track batch change per plant
 _running: bool = False
-_task: Optional[asyncio.Task] = None
+_handshake_thread: Optional[threading.Thread] = None
 
 
-async def _poll_handshake_loop(interval: float = 1.0):
+def _poll_handshake_loop(interval: float = 1.0):
     """
-    Continuously poll DB1513, 1523, 1533 for step completion signals.
-    When Step_Complete is detected, log the result to the database and clear the bit.
+    Continuously poll DB1513, 1523, 1533 for step completion signals in a dedicated background thread.
+    Runs completely off the asyncio event loop to guarantee 0ms latency for HTTP API.
     """
     global _last_finished_step, _last_batch_id, _running
-    _running = True
-    logger.info("🔄 Handshake worker started (polling DB15x3 every %.1fs)", interval)
+    logger.info("🔄 Handshake worker thread started (polling DB15x3 every %.1fs)", interval)
 
     while _running:
         try:
@@ -131,8 +130,8 @@ async def _poll_handshake_loop(interval: float = 1.0):
                         f"Error={hs['error_flag']}"
                     )
 
-                    # Log to database
-                    await _log_step_completion(
+                    # Log to database directly in thread
+                    _sync_log_step(
                         plant_id=plant_id,
                         step_no=step_no,
                         end_temp=hs["end_temp"],
@@ -167,9 +166,9 @@ async def _poll_handshake_loop(interval: float = 1.0):
         except Exception as e:
             logger.error(f"Handshake poll error: {e}")
 
-        await asyncio.sleep(interval)
+        time.sleep(interval)
 
-    logger.info("🛑 Handshake worker stopped")
+    logger.info("🛑 Handshake worker thread stopped")
 
 
 def _sync_actuals(db: Session, batch_id: str, plant_id: int) -> int:
@@ -621,9 +620,8 @@ def _on_step_cmd_message(client, userdata, message):
             step_no = int(payload.get("Step_ID") or 0)
             ok_sn = plc.db_write(db1510, 24, struct.pack('>h', step_no))
 
-            # 2b. Write z (RECIPE_z / Step_OF_PLC) at +92 for PLC interlock sync
-            ok_z = plc.db_write(db1510, 92, struct.pack('>h', step_of_plc))
-
+            # 2b. [DISABLED per user request] Do NOT write z at +92 — managed directly by PLC
+            ok_z = "SKIPPED"
             # 3. Write HMI_Command=1 (START pulse) at +22
             hmi_cmd = int(payload.get("HMI_Command", 1)) if isinstance(payload.get("HMI_Command"), int) else 1
             ok_hmi = plc.db_write(db1510, 22, struct.pack('>h', hmi_cmd))
@@ -1027,22 +1025,25 @@ def _start_mqtt_put_subscriber():
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 def start_handshake_worker():
-    """Start the background handshake polling task and MQTT subscribers."""
-    global _task, _mqtt_subscriber_thread, _put_subscriber_thread, _running
-    if _task is not None and not _task.done():
+    """Start the background handshake polling thread and MQTT subscribers."""
+    global _handshake_thread, _mqtt_subscriber_thread, _put_subscriber_thread, _running
+    if _running and _handshake_thread is not None and _handshake_thread.is_alive():
         logger.info("Handshake worker is already running")
         return
 
-    # ⚠️ Set _running=True BEFORE starting threads.
-    # Subscriber threads check `while _running` — if False they exit immediately.
-    # _poll_handshake_loop also sets this, but threads may start before the coroutine runs.
     _running = True
 
-    loop = asyncio.get_event_loop()
-    _task = loop.create_task(_poll_handshake_loop())
-    logger.info("🚀 Handshake worker task created")
+    # 1. Start Handshake Thread in background
+    if _handshake_thread is None or not _handshake_thread.is_alive():
+        _handshake_thread = threading.Thread(
+            target=_poll_handshake_loop,
+            daemon=True,
+            name="plc-handshake-poll"
+        )
+        _handshake_thread.start()
+        logger.info("🚀 Handshake worker thread started")
 
-    # Start MQTT step_cmd subscriber (logs step commands to DB)
+    # 2. Start MQTT step_cmd subscriber (logs step commands to DB)
     if _mqtt_subscriber_thread is None or not _mqtt_subscriber_thread.is_alive():
         _mqtt_subscriber_thread = threading.Thread(
             target=_start_mqtt_step_cmd_subscriber,
@@ -1052,7 +1053,7 @@ def start_handshake_worker():
         _mqtt_subscriber_thread.start()
         logger.info("🚀 MQTT step_cmd subscriber thread started")
 
-    # Start MQTT MIX-PUT subscriber (writes hmi_command to DB1510 for PLC interlock)
+    # 3. Start MQTT MIX-PUT subscriber (writes hmi_command to DB1510 for PLC interlock)
     if _put_subscriber_thread is None or not _put_subscriber_thread.is_alive():
         _put_subscriber_thread = threading.Thread(
             target=_start_mqtt_put_subscriber,
@@ -1064,12 +1065,9 @@ def start_handshake_worker():
 
 
 def stop_handshake_worker():
-    """Stop the background handshake polling task and MQTT subscribers."""
-    global _running, _task, _mqtt_sub_client, _put_sub_client
+    """Stop the background handshake polling thread and MQTT subscribers."""
+    global _running, _handshake_thread, _mqtt_sub_client, _put_sub_client
     _running = False
-    if _task:
-        _task.cancel()
-        _task = None
     if _mqtt_sub_client:
         try:
             _mqtt_sub_client.disconnect()
