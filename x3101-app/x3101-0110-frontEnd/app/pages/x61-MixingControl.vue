@@ -2473,12 +2473,21 @@ const confirmQcCheck = async () => {
 
 
 
-const sendStepToPLC = (index: number) => {
+let _lastSentStepIndex: number = -1
+let _lastSentStepTime: number = 0
 
-    _lastUserStepAction = Date.now()
+const sendStepToPLC = (index: number) => {
+    const now = Date.now()
+    // 🛡️ DEDUPLICATION GUARD: Prevent sending duplicate step command to PLC within 1500ms
+    if (index === _lastSentStepIndex && (now - _lastSentStepTime) < 1500) {
+        console.warn(`[sendStepToPLC] 🛡️ Blocked duplicate step command for index ${index} within ${now - _lastSentStepTime}ms`)
+        return
+    }
+    _lastSentStepIndex = index
+    _lastSentStepTime = now
+    _lastUserStepAction = now
 
     const s = skuSteps.value[index]
-
     if (!s) return;
 
     
@@ -2733,9 +2742,18 @@ const downloadRecipeToPlc = async (batchId: string) => {
 
 // ── PLC Commands ──
 
-const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
+let _isNextStepInProgress: boolean = false
 
-    // PAUSE and ABORT are safety-critical — always publish interlock signal
+const sendCommand = async (cmd: 'START' | 'PAUSE' | 'ABORT' | 'NEXT_STEP') => {
+    if (cmd === 'NEXT_STEP') {
+        if (_isNextStepInProgress) {
+            console.warn('[sendCommand] 🛡️ NEXT_STEP already in progress, ignoring duplicate trigger')
+            return
+        }
+        _isNextStepInProgress = true
+        setTimeout(() => { _isNextStepInProgress = false }, 1500)
+    }
+    // PAUSE and ABORT are safety-critical — always publish interlock signal — always publish interlock signal
 
     // even if PLC is offline (backend will write to DB1510 regardless)
 
@@ -7837,13 +7855,7 @@ const handleScan = (scannedText: string) => {
 
                             setTimeout(async () => {
 
-                                await sendCommand('NEXT_STEP')
-
-                                if (isPlcConnected.value && nextIdx2 < skuSteps.value.length) {
-
-                                    sendStepToPLC(nextIdx2)
-
-                                }
+                                                                await sendCommand('NEXT_STEP')
 
                             }, 500)
 
@@ -8147,13 +8159,7 @@ const handleScan = (scannedText: string) => {
 
                 setTimeout(async () => {
 
-                    await sendCommand('NEXT_STEP')
-
-                    if (isPlcConnected.value && nextIdx < skuSteps.value.length) {
-
-                        sendStepToPLC(nextIdx)
-
-                    }
+                                        await sendCommand('NEXT_STEP')
 
                 }, 500)
 
@@ -8758,9 +8764,7 @@ watch(() => plantData.value?.Current_Step, async (newVal, oldVal) => {
 
                 const nextIdx = currentStepIndex.value + 1
 
-                if (nextIdx < skuSteps.value.length) sendStepToPLC(nextIdx)
-
-                await sendCommand('NEXT_STEP')
+                                await sendCommand('NEXT_STEP')
 
             }
 
