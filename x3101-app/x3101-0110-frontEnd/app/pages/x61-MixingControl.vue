@@ -7454,47 +7454,78 @@ const handleScan = (scannedText: string) => {
 
     }
 
-    // ── Parse QR JSON — strip newlines/CR that scanners may inject mid-data ──
-
+        // ── Parse QR JSON — strip newlines/CR that scanners may inject mid-data ──
     const cleanText = scannedText.replace(/[\r\n]/g, '').trim()
-
     let qrData: any = null
-
     try { qrData = JSON.parse(cleanText) } catch { /* plain barcode */ }
 
+    const normalize = (str: string) => (str || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 
+    // Extract fields from JSON QR if present
+    const scannedBatchId = String(qrData?.b || qrData?.B || qrData?.batch || qrData?.batch_id || '').trim()
+    const scannedMatCode = String(qrData?.m || qrData?.M || qrData?.material || qrData?.mat_sap_code || qrData?.r || qrData?.R || qrData?.re_code || '').trim()
+    const scannedPack = String(qrData?.p || qrData?.P || qrData?.pack || qrData?.bag || '1/1').trim()
 
-    // Extract ID: if JSON use 'b' field, otherwise use raw text
+    // Unique Bag ID for duplicate tracking (prevents duplicate bag errors across ingredients)
+    const uniqueBagId = qrData 
+        ? `${scannedBatchId || selectedBatchId.value || 'BATCH'}_${scannedMatCode || 'MAT'}_${scannedPack}` 
+        : cleanText
+    const barcodeId = uniqueBagId
 
-    const barcodeId = qrData?.b ?? cleanText
-
-
-
-    const normalize = (str: string) => str.toLowerCase().replace(/[^a-z0-9]/g, '')
-
-    const barcodeNorm = normalize(barcodeId)
-
-    // Extract just the ingredient part of barcode (strip batch_id prefix) for reverse-match
-
-    // e.g. "P260622-01-02-001-NFC Yuzu" → strip "p2606220102001" → "nfcyuzu"
-
-    // e.g. plain-text "P260622-01-02-001-NFC Yuzu 1216450241000077" → "nfcyuzu1216450241000077"
-
+    const barcodeNorm = normalize(cleanText)
     const batchPrefixNorm = normalize(selectedBatchId.value || '')
-
     const barcodeIngredientNorm = barcodeNorm.startsWith(batchPrefixNorm) && batchPrefixNorm.length > 0
-
         ? barcodeNorm.slice(batchPrefixNorm.length)
-
         : barcodeNorm
-
-    // Also strip digits (SAP codes appended after ingredient name in plain-text labels)
-
-    // e.g. "nfcyuzu1216450241000077" → "nfcyuzu" to match "nfcyuzudksh"
-
     const barcodeIngredientAlphaNorm = barcodeIngredientNorm.replace(/[0-9]/g, '')
 
+    // Universal step matching helper (handles SAP Material Code, re_code, prebatch ID, and legacy formats)
+    const isStepMatchingScan = (s: any): boolean => {
+        if (!s) return false
+        const expectedIds = prebatchIdMap.value[s.re_code] || ''
+        const expectedNorm = normalize(s.re_code || '')
+        const descNorm = normalize(s.description || s.ingredient_name || '')
+        const stepMatNorm = normalize(s.mat_sap_code || '')
 
+        // 1. SAP Material Code Match (e.g. "12171500410000018" vs "1217150041000018")
+        if (scannedMatCode && stepMatNorm) {
+            const scanMatNorm = normalize(scannedMatCode)
+            if (scanMatNorm === stepMatNorm ||
+                scanMatNorm.includes(stepMatNorm) ||
+                stepMatNorm.includes(scanMatNorm) ||
+                scanMatNorm.replace(/^0+/, '') === stepMatNorm.replace(/^0+/, '') ||
+                scanMatNorm.replace(/0/g, '') === stepMatNorm.replace(/0/g, '')) {
+                return true
+            }
+        }
+
+        // 2. Direct re_code / Material Name in JSON match
+        if (scannedMatCode) {
+            const scanMatNorm = normalize(scannedMatCode)
+            if (scanMatNorm && expectedNorm && (scanMatNorm === expectedNorm || expectedNorm.includes(scanMatNorm) || scanMatNorm.includes(expectedNorm))) {
+                return true
+            }
+            if (scanMatNorm && descNorm && (descNorm.includes(scanMatNorm) || scanMatNorm.includes(descNorm))) {
+                return true
+            }
+        }
+
+        // 3. Exact prebatch ID match
+        if (expectedIds && (expectedIds.includes(cleanText) || (scannedMatCode && expectedIds.toLowerCase().includes(normalize(scannedMatCode))))) {
+            return true
+        }
+
+        // 4. Legacy barcode matching (Plain-text "P260622-01-02-001-NFC Yuzu")
+        if (!qrData && expectedNorm && (
+            barcodeNorm.includes(expectedNorm) ||
+            (barcodeIngredientNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientNorm)) ||
+            (barcodeIngredientAlphaNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientAlphaNorm))
+        )) {
+            return true
+        }
+
+        return false
+    }
 
     let matchedStep: any = null
 
@@ -7560,33 +7591,9 @@ const handleScan = (scannedText: string) => {
 
 
 
-        const expectedIds = prebatchIdMap.value[step.re_code] || ''
+                const isMatched = isStepMatchingScan(step)
 
-        const expectedNorm = normalize(step.re_code || '')
-
-        const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
-
-        // isNameMatch checks in order:
-
-        // 1. barcodeNorm includes full expectedNorm (standard exact-ish match)
-
-        // 2. expectedNorm starts with barcodeIngredientNorm (JSON short-name barcode: "NFC Yuzu")
-
-        // 3. expectedNorm starts with barcodeIngredientAlphaNorm (plain-text label: "NFC Yuzu 1216450241000077" → alpha: "nfcyuzu")
-
-        const isNameMatch = expectedNorm && (
-
-            barcodeNorm.includes(expectedNorm) ||
-
-            (barcodeIngredientNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientNorm)) ||
-
-            (barcodeIngredientAlphaNorm.length >= 4 && expectedNorm.startsWith(barcodeIngredientAlphaNorm))
-
-        )
-
-
-
-        if (isExactMatch || isNameMatch) {
+        if (isMatched) {
 
             // ⛔ PHASE GUARD: only allow scan if ingredient belongs to the CURRENT active free-scan phase
 
@@ -8167,27 +8174,10 @@ const handleScan = (scannedText: string) => {
     // 1. Try matching the current step first (priority to active step)
 
     const activeS = currentStep.value
-
     if (activeS && (String(activeS.action_code || '').startsWith('2') || String(activeS.action_code || '').startsWith('3'))) {
-
-        const expectedIds = prebatchIdMap.value[activeS.re_code] || ''
-
-        const expectedNorm = normalize(activeS.re_code || '')
-
-
-
-        const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
-
-        const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
-
-
-
-        if (isExactMatch || isNameMatch) {
-
+        if (isStepMatchingScan(activeS)) {
             matchedStep = activeS
-
         }
-
     }
 
 
@@ -8224,17 +8214,9 @@ const handleScan = (scannedText: string) => {
 
 
 
-            const expectedIds = prebatchIdMap.value[step.re_code] || ''
+                    const isMatched = isStepMatchingScan(step)
 
-            const expectedNorm = normalize(step.re_code || '')
-
-            const isExactMatch = expectedIds && expectedIds.includes(barcodeId)
-
-            const isNameMatch = expectedNorm && barcodeNorm.includes(expectedNorm)
-
-
-
-            if (isExactMatch || isNameMatch) {
+        if (isMatched) {
 
                 matchedStep = step
 
