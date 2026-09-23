@@ -176,7 +176,7 @@
             <div style="border-top:1px solid #333;padding-top:4px;color:#666">Name / Signature / Date</div>
           </div>
           <div>
-            <div style="font-weight:700;margin-bottom:32px">MANAGER</div>
+            <div style="font-weight:700;margin-bottom:32px">หัวหน้าแผนกผลิต</div>
             <div style="border-top:1px solid #333;padding-top:4px;color:#666">Name / Signature / Date</div>
           </div>
         </div>
