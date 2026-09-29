@@ -34,3 +34,12 @@ __pycache__/
 *$py.class
 venv/
 .venv/
+
+# Temporary & Backup files
+*.bak
+*.bak_*
+*.tmp
+*.log
+
+# Runtime Batch Cache
+x3101-app/x3101-0210-backEnd/x0201-fastAPI/batch_cache/
