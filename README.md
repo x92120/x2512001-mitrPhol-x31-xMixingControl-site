@@ -193,12 +193,14 @@
 
 ---
 
-## 5. โครงสร้างโฟลเดอร์และคอมโพเนนต์ซอฟต์แวร์ (Software Stack & Tree)
+## 5. โครงสร้างโฟลเดอร์และคอมโพเนนต์ซอฟต์แวร์ (Software Stack & Directory Tree)
+
+โครงสร้างระบบทั้งหมดถูกจัดหมวดหมู่แยกตามประเภทของงานอย่างเป็นระเบียบ:
 
 ```
 x2512001-mitrPhol-x31-xMixingControl/
-├── x3101-app/
-│   ├── x3101-0110-frontEnd/          # 🌐 Nuxt 3 / Vue 3 + TypeScript Frontend (Port 3031)
+├── 🌐 x3101-app/                      # แอปพลิเคชันหลักของระบบ Mixing Control
+│   ├── x3101-0110-frontEnd/          # 🖥️ Nuxt 3 / Vue 3 + TypeScript Frontend (Port 3031)
 │   │   ├── app/
 │   │   │   ├── pages/
 │   │   │   │   ├── x61-MixingControl.vue   # หน้าจอควบคุมการผสมหลัก (Master HMI)
@@ -206,32 +208,71 @@ x2512001-mitrPhol-x31-xMixingControl/
 │   │   │   │   ├── x71-MixingReport.vue    # รายงานผลการผสมรายแบทช์ (Mixing Report)
 │   │   │   │   ├── x78-ShiftLogbook.vue    # บันทึกกะการผลิต (Shift Logbook)
 │   │   │   │   └── x80-UserLogin.vue       # ระบบล็อกอินแบบสแกนป้ายบาร์โค้ด
-│   │   │   ├── composables/
-│   │   │   │   ├── useMQTT.ts              # เชื่อมต่อ MQTT Telemetry & Real-time State
-│   │   │   │   ├── useAuth.ts              # จัดการ Token & User Roles
-│   │   │   │   └── useI18n.ts              # ระบบสลับภาษา ไทย / อังกฤษ
-│   │   │   ├── appConfig/
-│   │   │   │   └── config.ts               # Dynamic API Base URL Config (:8031)
-│   │   │   └── sounds/                     # ไฟล์เสียง Neural Sweet Voice MP3
-│   │   └── package.json
+│   │   │   ├── composables/                # State & MQTT / Auth composables
+│   │   │   ├── appConfig/                  # Dynamic Base URL Config (:8031)
+│   │   │   └── sounds/                     # ไฟล์เสียงแจ้งเตือน Sweet Voice MP3
+│   │   ├── tests/
+│   │   │   ├── scripts/                    # Test scripts สำหรับ Frontend / MQTT
+│   │   │   └── simulators/                 # PLC & Scan simulators
+│   │   └── nuxt.config.ts
 │   │
-│   └── x3101-0210-backEnd/           # ⚙️ FastAPI + Python 3.12 Backend (Port 8031)
-│       └── x0201-fastAPI/
-│           ├── main.py                     # FastAPI Application Entry Point
-│           ├── plc_service.py              # Snap7 PLC S7-1500 Communication Layer
-│           ├── plc_datablock.py            # Serializer แปลง Recipe เข้าสู่ DB1510/DB1780
-│           ├── recipe_sequencer.py         # ตัวประมวลผล Interlock & Auto-Step Logic
-│           ├── worker_handshake.py         # Background Daemon ตรวจจับ Step Complete
-│           ├── models.py                   # SQLAlchemy ORM Database Models
-│           ├── schemas.py                  # Pydantic Request/Response Schemas
-│           └── routers/                    # REST API Endpoints
+│   ├── x3101-0210-backEnd/           # ⚙️ FastAPI + Python 3.12 Backend (Port 8031)
+│   │   └── x0201-fastAPI/
+│   │       ├── main.py                     # FastAPI Entry Point
+│   │       ├── database.py                 # SQLAlchemy Database Session
+│   │       ├── models.py                   # ORM Database Models
+│   │       ├── schemas.py                  # Pydantic Schemas
+│   │       ├── plc_service.py              # Snap7 PLC S7-1500 Communication
+│   │       ├── plc_datablock.py            # DB1510/DB1780 Recipe Serializer
+│   │       ├── recipe_sequencer.py         # Interlock & Step Sequencer Logic
+│   │       ├── worker_handshake.py         # PLC Step Watcher & Handshake
+│   │       ├── routers/                    # REST API Endpoints
+│   │       ├── crud/                       # Database CRUD Operations
+│   │       ├── scripts/
+│   │       │   ├── migrations/             # สคริปต์ Database Schema Migrations
+│   │       │   ├── seeds/                  # สคริปต์สร้าง Master Data & Simulation Plans
+│   │       │   ├── sync/                   # สคริปต์ Sync ข้อมูลระหว่าง Cloud / Local
+│   │       │   └── diagnostics/            # สคริปต์วินิจฉัยและตรวจสอบระบบ Backend
+│   │       └── tests/
+│   │           └── scripts/                # Unit Tests & Integration Tests
+│   │
+│   └── simulation/                   # 🧪 สภาพแวดล้อมจำลองการทำงาน (Docker Sim & Flows)
 │
-├── deployments/                      # 🚀 สคริปต์ควบคุมและ Watchdog
-│   └── watchdog_stability.sh         # Auto-recovery daemon & memory guard (Cron 5 min)
+├── 🚀 deployments/                   # โครงสร้างการติดตั้งและ Service Daemons
+│   ├── docker/                       # Docker Compose configs (server, edge, client)
+│   ├── services/                     # Systemd service files (fastapi, nuxt, xmixing)
+│   ├── desktop/                      # Desktop Launcher shortcuts (.desktop)
+│   └── scripts/                      # Watchdog & auto-start scripts
 │
-├── auto_report_generator.py          # 📄 เครื่องมือสร้างรายงาน PDF และส่งอีเมล
-├── xmixing_batch_watcher.py          # 🤖 Smart Batch Done Watcher Service
-└── README.md                         # 📖 เอกสารคู่มือระบบฉบับสมบูรณ์ (เอกสารนี้)
+├── 📚 docs/                          # เอกสารคู่มือและการออกแบบระบบ
+│   ├── manuals/                      # คู่มือการใช้งาน SOP, WI, Master Manuals (PDF & MD)
+│   ├── recipes/                      # ข้อมูลสเปกสูตรการผลิต (PLC Recipe Mapping)
+│   ├── architecture/                 # เอกสารสถาปัตยกรรมระบบ และ Flowchart การทำงาน
+│   └── reports/                      # รายงานผลการทดสอบ (Test Reports)
+│
+├── 🔌 integrations/                  # ส่วนเชื่อมต่อระบบภายนอก
+│   └── nodered/                      # Node-RED Recipe Flows & S7 Bridge Tools
+│
+├── ⚡ plc_code/                       # ซอร์สโค้ด PLC Siemens S7-1500 / S7-1200
+│   ├── TIA_Full/                     # SCL Datablocks, UDTs, FBs, FCs สำหรับ TIA Portal
+│   └── *.scl                         # Sequencer, Bridge, และ Checksum SCL Files
+│
+├── 🛠️ tools/                         # เครื่องมือพัฒนาและตรวจสอบระบบ
+│   ├── diagnostics/                  # สคริปต์ทดสอบ MQTT, Snap7, Telemetry, Database
+│   └── qr_generator/                 # เครื่องมือสร้างและถอดรหัส QR Code บาร์โค้ด
+│
+├── 📊 x3109-x3195 Services/          # Microservices สนับสนุน
+│   ├── x3109-locMqtt/                # RabbitMQ MQTT Broker
+│   ├── x3112-nodeRed/                # Node-RED Simulation Engine
+│   ├── x3190-history/                # Telegraf Time-series Collector
+│   ├── x3191-gafana/                 # Grafana Dashboards
+│   ├── x3192-SystemDashBoard/        # Prometheus Monitoring
+│   ├── x3193-CloudMonitor/           # Cloud Monitoring Agent
+│   ├── x3194-ThingsBoard/            # ThingsBoard IoT Platform
+│   └── x3195-DashboardDesign/        # Web Dashboard Design Mockups
+│
+├── 💡 x9000-Concept/                  # เอกสารแนวคิดการออกแบบระบบตั้งต้น
+└── 📖 README.md                       # เอกสารคู่มือระบบหลักฉบับสมบูรณ์ (Master Blueprint)
 ```
 
 ---
