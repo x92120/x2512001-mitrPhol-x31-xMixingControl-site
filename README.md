@@ -37,38 +37,44 @@
 ระบบ **xMixing Control System** ถูกออกแบบตามมาตรฐาน ISA-95 สำหรับโรงงานอุตสาหกรรมอาหารและเครื่องดื่ม เชื่อมต่อระหว่างอุปกรณ์หน้างาน (Level 1/2) เข้ากับระบบควบคุมการผลิต (Level 3 MES) แบบ Real-time ครอบคลุมทั้ง 3 สายการผลิต (Plant 1, Plant 2, Plant 3)
 
 ```
-========================================================================================
-                                 🏭 PLANT NETWORK TOPOLOGY
-========================================================================================
+========================================================================================================
+                                     🏭 REAL PLANT NETWORK TOPOLOGY
+========================================================================================================
 
-                 [ Level 3: Database & Management Center ]
-                     Host: 192.168.121.11 (MariaDB Cluster)
-                                        │
-           ┌────────────────────────────┼────────────────────────────┐
-           ▼                            ▼                            ▼
-┌──────────────────────┐     ┌──────────────────────┐     ┌──────────────────────┐
-│  Mixing Node .21     │     │  Mixing Node .22     │     │  Mixing Node .23     │
-│  (Line 1 / Plant 1)  │     │  (Line 2 / Plant 2)  │     │  (Line 3 / Plant 3)  │
-│  • FastAPI :8031     │     │  • FastAPI :8031     │     │  • FastAPI :8031     │
-│  • Nuxt 3  :3031     │     │  • Nuxt 3  :3031     │     │  • Nuxt 3  :3031     │
-│  • Node-RED MQTT     │     │  • Node-RED MQTT     │     │  • Node-RED MQTT     │
-└──────────┬───────────┘     └──────────┬───────────┘     └──────────┬───────────┘
-           │                            │                            │
- ┌─────────┴──────────┐       ┌─────────┴──────────┐       ┌─────────┴──────────┐
- │  Industrial Switch │       │  Industrial Switch │       │  Industrial Switch │
- └────┬───────────┬───┘       └────┬───────────┬───┘       └────┬───────────┬───┘
-      │           │                │           │                │           │
-      ▼           ▼                ▼           ▼                ▼           ▼
-┌───────────┐ ┌─────────┐    ┌───────────┐ ┌─────────┐    ┌───────────┐ ┌─────────┐
-│Siemens PLC│ │Wi-Fi AP │    │Siemens PLC│ │Wi-Fi AP │    │Siemens PLC│ │Wi-Fi AP │
-│  S7-1500  │ │ Process │    │  S7-1500  │ │ Process │    │  S7-1500  │ │ Process │
-└───────────┘ └────┬────┘    └───────────┘ └────┬────┘    └───────────┘ └────┬────┘
-                   │                            │                            │
-                   ▼                            ▼                            ▼
-             📱 Tablet HUD                📱 Tablet HUD                📱 Tablet HUD
-             (จุดเทส่วนผสม)               (จุดเทส่วนผสม)               (จุดเทส่วนผสม)
-========================================================================================
+                             [ Level 3: Central Server & Database Center ]
+                                 Host: 192.168.121.11 (MariaDB Cluster / MES)
+                                                     │
+                     ┌───────────────────────────────┼───────────────────────────────┐
+                     ▼                               ▼                               ▼
+         ┌───────────────────────┐       ┌───────────────────────┐       ┌───────────────────────────────────────┐
+         │ General Dashboard .21 │       │ General Dashboard .22 │       │ 🏭 xMixing Control Server Node .23    │
+         │ (Other System/Line 1) │       │ (Other System/Line 2) │       │ (xmitphol-03 : Single Edge Host)      │
+         │ • Client Display Mode │       │ • Client Display Mode │       │ • FastAPI Backend (:8031)             │
+         │ • Local Dashboard View│       │ • Local Dashboard View│       │ • Nuxt 3 Frontend (:3031)             │
+         └───────────────────────┘       └───────────────────────┘       │ • MQTT Broker & Node-RED Engine       │
+                                                                         └───────────────────┬───────────────────┘
+                                                                                             │
+                                     ┌───────────────────────────────────────────────────────┴───────────────────────────────────────────────────────┐
+                                     ▼ (Plant Management LAN: 192.168.121.23)                                                                        ▼ (OT Machine Network: 192.168.21.198)
+                  ┌─────────────────────────────────────────────────────────────┐                                                 ┌─────────────────────────────────────────────────────────────┐
+                  │                 Process Wi-Fi AP & Office LAN               │                                                 │                  Industrial Managed Switch                  │
+                  └──────────────────────────────┬──────────────────────────────┘                                                 └──────────────────────────────┬──────────────────────────────┘
+                                                 │                                                                                                               │
+                     ┌───────────────────────────┴───────────────────────────┐                                                 ┌─────────────────────────┼─────────────────────────┐
+                     ▼                                                       ▼                                                 ▼                         ▼                         ▼
+         ┌───────────────────────┐                               ┌───────────────────────┐                             ┌───────────────┐         ┌───────────────┐         ┌───────────────┐
+         │ 🖥️ Master HMI Console │                               │ 📱 Pour Station HUDs  │                             │ ⚡ Plant 1    │         │ ⚡ Plant 2    │         │ ⚡ Plant 3    │
+         │ (/x61-MixingControl)  │                               │ (/x61-PourHUD)        │                             │ Siemens PLC   │         │ Siemens PLC   │         │ Siemens PLC   │
+         │ • Control Room PC     │                               │ • Tablets at Hoppers  │                             │ S7-1500       │         │ S7-1500       │         │ S7-1500       │
+         │ • Cook Operator       │                               │ • Plant 1, 2, 3 Tablet│                             │ 192.168.21.210│         │ 192.168.21.210│         │ 192.168.21.210│
+         └───────────────────────┘                               └───────────────────────┘                             └───────────────┘         └───────────────┘         └───────────────┘
+========================================================================================================
 ```
+
+> **📌 โครงสร้างเครือข่ายระดับโรงงาน (Plant Network Architecture):**
+> - `192.168.121.11` = **Central Database & Management Server** (MariaDB Cluster & Central MES Data Center)
+> - `192.168.121.21` & `192.168.121.22` = **General Dashboards / Other Factory Systems** (หน้าจอแสดงผลทั่วไปของแผนกอื่น ไม่ใช่ Mixing Host)
+> - `192.168.121.23` (`xmitphol-03`) = **Central Mixing Control Node (Single Edge Industrial Host)** เครื่องเดียวที่ควบคุมกระบวนการผสมทั้ง 3 สายการผลิต (Plant 1, Plant 2, Plant 3) โดยเชื่อมต่อผ่าน OT Network Interface `192.168.21.198` ไปยัง Siemens S7-1500 PLC (`192.168.21.210` / `192.168.21.51`)
 
 ---
 
@@ -342,6 +348,11 @@ PORT=3031 NITRO_PORT=3031 HOST=0.0.0.0 nohup node .output/server/index.mjs > /tm
 
 ## 1. Executive Summary & Factory-Wide Architecture
 The **xMixing Control System** is an enterprise-grade Manufacturing Execution System (MES) and supervisory gateway designed specifically for sugar syrup and ingredient formulation facilities. It bridges factory floor industrial sensors, digital scale interfaces, handheld barcode terminals, and Siemens S7-1500 PLCs into a unified, redundant control architecture.
+
+### 🌐 Physical Network Topology & Host Nodes:
+* **Central MES & Database Center (192.168.121.11):** MariaDB Cluster hosting plant-wide ERP orders, historical batch archives, and synchronized master recipes.
+* **General Factory Dashboards (192.168.121.21 & .22):** Client display nodes for other production lines and plant monitoring overview.
+* **Dedicated Mixing Edge Host (192.168.121.23 / xmitphol-03):** Central industrial edge workstation running FastAPI (:8031) and Nuxt 3 (:3031) that orchestrates **all three mixing lines (Plant 1, Plant 2, Plant 3)** concurrently. Dual-homed with an isolated OT Industrial subnet (192.168.21.198) communicating directly to Siemens S7-1500 PLCs (192.168.21.210 & 192.168.21.51).
 
 ---
 
