@@ -401,6 +401,6 @@ The **xMixing Control System** is an enterprise-grade Manufacturing Execution Sy
 ---
 
 ### 👨‍💻 Engineering Team & Maintenance
-* **Lead System Developer:** Piyapong Nuanjan (*Digital Process & Automation Specialist*)
+* **Developer:** Piyapong Nuanjan
 * **Facility:** Mitr Phol SP Syrup Production Plant
 * **Repository:** `git@github.com:x92120/x2512001-mitrPhol-x31-xMixingControl-site.git`
