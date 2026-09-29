@@ -1,85 +1,200 @@
 # 🏭 xMixing Control System (x31-xMixingControl)
-> **Digital Plant Innovation & Industrial Process Automation**  
+> **Digital Plant Innovation & Industrial Process Automation Platform**  
 > *Mitr Phol SP Syrup & Ingredient Mixing Process Control Platform*
+
+[![Nuxt 3](https://img.shields.io/badge/Frontend-Nuxt%203%20%7C%20Vue%203-00DC82?style=flat-square&logo=nuxt.js)](https://nuxt.com/)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20Python%203.12-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Siemens S7-1500](https://img.shields.io/badge/PLC-Siemens%20S7--1500%20%2F%20S7--1200-00646E?style=flat-square&logo=siemens)](https://www.siemens.com/)
+[![MariaDB](https://img.shields.io/badge/Database-MariaDB%20Cluster-003545?style=flat-square&logo=mariadb)](https://mariadb.org/)
+[![MQTT](https://img.shields.io/badge/Protocol-MQTT%20%7C%20Node--RED-660066?style=flat-square&logo=mqtt)](https://mqtt.org/)
 
 ---
 
-## 🌐 Language Navigation (เลือกภาษา)
+## 🌐 Language Navigation (สารบัญเลือกภาษา)
 - [🇹🇭 ภาษาไทย (Thai Documentation)](#-ภาษาไทย-thai-version)
-- [🇬🇧 English (English Documentation)](#-english-version)
+  - [1. ภาพรวมและสถาปัตยกรรมระดับโรงงาน (System & Network Architecture)](#1-ภาพรวมและสถาปัตยกรรมระดับโรงงาน-system--network-architecture)
+  - [2. โครงสร้างสถาปัตยกรรม 2 หน้าจอ (Dual-Screen Operation Architecture)](#2-โครงสร้างสถาปัตยกรรม-2-หน้าจอ-dual-screen-operation-architecture)
+  - [3. โครงสร้างหน่วยความจำ PLC Data Blocks (PLC Memory Layout)](#3-โครงสร้างหน่วยความจำ-plc-data-blocks-plc-memory-layout)
+  - [4. โครงสร้างฐานข้อมูลเชิงสัมพันธ์ (Database Relational Schema)](#4-โครงสร้างฐานข้อมูลเชิงสัมพันธ์-database-relational-schema)
+  - [5. โครงสร้างโฟลเดอร์และคอมโพเนนต์ซอฟต์แวร์ (Software Stack & Tree)](#5-โครงสร้างโฟลเดอร์และคอมโพเนนต์ซอฟต์แวร์-software-stack--tree)
+  - [6. กระบวนการผลิตและการล็อกสเต็ป (Manufacturing Process & Interlock)](#6-กระบวนการผลิตและการล็อกสเต็ป-manufacturing-process--interlock)
+  - [7. การติดตั้งและคำสั่งควบคุมระบบ (Setup, Deploy & Maintenance)](#7-การติดตั้งและคำสั่งควบคุมระบบ-setup-deploy--maintenance)
+- [🇬🇧 English Documentation](#-english-version)
+  - [1. Executive Summary & Factory-Wide Architecture](#1-executive-summary--factory-wide-architecture)
+  - [2. Dual-Interface Decoupled Topology](#2-dual-interface-decoupled-topology)
+  - [3. Siemens PLC Memory Layout & Datablock Specs](#3-siemens-plc-memory-layout--datablock-specs)
+  - [4. Relational Database Schema & Entities](#4-relational-database-schema--entities)
+  - [5. Software Component Architecture & Event Loops](#5-software-component-architecture--event-loops)
+  - [6. Production Phase Sequences & Interlock Logic](#6-production-phase-sequences--interlock-logic)
+  - [7. Operational Commands & API Reference](#7-operational-commands--api-reference)
 
 ---
 
 # 🇹🇭 ภาษาไทย (Thai Version)
 
-## 1. บทนำและภาพรวมระบบ (System Overview)
-**xMixing Control System** เป็นระบบควบคุมและติดตามกระบวนการผสมน้ำเชื่อมและวัตถุดิบอัตโนมัติระดับอุตสาหกรรม (Industrial MES & SCADA Gateway) พัฒนาขึ้นเพื่อควบคุมคุณภาพและความแม่นยำในการผลิตของโรงงาน Mitr Phol SP รองรับการทำงานแบบขนาน 3 สายการผลิต (Plant 1, Plant 2, Plant 3) โดยเชื่อมต่อระหว่างระบบซอฟต์แวร์ควบคุมหน้างาน (HMI), เครื่องชั่ง (Scales), บาร์โค้ดสแกนเนอร์ (Barcode/QR Scanners), ฐานข้อมูลกลาง (DB Center) และ PLC อุตสาหกรรม (Siemens S7-1500) แบบ Real-time
+## 1. ภาพรวมและสถาปัตยกรรมระดับโรงงาน (System & Network Architecture)
+
+ระบบ **xMixing Control System** ถูกออกแบบตามมาตรฐาน ISA-95 สำหรับโรงงานอุตสาหกรรมอาหารและเครื่องดื่ม เชื่อมต่อระหว่างอุปกรณ์หน้างาน (Level 1/2) เข้ากับระบบควบคุมการผลิต (Level 3 MES) แบบ Real-time ครอบคลุมทั้ง 3 สายการผลิต (Plant 1, Plant 2, Plant 3)
 
 ```
-                          ┌────────────────────────┐
-                          │   DB Center (.11)      │
-                          │   (MariaDB Master)     │
-                          └───────────┬────────────┘
-                                      │
-            ┌─────────────────────────┼─────────────────────────┐
-            ▼                         ▼                         ▼
-  ┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
-  │  Mixing Node .21  │     │  Mixing Node .22  │     │  Mixing Node .23  │
-  │     (Plant 1)     │     │     (Plant 2)     │     │     (Plant 3)     │
-  └─────────┬─────────┘     └─────────┬─────────┘     └─────────┬─────────┘
-            │                         │                         │
-  ┌─────────┴─────────┐     ┌─────────┴─────────┐     ┌─────────┴─────────┐
-  │  FastAPI (8031)   │     │  FastAPI (8031)   │     │  FastAPI (8031)   │
-  │  Nuxt 3  (3031)   │     │  Nuxt 3  (3031)   │     │  Nuxt 3  (3031)   │
-  │  Siemens PLC S7   │     │  Siemens PLC S7   │     │  Siemens PLC S7   │
-  └───────────────────┘     └───────────────────┘     └───────────────────┘
+========================================================================================
+                                 🏭 PLANT NETWORK TOPOLOGY
+========================================================================================
+
+                 [ Level 3: Database & Management Center ]
+                     Host: 192.168.121.11 (MariaDB Cluster)
+                                        │
+           ┌────────────────────────────┼────────────────────────────┐
+           ▼                            ▼                            ▼
+┌──────────────────────┐     ┌──────────────────────┐     ┌──────────────────────┐
+│  Mixing Node .21     │     │  Mixing Node .22     │     │  Mixing Node .23     │
+│  (Line 1 / Plant 1)  │     │  (Line 2 / Plant 2)  │     │  (Line 3 / Plant 3)  │
+│  • FastAPI :8031     │     │  • FastAPI :8031     │     │  • FastAPI :8031     │
+│  • Nuxt 3  :3031     │     │  • Nuxt 3  :3031     │     │  • Nuxt 3  :3031     │
+│  • Node-RED MQTT     │     │  • Node-RED MQTT     │     │  • Node-RED MQTT     │
+└──────────┬───────────┘     └──────────┬───────────┘     └──────────┬───────────┘
+           │                            │                            │
+ ┌─────────┴──────────┐       ┌─────────┴──────────┐       ┌─────────┴──────────┐
+ │  Industrial Switch │       │  Industrial Switch │       │  Industrial Switch │
+ └────┬───────────┬───┘       └────┬───────────┬───┘       └────┬───────────┬───┘
+      │           │                │           │                │           │
+      ▼           ▼                ▼           ▼                ▼           ▼
+┌───────────┐ ┌─────────┐    ┌───────────┐ ┌─────────┐    ┌───────────┐ ┌─────────┐
+│Siemens PLC│ │Wi-Fi AP │    │Siemens PLC│ │Wi-Fi AP │    │Siemens PLC│ │Wi-Fi AP │
+│  S7-1500  │ │ Process │    │  S7-1500  │ │ Process │    │  S7-1500  │ │ Process │
+└───────────┘ └────┬────┘    └───────────┘ └────┬────┘    └───────────┘ └────┬────┘
+                   │                            │                            │
+                   ▼                            ▼                            ▼
+             📱 Tablet HUD                📱 Tablet HUD                📱 Tablet HUD
+             (จุดเทส่วนผสม)               (จุดเทส่วนผสม)               (จุดเทส่วนผสม)
+========================================================================================
 ```
 
 ---
 
 ## 2. โครงสร้างสถาปัตยกรรม 2 หน้าจอ (Dual-Screen Operation Architecture)
-ระบบได้รับการออกแบบเพื่อแก้ปัญหาการสื่อสารข้ามจุดระหว่าง **"คนคุมเครื่อง (Cook Operator)"** ในห้องควบคุม และ **"คนเทวัตถุดิบ (Pour Operator)"** หน้าถังผสม:
+
+เพื่อแก้ไขปัญหาคอขวดและลดความผิดพลาดในการสื่อสารข้ามจุดระหว่าง **คนคุมเครื่อง (ห้องต้ม)** และ **คนเทวัตถุดิบ (ปากถังผสม)** ระบบจึงแยกหน้าที่ของหน้าจอออกเป็น 2 มุมมองหลักที่ซิงค์ข้อมูลผ่าน MQTT แบบ Real-time:
 
 ```
-                  ┌─────────────────────────────────────────────────┐
-                  │              สถานีผสม (Mixing Station)          │
-                  └────────────────────────┬────────────────────────┘
-                                           │
-          ┌────────────────────────────────┴────────────────────────────────┐
-          ▼                                                                 ▼
-┌───────────────────────────────────────┐         ┌───────────────────────────────────────┐
-│     🖥️ Master Control (ห้องต้ม)        │         │      📱 Pour Station HUD (จุดเท)       │
-│     URL: /x61-MixingControl           │         │      URL: /x61-PourHUD                │
-├───────────────────────────────────────┤         ├───────────────────────────────────────┤
-│ • ควบคุมสเต็ป PLC, Start/Pause/Abort  │         │ • จอแท็บเล็ต/มือถือประจำจุดเท (Eye-Level)│
-│ • แสดงพารามิเตอร์รวม Temp, Agitator    │         │ • การ์ด Checklist รายการสารตัวใหญ่ยักษ์ │
-│ • ยืนยันพารามิเตอร์ & ออกรายงาน Batch │         │ • สแกนยิงบาร์โค้ดยืนยันตัวสารหน้างาน  │
-│ • สำหรับ User 2 (Cook Operator)       │         │ • เสียงแจ้งเตือน Sweet Voice + Beep   │
-└───────────────────────────────────────┘         └───────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 DUAL-SCREEN OPERATION                                  │
+├───────────────────────────────────────────┬────────────────────────────────────────────┤
+│ 🖥️ Master HMI Console (/x61-MixingControl)│ 📱 Pour Station HUD (/x61-PourHUD)         │
+├───────────────────────────────────────────┼────────────────────────────────────────────┤
+│ • ผู้ใช้งาน: User 2 (Cook / คนคุมเครื่อง) │ • ผู้ใช้งาน: User 1 (Pour / คนเทวัตถุดิบ)  │
+│ • อุปกรณ์: PC Kiosk จอสัมผัสในห้องควบคุม  │ • อุปกรณ์: Tablet / มือถือ ประจำจุดเท      │
+│ • หน้าที่:                                │ • หน้าที่:                                 │
+│   - เลือกสูตรและเริ่มแบทช์การผลิต (Start) │   - แสดง Checklist สารเฉพาะ Phase ปัจจุบัน │
+│   - ควบคุมคำสั่ง PLC (Run/Pause/Abort)    │   - แสดงน้ำหนักและจำนวนถุงเป้าหมาย         │
+│   - มอนิเตอร์อุณหภูมิ, RPM, วาล์ว, ปั๊ม   │   - สแกนยิงบาร์โค้ดยืนยันตัวสารก่อนเท      │
+│   - ยืนยันพารามิเตอร์คุณภาพ (Brix/pH/CTW) │   - มีเสียงพูด Sweet Voice แจ้งชื่อสารสด   │
+│   - ปิดจบแบทช์และออกรายงาน PDF Report     │   - สแกนตัวไหนก่อน-หลังก็ได้ใน Phase       │
+└───────────────────────────────────────────┴────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. ฟังก์ชันและนวัตกรรมสำคัญ (Key Highlights & Innovations)
+## 3. โครงสร้างหน่วยความจำ PLC Data Blocks (PLC Memory Layout)
 
-### 3.1 ระบบสแกนบาร์โค้ด Zero-Click Hardware Scanner Engine
-* **Physical Key-to-ASCII Mapper:** แปลงสัญญาณ Key Event ที่ระดับ Hardware Code (`e.code`) โดยตรง ทำให้สามารถอ่านบาร์โค้ด/QR Code ได้ถูกต้องแม่นยำ **100% แม้ระบบปฏิบัติการของเครื่องจะสลับเป็นแป้นพิมพ์ภาษาไทยอยู่ก็ตาม**
-* **Instant Fast Queue:** ประมวลผลการยิงรัว 2-3 บาร์โค้ดต่อเนื่องได้โดยไม่หลุดเฟรม ตัดสถานะการ์ดบนจอเป็นสีเขียวทันทีและบันทึก API เบื้องหลัง
+การสื่อสารระหว่าง Backend (Python Snap7) กับ Siemens S7-1500/1200 ใช้โครงสร้าง Datablock ที่แน่นอน:
 
-### 3.2 การควบคุมตามเฟสและการล็อก PLC (Phase-based & PLC Interlock)
-* **Free-order Scanning within Phase:** ภายใน Phase เดียวกัน ผู้ปฏิบัติงานสามารถหยิบวัตถุดิบ (IND) ตัวไหนมาสแกนและเทก่อน-หลังก็ได้ เพื่อความคล่องตัวหน้างานสูงสุด
-* **PLC Boiling Interlock:** PLC จะล็อกไม่ยอมให้เริ่มกระบวนการต้ม/เพิ่มความร้อน (เช่น Heat 90°C) จนกว่าสัญญาณยืนยันการสแกนสารใน Phase นั้นจะครบ 100% ป้องกันข้อผิดพลาดของมนุษย์ (Zero Human Error)
+### 3.1 DB 1510 / DB 1780 — Recipe Target & Command (32 Processes × 8 Steps)
+```
++---------------+---------------+------------------------------------------------------+
+| Byte Offset   | Type          | Field Name / Description                             |
++---------------+---------------+------------------------------------------------------+
+| 0.0           | String[20]    | Plan_ID (รหัสแผนการผลิต เช่น P260907-03-02)          |
+| 22.0          | String[20]    | Batch_ID (รหัสแบทช์ เช่น P260907-03-02-001)          |
+| 44.0          | String[20]    | Sku_ID (รหัสสินค้า เช่น S7HFRU4200)                  |
+| 66.0          | String[40]    | Sku_Name (ชื่อสูตร เช่น Orange Syrup Freshy)         |
+| 108.0         | Int           | Plant_ID (1 = Line 1, 2 = Line 2, 3 = Line 3)        |
+| 110.0         | Real          | Batch_Size (ขนาดแบทช์ เช่น 1200.0 kg)                |
+| 114.0         | Int           | Process_Count (จำนวน Phase ทั้งหมดในสูตร)            |
++---------------+---------------+------------------------------------------------------+
+| ARRAY[1..32] OF UDT_Process:                                                         |
+|   +0.0        | Int           | Process_No (เช่น 10, 15, 16, 20, 30, 40...)          |
+|   +2.0        | Int           | Phase_ID (1=A1010, 2=A1020, 5=x1010, 7=x1030...)    |
+|   +4.0        | Int           | Step_Count (จำนวน Step ใน Phase นี้ 1..8)            |
+|   +6.0        | Bool          | Process_Active (สถานะการทำงานของ Phase)              |
+|   ARRAY[1..8] OF UDT_ProcessStep:                                                    |
+|     +0.0      | Int           | Step_No (เช่น 10, 20, 30)                            |
+|     +2.0      | DInt          | Action_Code (เช่น 10010, 10020, 20030, 30010, 30500) |
+|     +6.0      | String[16]    | Re_Code (รหัสวัตถุดิบ เช่น W100 CG 50 kg)            |
+|     +24.0     | Real          | Require / Target_Weight (น้ำหนักเป้าหมาย kg)         |
+|     +28.0     | Real          | Low_Tol / High_Tol (ค่าเผื่อพิกัดน้ำหนัก)            |
+|     +36.0     | Real          | Temperature_SP (อุณหภูมิเป้าหมาย °C)                 |
+|     +40.0     | Real          | Agitator_RPM (ความเร็วกวนผสม RPM)                    |
+|     +44.0     | Real          | HighShear_RPM (ความเร็วไฮเชียร์ RPM)                 |
+|     +48.0     | DInt          | Step_Time (เวลานับถอยหลัง วินาที)                    |
++---------------+---------------+------------------------------------------------------+
+```
 
-### 3.3 ระบบเสียงอัจฉริยะ (Sweet Voice & Web Audio Buzzer)
-* **Neural Sweet Voice (น้องเปรมวดี):** เสียงภาษาไทยสังเคราะห์คุณภาพสตูดิโอ พูดชื่อวัตถุดิบและสถานะ เช่น *"สแกนสำเร็จ: กรดมะนาว"* หรือ *"วัตถุดิบไม่ตรงสูตร"*
-* **Multi-frequency Oscillator:** เสียงสัญญาณ Beep สั้นยืนยันความถูกต้อง และเสียง Sawtooth Alarm เตือนเมื่อเกิดข้อผิดพลาด
-
-### 3.4 ระบบรายงานอัจฉริยะ (Smart Batch Watcher)
-* **Spam-free Monitoring:** บันทึกประวัติการจบแบทช์โดยอัตโนมัติ และตัดปัญหาการส่งอีเมลถี่เกินไป โดยรวบรวมส่งเป็น **รายงานสรุปรายกะ (Shift Summary Report)** หรือแจ้งเตือนเฉพาะเมื่อมี Supervisor Bypass
+### 3.2 DB 1520 / DB 1517 — Real-Time Telemetry & Actual Sensors
+```
++---------------+---------------+------------------------------------------------------+
+| Field Name    | Type          | Description / Sensor Mapping                         |
++---------------+---------------+------------------------------------------------------+
+| PLC_State     | Int           | 0=Standby, 1=Starting, 2=Running, 24=Ready Transfer  |
+| Phase_ID      | String[8]     | รหัส Phase ปัจจุบัน (เช่น "p016", "p020")            |
+| Step_ID       | Int           | สเต็ปย่อยปัจจุบัน (เช่น 10, 20)                      |
+| Actual_Weight | Real          | น้ำหนักรวมถังผสมปัจจุบัน (Mixing Tank Weight kg)     |
+| Actual_Temp   | Real          | อุณหภูมิถังผสมจริง (TEMP01 °C)                       |
+| Actual_Agit   | Real          | ความเร็วมอเตอร์กวนจริง (MixingTank_Agitator_Speed)   |
+| Actual_HShear | Real          | ความเร็วชุดตัดไฮเชียร์จริง (HighShare_Speed RPM)      |
++---------------+---------------+------------------------------------------------------+
+```
 
 ---
 
-## 4. โครงสร้างโฟลเดอร์โปรเจกต์ (Project Directory Structure)
+## 4. โครงสร้างฐานข้อมูลเชิงสัมพันธ์ (Database Relational Schema)
+
+```
+┌─────────────────────────┐         ┌─────────────────────────┐
+│    production_plans     │         │       sku_recipes       │
+├─────────────────────────┤         ├─────────────────────────┤
+│ PK plan_id              │◄──┐     │ PK sku_id               │◄──┐
+│    sku_id               │   │     │    sku_name             │   │
+│    plan_date            │   │     │    std_batch_size       │   │
+│    total_batches        │   │     └───────────┬─────────────┘   │
+└────────────┬────────────┘   │                 │ 1:N             │
+             │ 1:N            │                 ▼                 │
+             ▼                │     ┌─────────────────────────┐   │
+┌─────────────────────────┐   │     │    sku_recipe_steps     │   │
+│   production_batches    │   │     ├─────────────────────────┤   │
+├─────────────────────────┤   │     │ PK id                   │   │
+│ PK batch_id             │───┘     │ FK sku_id               │───┘
+│ FK plan_id              │         │    phase_number         │
+│    sku_id               │         │    phase_id (A1010...)  │
+│    batch_size           │         │    step_number          │
+│    plant (Line-1/2/3)   │         │    action_code          │
+│    status (In-Progress) │         │    re_code / sap_code   │
+│    created_at           │         │    target_value         │
+└────────────┬────────────┘         │    temp_sp / agitator_sp│
+             │ 1:N                  └─────────────────────────┘
+             ├───────────────────────────────────┐
+             ▼                                   ▼
+┌─────────────────────────┐         ┌─────────────────────────┐
+│ batch_requirements(reqs)│         │   production_step_logs  │
+├─────────────────────────┤         ├─────────────────────────┤
+│ PK id                   │         │ PK id                   │
+│ FK batch_id             │         │ FK batch_id             │
+│    re_code              │         │    phase_id ("p016")    │
+│    ingredient_name      │         │    sub_step (10)        │
+│    required_volume      │         │    re_code              │
+│    total_packaged       │         │    target_value (120.0) │
+│    wh (SPP / MIX)       │         │    actual_value (123.6) │
+│    status (0/1)         │         │    actual_temp (62.8)   │
+└─────────────────────────┘         │    completed_at         │
+                                    │    operator (User 1)    │
+                                    │    operator2 (User 2)   │
+                                    └─────────────────────────┘
+```
+
+---
+
+## 5. โครงสร้างโฟลเดอร์และคอมโพเนนต์ซอฟต์แวร์ (Software Stack & Tree)
+
 ```
 x2512001-mitrPhol-x31-xMixingControl/
 ├── x3101-app/
@@ -93,48 +208,87 @@ x2512001-mitrPhol-x31-xMixingControl/
 │   │   │   │   └── x80-UserLogin.vue       # ระบบล็อกอินแบบสแกนป้ายบาร์โค้ด
 │   │   │   ├── composables/
 │   │   │   │   ├── useMQTT.ts              # เชื่อมต่อ MQTT Telemetry & Real-time State
-│   │   │   │   └── useAuth.ts              # จัดการ Token & User Roles
-│   │   │   └── appConfig/config.ts         # Dynamic API Base URL Config
+│   │   │   │   ├── useAuth.ts              # จัดการ Token & User Roles
+│   │   │   │   └── useI18n.ts              # ระบบสลับภาษา ไทย / อังกฤษ
+│   │   │   ├── appConfig/
+│   │   │   │   └── config.ts               # Dynamic API Base URL Config (:8031)
+│   │   │   └── sounds/                     # ไฟล์เสียง Neural Sweet Voice MP3
 │   │   └── package.json
 │   │
-│   └── x3101-0210-backEnd/           # ⚙️ FastAPI + Python Backend (Port 8031)
+│   └── x3101-0210-backEnd/           # ⚙️ FastAPI + Python 3.12 Backend (Port 8031)
 │       └── x0201-fastAPI/
-│           ├── main.py                     # FastAPI Application Entry
-│           ├── plc_service.py              # Snap7 PLC S7-1500 Communication
-│           ├── recipe_sequencer.py         # การจัดลำดับสูตรการผลิต & Interlock
-│           ├── routers/                    # REST API Endpoints
-│           └── models.py                   # SQLAlchemy ORM Models
+│           ├── main.py                     # FastAPI Application Entry Point
+│           ├── plc_service.py              # Snap7 PLC S7-1500 Communication Layer
+│           ├── plc_datablock.py            # Serializer แปลง Recipe เข้าสู่ DB1510/DB1780
+│           ├── recipe_sequencer.py         # ตัวประมวลผล Interlock & Auto-Step Logic
+│           ├── worker_handshake.py         # Background Daemon ตรวจจับ Step Complete
+│           ├── models.py                   # SQLAlchemy ORM Database Models
+│           ├── schemas.py                  # Pydantic Request/Response Schemas
+│           └── routers/                    # REST API Endpoints
 │
 ├── deployments/                      # 🚀 สคริปต์ควบคุมและ Watchdog
-│   └── watchdog_stability.sh         # Auto-recovery daemon & memory guard
+│   └── watchdog_stability.sh         # Auto-recovery daemon & memory guard (Cron 5 min)
 │
 ├── auto_report_generator.py          # 📄 เครื่องมือสร้างรายงาน PDF และส่งอีเมล
 ├── xmixing_batch_watcher.py          # 🤖 Smart Batch Done Watcher Service
-└── README.md                         # 📖 คู่มือการใช้งานระบบ (เอกสารนี้)
+└── README.md                         # 📖 เอกสารคู่มือระบบฉบับสมบูรณ์ (เอกสารนี้)
 ```
 
 ---
 
-## 5. การติดตั้งและการรันระบบ (Setup & Commands)
+## 6. กระบวนการผลิตและการล็อกสเต็ป (Manufacturing Process & Interlock)
 
-### 5.1 การรัน Backend (FastAPI - Port 8031)
-```bash
-cd x3101-app/x3101-0210-backEnd/x0201-fastAPI
-source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8031 --reload
+### 6.1 Action Codes มาตรฐานในระบบ
+| Action Code | ชื่อกระบวนการ | รายละเอียดการทำงาน | เงื่อนไขการปลดล็อก (Interlock) |
+| :--- | :--- | :--- | :--- |
+| **`10010`** | RO Water Batching | เติมน้ำ RO เข้าถังผสมตามปริมาตร | เซ็นเซอร์ Flow meter ครบปริมาตร |
+| **`10020`** | MIS Batching | ปั๊มน้ำเชื่อม MIS เข้าถังผสม | โหลดเซลล์ชั่งน้ำหนักได้ตาม Target |
+| **`30500`** | Heats Up | ต้มเพิ่มอุณหภูมิพร้อมกวนผสม | อุณหภูมิถึง Temp SP ± พิกัด |
+| **`30010`** | Manual Add Ingredient | คนเทเทสารผง/สารเคมีเข้าถัง | สแกนบาร์โค้ดครบถุง + ชั่งน้ำหนักในพิกัด |
+| **`20030`** | Pre-mix High Shear | ปั่นกวนผสมด้วยหัวตัดความเร็วสูง | นับเวลาถอยหลัง Step Time ครบ |
+
+### 6.2 กลไก Phase-Based Free Scanning
+```
+[ เริ่มต้น Phase (เช่น p016 / p020) ]
+                 │
+                 ▼
+┌─────────────────────────────────────────────────┐
+│ ผู้ปฏิบัติงานนำบาร์โค้ด IND ตัวใดก็ได้ใน Phase มายิง  │
+└────────────────┬────────────────────────────────┘
+                 │
+                 ├──► [ ยิงถูกตัว ] ──► บันทึก Log เขียว + เสียง Beep ติ๊ด + พูดชื่อสาร
+                 └──► [ ยิงผิดตัว ] ──► แจ้งเตือน Error แดง + เสียง Alarm หวอ
+                 │
+                 ▼
+┌─────────────────────────────────────────────────┐
+│     ตรวจสอบเงื่อนไข: สแกน IND ครบทุกตัวใน Phase?   │
+└────────────────┬────────────────────────────────┘
+                 ├──► [ ยังไม่ครบ ] ──► รอสแกนตัวที่เหลือ (PLC ล็อกไม่อนุญาตให้เริ่มต้ม)
+                 └──► [ ครบ 100% ]  ──► ปลดล็อก Interlock ──► PLC อนุญาตให้เริ่ม Heat/Next
 ```
 
-### 5.2 การสร้างและรัน Frontend (Nuxt 3 - Port 3031)
+---
+
+## 7. การติดตั้งและคำสั่งควบคุมระบบ (Setup, Deploy & Maintenance)
+
+### 7.1 ตรวจสอบสถานะการทำงาน
 ```bash
-cd x3101-app/x3101-0110-frontEnd
-npm install
+# ตรวจสอบพอร์ต Backend (8031) และ Frontend (3031)
+netstat -tulnp | grep -E '8031|3031'
+
+# ตรวจสอบ Watchdog Log
+tail -f /home/x-root/xApp/watchdog.log
+
+# ตรวจสอบ Batch Watcher Service
+tail -f /home/x-root/xApp/batch_watcher.log
+```
+
+### 7.2 คำสั่งคอมไพล์และรีสตาร์ท Frontend (Nuxt 3)
+```bash
+cd /home/x-root/xApp/x2512001-mitrPhol-x31-xMixingControl/x3101-app/x3101-0110-frontEnd
 npm run build
-PORT=3031 HOST=0.0.0.0 node .output/server/index.mjs
-```
-
-### 5.3 การรัน Batch Watcher Daemon
-```bash
-python3 xmixing_batch_watcher.py
+pkill -f 'index.mjs'
+PORT=3031 NITRO_PORT=3031 HOST=0.0.0.0 nohup node .output/server/index.mjs > /tmp/nuxt.log 2>&1 &
 ```
 
 ---
@@ -145,61 +299,56 @@ python3 xmixing_batch_watcher.py
 
 # 🇬🇧 English Version
 
-## 1. Executive Summary & Overview
-The **xMixing Control System** is an enterprise-grade industrial manufacturing execution (MES) and process control platform engineered for Mitr Phol SP. The system delivers 100% batch traceability, precision ingredient dosing verification, and automated boiling sequence orchestration across 3 parallel production lines (Plant 1, Plant 2, Plant 3).
-
-It interfaces real-time sensor telemetry between Industrial Scales, High-speed Barcode Imagers, Central MariaDB Clusters, and Siemens S7-1500 PLCs.
+## 1. Executive Summary & Factory-Wide Architecture
+The **xMixing Control System** is an enterprise-grade Manufacturing Execution System (MES) and supervisory gateway designed specifically for sugar syrup and ingredient formulation facilities. It bridges factory floor industrial sensors, digital scale interfaces, handheld barcode terminals, and Siemens S7-1500 PLCs into a unified, redundant control architecture.
 
 ---
 
-## 2. Dual-Screen Operating Architecture
-To eliminate miscommunication and cycle time bottlenecks between the **Cook Operator** (control room) and the **Pour Operator** (dosing vessel), the system deploys a decoupled dual-interface model:
-
-1. **Master Control Console (`/x61-MixingControl`):**
-   * High-density HMI for overall batch progress, PLC sequence triggering, parameter validation, and exception management.
-2. **Pour Station HUD (`/x61-PourHUD`):**
-   * High-contrast, responsive tablet interface positioned at eye-level at the pouring station.
-   * Real-time phase ingredient checklist, large status cards, multi-bag scan counters, and local audio prompts.
+## 2. Dual-Interface Decoupled Topology
+* **Master HMI (`/x61-MixingControl`):** High-density SCADA/MES console located in the boiling control room for Cook Operators (User 2) to monitor temperatures, agitator RPMs, execute step confirmations, and manage overall recipe progressions.
+* **Pour Station HUD (`/x61-PourHUD`):** Dedicated, high-contrast, large-card tablet HUD deployed at eye-level near the dosing hopper for Pour Operators (User 1) to view real-time ingredient checklists, perform burst barcode scanning, and receive instant audio verification.
 
 ---
 
-## 3. Key Technological Innovations
-
-### 3.1 Universal Zero-Click Barcode Engine
-* **Hardware-Layer ASCII Mapping:** Resolves raw keycodes (`e.code`) directly from USB/Bluetooth HID scanners, guaranteeing 100% accurate barcode captures even when the host operating system is set to Thai or non-Latin keyboard layouts.
-* **Non-blocking Fast Scan Queue:** Handles burst scanning (2-3 scans/second) with optimistic UI updates and asynchronous backend synchronization.
-
-### 3.2 Phase-based Validation & Hardware Interlocks
-* **Free-order Scanning:** Operators can scan and pour ingredients in any order within the active phase.
-* **PLC Sequence Interlock:** The PLC hardware restricts recipe progression (e.g., initiating 90°C heating) until all phase ingredients are 100% verified and acknowledged.
-
-### 3.3 Neural Sweet Voice & Audio Cues
-* **Bilingual Neural TTS:** Voice prompts (Emma EN / Premawadee TH) provide instant auditory confirmation of scanned materials and weight ranges.
-* **Web Audio Oscillators:** Distinct high-frequency confirmation chimes and low-frequency alert buzzers.
-
-### 3.4 Smart Batch Watcher & Shift Reporting
-* Automated post-batch evaluation with deduplication buffers to prevent notification spam, compiling clean shift-based executive summaries.
+## 3. Siemens PLC Memory Layout & Datablock Specs
+* **DB1510 / DB1780 (Recipe Master):** Contains the 32-process × 8-step recipe array with Target Weights, Temperatures, Agitator Setpoints, and Action Codes.
+* **DB1520 / DB1517 (Live Telemetry):** Real-time cyclic telemetry of actual mixing tank volume, live temperature probes, mixer RPMs, and current active phase/step indicators.
 
 ---
 
-## 4. Key API Endpoints Reference
-| Method | Endpoint | Description |
+## 4. Relational Database Schema & Entities
+* `production_plans` ➔ `production_batches` ➔ `batch_requirements (reqs)` ➔ `production_step_logs`
+* `sku_recipes` ➔ `sku_recipe_steps` ➔ `ingredients`
+* Multi-plant data isolation partitioned across Plant 1, Plant 2, and Plant 3 with real-time replication to DB Center `192.168.121.11`.
+
+---
+
+## 5. Software Component Architecture & Event Loops
+* **Zero-Click Barcode Engine:** Native hardware keycode translation (`e.code` mapping) immune to client OS language switching.
+* **Neural Sweet Voice Engine:** Multi-frequency Web Audio oscillator chimes coupled with pre-rendered Thai studio neural voice prompts (*Nong Premawadee*).
+* **Smart Batch Watcher (`xmixing_batch_watcher.py`):** Deduplicated background watcher service preventing notification spam while generating clean shift summary reports.
+
+---
+
+## 6. Production Phase Sequences & Interlock Logic
+* **`10010` RO Water Dosing:** Monitored via volumetric flow meters.
+* **`10020` MIS Liquid Sugar Batching:** Verified via vessel load cells.
+* **`30010` Manual Ingredient Addition:** Requires barcode verification within defined tolerance bands.
+* **`30500` Recipe Heating Phase:** Hard PLC gatekeeper interlock preventing heat activation until all preceding ingredient additions are 100% verified.
+
+---
+
+## 7. Operational Commands & API Reference
+| Method | Route | Purpose |
 | :--- | :--- | :--- |
-| `GET` | `/plc/plant/{id}/recipe-status` | Live recipe telemetry, active phase, steps, and target weights |
-| `GET` | `/production-batches/{id}/logs` | Audit trail of completed steps, timestamps, weights, and operators |
-| `POST`| `/auth/switch-operator/{user}` | Instant badge scan operator assignment |
-| `GET` | `/production-plans/?status=all` | Global multi-plant production plan schedules |
+| `GET` | `/plc/plant/{id}/recipe-status` | Real-time PLC sequence state, target weights, and active steps |
+| `GET` | `/production-batches/{id}/logs` | Complete timestamped audit trail of completed mixing steps |
+| `POST`| `/auth/switch-operator/{username}`| Rapid zero-click operator badge reassignment |
+| `GET` | `/production-plans/?status=all` | Plant-wide production scheduling queues |
 
 ---
 
-## 5. Deployment & Maintenance
-* **Frontend Service:** Systemd unit `xmixing-frontend.service` running on `http://192.168.121.23:3031`
-* **Backend Service:** Systemd unit `xmixing-backend.service` running on `http://192.168.121.23:8031`
-* **Health Watchdog:** Cron execution of `watchdog_stability.sh` every 5 minutes for automatic memory recovery and process restarts.
-
----
-
-### 👨‍💻 Maintainer & Engineering Team
-* **Prepared & Maintained by:** Piyapong Nuanjan (*Digital Process & Automation Specialist*)
-* **Plant Site:** Mitr Phol SP Production Facility
+### 👨‍💻 Engineering Team & Maintenance
+* **Lead System Developer:** Piyapong Nuanjan (*Digital Process & Automation Specialist*)
+* **Facility:** Mitr Phol SP Syrup Production Plant
 * **Repository:** `git@github.com:x92120/x2512001-mitrPhol-x31-xMixingControl-site.git`
