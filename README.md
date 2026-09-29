@@ -47,37 +47,38 @@
          ┌───────────────────────────┼───────────────────────────┐
          ▼                           ▼                           ▼
 ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│ Node .21 (01)   │         │ Node .22 (02)   │         │ 🏭 Node .23 (03) │
-│ xmitphol-01     │         │ xmitphol-02     │         │ xmitphol-03     │
-│ • Grafana :3000 │         │ • Grafana :3000 │         │ • Nuxt 3  :3031 │
-│ • InfluxDB      │         │ • InfluxDB      │         │ • FastAPI :8031 │
-│ • Prometheus    │         │ • Prometheus    │         │ • MQTT Broker   │
-└─────────────────┘         └─────────────────┘         └────────┬────────┘
-  (Monitoring / Analytics)    (Monitoring / Analytics)           │
-                                                                 │
-                                ┌────────────────────────────────┴────────────────────────────────┐
-                                ▼ (Plant LAN: 192.168.121.23)                                     ▼ (OT LAN: 192.168.21.198)
-                    ┌───────────────────────┐                                         ┌───────────────────────┐
-                    │    Process Wi-Fi AP   │                                         │   Industrial Switch   │
-                    └───────────┬───────────┘                                         └───────────┬───────────┘
-                                │                                                                 │
-            ┌───────────────────┴───────────────────┐                         ┌───────────────────┼───────────────────┐
-            ▼                                       ▼                         ▼                   ▼                   ▼
-┌───────────────────────┐               ┌───────────────────────┐     ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│ 🖥️ Master HMI Console │               │ 📱 Pour Station HUD   │     │ ⚡ Plant 1    │   │ ⚡ Plant 2    │   │ ⚡ Plant 3    │
-│ (/x61-MixingControl)  │               │ (/x61-PourHUD)        │     │ Siemens S7    │   │ Siemens S7    │   │ Siemens S7    │
-│ • Control Room PC     │               │ • Tablets at Hoppers  │     │ 192.168.21.210│   │ 192.168.21.210│   │ 192.168.21.210│
-└───────────────────────┘               └───────────────────────┘     └───────────────┘   └───────────────┘   └───────────────┘
+│ Mixing Node .21 │         │ Mixing Node .22 │         │ 🏭 Mixing Node.23│
+│ (xmitphol-01)   │         │ (xmitphol-02)   │         │ (xmitphol-03)   │
+│ • Nuxt 3  :3000 │         │ • Nuxt 3  :3000 │         │ • Nuxt 3  :3031 │
+│ • Grafana :3100 │         │ • Grafana :3100 │         │ • FastAPI :8031 │
+│ • MQTT    :1883 │         │ • MQTT    :1883 │         │ • MQTT    :1883 │
+└────────┬────────┘         └────────┬────────┘         └────────┬────────┘
+         │                           │                           │
+         └───────────────────────────┼───────────────────────────┘
+                                     │
+        ┌────────────────────────────┴────────────────────────────┐
+        ▼ (Plant LAN: 192.168.121.x)                              ▼ (OT LAN: 192.168.21.x)
+┌───────────────────────┐                               ┌───────────────────────┐
+│   Process Wi-Fi AP    │                               │   Industrial Switch   │
+└───────────┬───────────┘                               └───────────┬───────────┘
+            │                                                       │
+    ┌───────┴───────┐                                       ┌───────┼───────┐
+    ▼               ▼                                       ▼       ▼       ▼
+┌───────┐       ┌───────┐                               ┌───────┐┌───────┐┌───────┐
+│Master │       │Pour   │                               │Plant 1││Plant 2││Plant 3│
+│HMI    │       │HUD    │                               │Siemens││Siemens││Siemens│
+│Console│       │Tablets│                               │S7-1500││S7-1500││S7-1500│
+└───────┘       └───────┘                               └───────┘└───────┘└───────┘
 ============================================================================
 ```
 
-### 📋 ตารางระบุโฮสต์และพอร์ตของระบบโรงงาน (Plant Host & Node Registry)
-| Host IP | Hostname | SSH Port | Service Ports | หน้าที่และบทบาทการทำงาน |
+### 📋 ตารางระบุโฮสต์ การเข้าถึง และพอร์ตของระบบโรงงาน (Plant Host Registry)
+| Host IP | Hostname | SSH Login (`user:pass`) | Web Application Ports | หน้าที่และบทบาทการทำงาน |
 | :--- | :--- | :--- | :--- | :--- |
-| **`192.168.121.11`** | `xmitphol-db` | 22 | `3306`, `8000` | **Level 3 MES / Database Center** (ศูนย์กลางฐานข้อมูล MariaDB Cluster) |
-| **`192.168.121.21`** | `xmitrphol-ubuntu2404` | 22 | `3000` (Grafana), Influx | **Monitoring Node 1** (ระบบ Dashboards & Time-series Metrics) |
-| **`192.168.121.22`** | `xmitphol-02` | 22 | `3000` (Grafana), Influx | **Monitoring Node 2** (ระบบ Dashboards & Time-series Metrics) |
-| **`192.168.121.23`** | **`xmitphol-03`** | 22 | `3031` (Nuxt), `8031` (FastAPI) | **xMixing Control Host** (เซิร์ฟเวอร์ระบบผสมหลัก คุม Plant 1, 2, 3) |
+| **`192.168.121.11`** | `xmitphol-db` | `x-root:xDev100!` (:22) | `3306` (MariaDB), `8000` | **Level 3 MES / Database Center** (ศูนย์กลางฐานข้อมูล MariaDB Cluster) |
+| **`192.168.121.21`** | `xmitrphol-ubuntu2404` | `x-root:xDev100!` (:22) | `3000` (Nuxt), `3100` (Grafana) | **Mixing Station Node 1** (สายการผลิตที่ 1 / Local App & Scale) |
+| **`192.168.121.22`** | `xmitphol-02` | `x-root:xDev100!` (:22) | `3000` (Nuxt), `3100` (Grafana) | **Mixing Station Node 2** (สายการผลิตที่ 2 / Local App & Scale) |
+| **`192.168.121.23`** | **`xmitphol-03`** | `x-root:xDev100!` (:22) | `3031` (Nuxt), `8031` (FastAPI) | **Central Mixing Host Node 3** (เซิร์ฟเวอร์ระบบผสมหลัก คุม Plant 1, 2, 3) |
 | **`192.168.21.210`** | `PLC-S7-1500` | - | `102` (ISO-on-TCP) | **Main Mixing PLC** (ควบคุมถังผสม, วาล์ว, อุณหภูมิ, โหลดเซลล์) |
 | **`192.168.21.51`** | `PLC-Process` | - | `102` (ISO-on-TCP) | **Process Drive PLC** (ควบคุมปั๊มและมอเตอร์หัวตัด High-Shear) |
 
